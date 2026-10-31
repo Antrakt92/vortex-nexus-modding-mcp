@@ -7,7 +7,7 @@ import strict from './strict-json.cjs';
 import dispatch from './native-dispatch-contract.cjs';
 import paths from './paths.cjs';
 import terminal from './child-terminal-observer.cjs';
-import { readRelaySourceClosure, verifyRelayNode, validateRelaySDKStatus } from './owned-zip-relay-client.mjs';
+import { readRelaySourceClosure, verifyRelayNode, validateRelaySDKStatus, validateRelayPreparedReceipt, copyRelayAnchor } from './owned-zip-relay-client.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url)), MAX_START = 2 * 1024 * 1024 + 32768, MAX_STATUS = 65536, MAX_PROOF = 4 * 1024 * 1024 + 16384;
 const exact = (v, k) => v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === k.length && k.every(n => Object.hasOwn(v, n));
 const need = (v, c) => {
@@ -16,7 +16,7 @@ const need = (v, c) => {
 };
 const sha = b => crypto.createHash('sha256').update(b).digest('hex'), equal = (a, b) => isDeepStrictEqual(a, b);
 const safe = e => /^OWNED_ZIP_(?:RELAY|WORKER)_([A-Z][A-Z0-9_]{0,90})$/.exec(e?.message ?? '')?.[1] ?? 'SDK_FAILED';
-let binding = null, mode = null, startSHA256 = null, owner = null, started = false, startPending = false, cancelled = false, handoff = false, releasing = false, released = false, controllerEOF = false, failed = null, sequence = 0, pending = Buffer.alloc(0), writing = false, latest = null, lastJSON = null, active = 0, protocolBroken = false, outputBroken = false, essential = null, proofAttempted = false;
+let binding = null, mode = null, startSHA256 = null, owner = null, started = false, startPending = false, cancelled = false, handoff = false, releasing = false, released = false, controllerEOF = false, failed = null, sequence = 0, pending = Buffer.alloc(0), writing = false, latest = null, lastJSON = null, active = 0, protocolBroken = false, outputBroken = false, essential = null, proofAttempted = false, preparedReceipt = null, preparedSHA256 = null, startPreparedAttempted = false;
 const lifetime = 'relay_' + crypto.randomBytes(16).toString('hex');
 const keepAlive = setInterval(() => {
 }, 1000);
@@ -57,11 +57,11 @@ function drain() {
         hold('OUTPUT_FAILED');
     }
 }
-function emit(value, isProof = false) {
+function emit(value, essentialFrame = false) {
     if (outputBroken)
         return;
-    need(Buffer.byteLength(JSON.stringify(value)) + 1 <= (isProof ? MAX_PROOF : MAX_STATUS), 'STATUS_LIMIT');
-    if (isProof) {
+    need(Buffer.byteLength(JSON.stringify(value)) + 1 <= (value.schema === 'owned-zip-relay-copy-proof/1' ? MAX_PROOF : MAX_STATUS), 'STATUS_LIMIT');
+    if (essentialFrame) {
         need(essential === null, 'COPY_PROOF_CAPACITY');
         essential = value;
     }
@@ -140,7 +140,24 @@ async function start(v, raw) {
             publish(true);
             return;
         }
-        await owner.start();
+        if (v.schema === 'owned-zip-relay-prepare/1') {
+            const anchor = copyRelayAnchor(Buffer.from(v.anchorJSON));
+            const receipt = await owner.prepare(anchor);
+            validateRelayPreparedReceipt(receipt, binding, JSON.parse(anchor.toString('utf8')));
+            if (controllerEOF || protocolBroken || cancelled || failed) {
+                await owner.cancel();
+                publish(true);
+                return;
+            }
+            preparedReceipt = receipt;
+            preparedSHA256 = sha(Buffer.from(JSON.stringify(receipt)));
+            emit({
+                schema: 'owned-zip-relay-prepared/1', relayLifetime: lifetime, binding, startSHA256, sequence: 0, nonce: v.nonce, preparedSHA256, prepared: receipt
+            }, true);
+        }
+        else {
+            await owner.start();
+        }
         publish(true);
     }
     finally {
@@ -148,7 +165,7 @@ async function start(v, raw) {
     }
 }
 async function command(v) {
-    need(exact(v, ['schema', 'relayLifetime', 'binding', 'command', ...(v.command === 'copyProof' ? ['nonce'] : [])]) && v.schema === 'owned-zip-relay-control/1' && v.relayLifetime === lifetime && ['cancel', 'handoff', 'release', 'abort', 'copyProof'].includes(v.command), 'CONTROL');
+    need(exact(v, ['schema', 'relayLifetime', 'binding', 'command', ...(v.command === 'copyProof' ? ['nonce'] : v.command === 'startPrepared' ? ['preparedSHA256'] : [])]) && v.schema === 'owned-zip-relay-control/1' && v.relayLifetime === lifetime && ['cancel', 'handoff', 'release', 'abort', 'copyProof', 'startPrepared'].includes(v.command), 'CONTROL');
     if (binding === null) {
         need(!started && v.command === 'abort', 'NOT_STARTED');
         binding = terminal.copyChildBinding(v.binding);
@@ -171,6 +188,13 @@ async function command(v) {
     const cancelledRelease = cancelStatus?.phase === 'cancelled' && cancelStatus.cancelAttempted === true;
     need(!controllerEOF && !protocolBroken && (!failed || cancelledRelease), 'CONTROLLER_EOF');
     need(equal(readRelaySourceClosure(), initialSources), 'SOURCE_CHANGED');
+    if (v.command === 'startPrepared') {
+        need(preparedReceipt && owner && !cancelled && !releasing && !startPending && !startPreparedAttempted && v.preparedSHA256 === preparedSHA256, 'START_PREPARED_REFUSED');
+        startPreparedAttempted = true;
+        await owner.startPrepared();
+        publish(true);
+        return;
+    }
     if (v.command === 'copyProof') {
         need(mode === 'staging' && owner && !cancelled && !releasing && !proofAttempted && typeof v.nonce === 'string' && /^[a-f0-9]{32}$/.test(v.nonce), 'COPY_PROOF_REFUSED');
         proofAttempted = true;
@@ -203,10 +227,16 @@ function receive(raw) {
     const value = strict.parseStrictJSON(raw, {
         maxBytes: started ? 4096 : MAX_START, maxDepth: 24, maxTokens: 60000
     });
-    if (value?.schema === 'owned-zip-relay-start/1') {
+    if (value?.schema === 'owned-zip-relay-start/1' || value?.schema === 'owned-zip-relay-prepare/1') {
         need(exact(value, [
-            'schema', 'relayLifetime', 'binding', 'mode', 'requestJSON', 'archiveJSON'
+            'schema', 'relayLifetime', 'binding', 'mode', 'requestJSON', 'archiveJSON', ...(value.schema === 'owned-zip-relay-prepare/1' ? ['anchorJSON', 'nonce'] : [])
         ]) && value.relayLifetime === lifetime && (value.mode === 'scratch' || value.mode === 'staging') && typeof value.requestJSON === 'string' && typeof value.archiveJSON === 'string' && !started, 'START');
+        if (value.schema === 'owned-zip-relay-prepare/1') {
+            need(typeof value.anchorJSON === 'string' && typeof value.nonce === 'string' && /^[a-f0-9]{32}$/.test(value.nonce), 'PREPARE');
+            copyRelayAnchor(Buffer.from(value.anchorJSON));
+        }
+        else
+            need(value.mode === 'scratch', 'STAGING_PREPARE_REQUIRED');
         const request = dispatch.parseDispatchRequest(Buffer.from(value.requestJSON));
         need(JSON.stringify(request) === value.requestJSON, 'REQUEST');
         const expected = terminal.copyChildBinding({

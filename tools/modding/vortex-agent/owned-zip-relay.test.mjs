@@ -9,7 +9,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import job from './install-job-contract.cjs';
 import dispatch from './native-dispatch-contract.cjs';
-import { createOwnedZipRelay, RELAY_NODE, RELAY_SOURCE_NAMES, validateRelaySDKStatus, validateRelayCopyProof, parseRelayOutput, validateRelayProofEnvelope, relayCopyProofBytes } from './owned-zip-relay-client.mjs';
+import { createOwnedZipRelay, RELAY_NODE, RELAY_SOURCE_NAMES, validateRelaySDKStatus, validateRelayCopyProof, parseRelayOutput, validateRelayProofEnvelope, relayCopyProofBytes, validateRelayPreparedReceipt, copyRelayAnchor } from './owned-zip-relay-client.mjs';
 import terminal from './child-terminal-observer.cjs';
 import { createNativeExecutorJournal } from './native-executor-journal.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url)), TASK = path.resolve(HERE, '../../../local-state/owned-zip-relay-tests');
@@ -182,6 +182,21 @@ function owned(t, input, make = createOwnedZipRelay) {
     });
     return relay;
 }
+function ownFixtureAnchor(input) {
+    const root = path.join(input.root, 'runtime/local-state/vortex-agent-build/native-install-executor');
+    fs.mkdirSync(path.dirname(root), {
+        recursive: true
+    });
+    fs.mkdirSync(root);
+    const inventory = createNativeExecutorJournal({
+        root
+    }).inventory();
+    assert.equal(inventory.complete, true);
+    assert.equal(inventory.records.length, 0);
+    return Buffer.from(JSON.stringify({
+        schema: 'native-executor-anchor/1', rootId: inventory.observedRootId, inventorySHA256: inventory.observedInventorySHA256
+    }));
+}
 function unknownJournal(input, sdk) {
     const journal = createNativeExecutorJournal({
         root: path.join(input.root, 'runtime/local-state/vortex-agent-build/native-install-executor')
@@ -291,7 +306,7 @@ const sdkSource = fs.readFileSync(path.join(HERE, 'owned-zip-worker-client.mjs')
 const sdkStatusBody = sdkSource.slice(sdkSource.indexOf('  function status() {'), sdkSource.indexOf('\n  function wake()', sdkSource.indexOf('  function status() {')));
 // Bound extraction to the real function, not neighboring source helpers.
 const sdkStatusFunction = sdkStatusBody.slice(0, sdkStatusBody.indexOf('\n  }') + 4);
-const produceSDKStatus = new Function('v', `const {binding,packetSHA256,ready,child,startAttempted,startSent,handoffAttempted,cancelAttempted,releaseAttempted,childClosed,last,destination,terminal,firstError,stderrBytes}=v;return (${sdkStatusFunction})();`);
+const produceSDKStatus = new Function('v', `const {binding,packetSHA256,ready,child,startAttempted,startSent,handoffAttempted,cancelAttempted,releaseAttempted,childClosed,last,destination,terminal,firstError,stderrBytes,inertAbortAttempted=false}=v;return (${sdkStatusFunction})();`);
 const matrixBinding = {
     operationId: 'op_' + '1'.repeat(32), nativeJobId: 'exec_' + '2'.repeat(32), requestSHA256: '3'.repeat(64), rendererGeneration: 'renderer_' + '4'.repeat(32)
 };
@@ -391,6 +406,39 @@ test('staging identifier intersection refuses reserved casefold IDs before Node 
     assert.throws(() => createOwnedZipRelay(Buffer.from(JSON.stringify(invalid)), Buffer.from('{}'), 'staging'), /INSTALL_JOB|NATIVE_DISPATCH/);
     const request = portableRequest();
     assert.doesNotThrow(() => createOwnedZipRelay(Buffer.from(JSON.stringify(request)), Buffer.from('{}'), 'staging'));
+});
+test('explicit pre-START anchor and compact receipt are closed and bound without a permit boolean', () => {
+    const anchor = {
+        schema: 'native-executor-anchor/1', rootId: '0:123', inventorySHA256: 'a'.repeat(64)
+    }, bytes = Buffer.from(JSON.stringify(anchor));
+    assert.deepEqual(copyRelayAnchor(bytes), bytes);
+    for (const bad of [Buffer.from('{}'), Buffer.from(JSON.stringify({
+            ...anchor, permit: true
+        })), Buffer.from(JSON.stringify({
+            rootId: anchor.rootId, schema: anchor.schema, inventorySHA256: anchor.inventorySHA256
+        })), Buffer.from(JSON.stringify({
+            ...anchor, rootId: 'bad'
+        })), Buffer.alloc(1025)])
+        assert.throws(() => copyRelayAnchor(bad), /ANCHOR|REQUEST|STRICT_JSON/);
+    const t = {
+        schema: 'native-executor-pending-transition/1', rootId: anchor.rootId, previousInventorySHA256: anchor.inventorySHA256, inventorySHA256: 'b'.repeat(64), operationId: matrixBinding.operationId, nativeJobId: matrixBinding.nativeJobId, requestSHA256: matrixBinding.requestSHA256, packetSHA256: 'c'.repeat(64), workerLifetime: 'worker_' + 'd'.repeat(32)
+    }, receipt = {
+        schema: 'owned-zip-worker-prepared/1', binding: matrixBinding, workerLifetime: t.workerLifetime, workerPid: 123, creationTime: '134000000000000000', packetSHA256: t.packetSHA256, transition: t
+    };
+    validateRelayPreparedReceipt(receipt, matrixBinding, anchor);
+    for (const change of [v => v.transition.previousInventorySHA256 = 'e'.repeat(64), v => v.transition.rootId = '0:124', v => v.packetSHA256 = 'f'.repeat(64), v => v.permit = true]) {
+        const bad = structuredClone(receipt);
+        change(bad);
+        assert.throws(() => validateRelayPreparedReceipt(bad, matrixBinding, anchor), /PREPARED_MISMATCH/);
+    }
+});
+test('managed relay refuses auto-start and invalid anchors before any Node effect', async () => {
+    const request = portableRequest(), relay = createOwnedZipRelay(Buffer.from(JSON.stringify(request)), Buffer.from('{}'), 'staging');
+    await assert.rejects(relay.start(), /STAGING_PREPARE_REQUIRED/);
+    await assert.rejects(relay.startPrepared(), /START_PREPARED_REFUSED/);
+    await assert.rejects(relay.prepare(Buffer.from('{}')), /INVALID_ANCHOR/);
+    assert.equal(relay.status().relayPid, null);
+    assert.equal(relay.status().startSent, false);
 });
 test('actual SDK status() projection accepts both closed worker schemas and every lifecycle phase', () => {
     for (const mode of ['scratch', 'staging'])
@@ -656,7 +704,8 @@ ownTest('controller EOF before START holds the exact inert Node process without 
 });
 ownTest('actual staging relay copies into ONLY the declared fresh model staging leaf and preserves proof metadata', async (t) => {
     const input = fixture(), relay = owned(t, input, (a, b) => createOwnedZipRelay(a, b, 'staging'));
-    await relay.start();
+    await relay.prepare(ownFixtureAnchor(input));
+    await relay.startPrepared();
     await relay.waitFor('extracted', 15000);
     await relay.handoff();
     const copied = relay.status();
@@ -744,7 +793,8 @@ ownTest('casefold handoff failure preserves keeper and permits explicit cancelle
     });
     const bytes = fs.readFileSync(keeper);
     const relay = owned(t, input, (a, b) => createOwnedZipRelay(a, b, 'staging'));
-    await relay.start();
+    await relay.prepare(ownFixtureAnchor(input));
+    await relay.startPrepared();
     await relay.waitFor('extracted', 15000);
     await assert.rejects(relay.handoff());
     await relay.cancel();
@@ -772,3 +822,88 @@ ownTest('casefold handoff failure preserves keeper and permits explicit cancelle
         flag: 'wx'
     });
 });
+ownTest('explicit relay prepare cannot send Python START until a separate fixture main-anchor ACK', async (t) => {
+    const input = fixture(), relay = owned(t, input, (a, b) => createOwnedZipRelay(a, b, 'staging')), anchor = ownFixtureAnchor(input), receipt = await relay.prepare(anchor), work = path.resolve(HERE, '../../../local-state/owned-zip-worker-work', input.request.operationId);
+    assert.equal(receipt.schema, 'owned-zip-worker-prepared/1');
+    assert.equal(relay.status().sdk.startSent, false);
+    assert.equal(fs.existsSync(work), false);
+    assert.equal(fs.existsSync(path.join(input.request.plan.context.stagingPath, 'own')), false);
+    unknownJournal(input, receipt);
+    await assert.rejects(relay.prepare(anchor), /START_REFUSED/);
+    let acknowledge;
+    const ack = new Promise(resolve => {
+        acknowledge = resolve;
+    }), starting = (async () => {
+        await ack;
+        return relay.startPrepared();
+    })();
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(relay.status().sdk.startSent, false);
+    assert.equal(fs.existsSync(work), false);
+    fs.writeFileSync(path.join(input.root, 'OWN-MAIN-PENDING-ACK.json'), JSON.stringify(receipt.transition) + '\n', {
+        flag: 'wx'
+    });
+    acknowledge();
+    await starting;
+    await relay.waitFor('extracted', 15000);
+    await assert.rejects(relay.startPrepared(), /START_PREPARED_REFUSED/);
+    await relay.handoff();
+    await relay.copyProof();
+    await relay.release();
+});
+ownTest('explicit prepared relay cancel joins inert Python and preserves unknown intent without output', async (t) => {
+    const input = fixture(), relay = owned(t, input, (a, b) => createOwnedZipRelay(a, b, 'staging'));
+    await relay.prepare(ownFixtureAnchor(input));
+    await relay.cancel();
+    await assert.rejects(relay.startPrepared(), /START_PREPARED_REFUSED/);
+    const done = await relay.release();
+    assert.equal(done.sdk.startSent, false);
+    assert.equal(done.sdk.workerTerminal.childResourcesClosed, true);
+    assert.equal(done.relayTerminal.childResourcesClosed, true);
+    assert.equal(fs.existsSync(path.resolve(HERE, '../../../local-state/owned-zip-worker-work', input.request.operationId)), false);
+    unknownJournal(input, done.sdk);
+});
+ownTest('prepared controller EOF aborts only inert Python while relay and unknown journal remain held', async (t) => capture(async (current) => {
+    const input = fixture(), relay = owned(t, input, (a, b) => createOwnedZipRelay(a, b, 'staging'));
+    await relay.prepare(ownFixtureAnchor(input));
+    current().stdin.end();
+    await relay.waitFor('held', 5000);
+    await new Promise((resolve, reject) => {
+        const deadline = Date.now() + 5000;
+        function check() {
+            if (relay.status().sdk?.workerTerminal?.childResourcesClosed) {
+                resolve();
+                return;
+            }
+            if (Date.now() >= deadline) {
+                reject(Error('PREPARED_EOF_ABORT_TIMEOUT'));
+                return;
+            }
+            setTimeout(check, 20);
+        }
+        check();
+    });
+    const held = relay.status();
+    assert.equal(held.sdk.startSent, false);
+    assert.equal(held.sdk.workerTerminal.exitSucceeded, true);
+    assert.equal(held.relayTerminal.childResourcesClosed, false);
+    assert.equal(held.phase, 'held');
+    assert.equal(held.errorCode, 'CONTROLLER_EOF');
+    assert.equal(fs.existsSync(path.resolve(HERE, '../../../local-state/owned-zip-worker-work', input.request.operationId)), false);
+    await assert.rejects(relay.startPrepared(), /START_PREPARED_REFUSED/);
+    const record = children.get(held.relayPid);
+    assert.ok(record?.identity);
+    const result = spawnSync('C:/Python314/python.exe', ['-I', '-S', '-B', '-c', PROCESS_HELPER, 'retire', String(record.child.pid), record.identity.creationTime, input.root, TASK], {
+        encoding: 'utf8', windowsHide: true, timeout: 15000, maxBuffer: 32768
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const retired = JSON.parse(result.stdout);
+    assert.deepEqual(retired.targets.map(row => row.pid), [held.relayPid]);
+    await relay.waitFor('closed', 5000);
+    const journal = unknownJournal(input, held.sdk);
+    fs.writeFileSync(path.join(input.root, 'PREPARED-EOF-RESULT.json'), JSON.stringify({
+        held, retired, journal, normalRelease: false, canReplay: false
+    }, null, 2) + '\n', {
+        flag: 'wx'
+    });
+}));

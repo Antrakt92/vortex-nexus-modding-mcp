@@ -140,6 +140,7 @@ function createWorker(requestBytes, archiveBindingBytes, staging) {
   let pending = Buffer.alloc(0), stderrBytes = 0;
   let writing = false;
   let terminal = null, destination = null, copiedProof = null;
+  let preparedPacket = null, preparedBytes = null, preparedReceipt = null, explicitPrepared = false, startPreparedAttempted = false, inertAbortAttempted = false;
   let outbound = [];
   const seen = new Set(), waiters = new Set();
   const journal = createNativeExecutorJournal();
@@ -149,7 +150,7 @@ function createWorker(requestBytes, archiveBindingBytes, staging) {
     return structuredClone({schema: 'owned-zip-coordinator-status/1', binding, packetSHA256,
       workerLifetime: ready?.workerLifetime ?? null, workerPid: child?.pid ?? null,
       creationTime: ready?.creationTime ?? null, startAttempted, startSent, handoffAttempted,
-      cancelAttempted, releaseAttempted, childClosed, phase: last?.phase ?? (ready ? 'ready' : 'not_started'),
+      cancelAttempted, releaseAttempted, childClosed, phase: inertAbortAttempted && cancelAttempted ? 'cancelled' : last?.phase ?? (ready ? 'ready' : 'not_started'),
       childExitCode: child?.exitCode ?? null, childSignal: child?.signalCode ?? null,
       worker: last, destination: last?.destination ?? (destination ? {...destination, directoryIdentity:null} : null),
       copyProof: last?.copyProof ?? null, workerTerminal: terminal?.read() ?? null,
@@ -329,13 +330,27 @@ function createWorker(requestBytes, archiveBindingBytes, staging) {
     need(ready && startSent, 'NOT_STARTED');
     write({schema: 'owned-zip-worker-control/1', workerLifetime: ready.workerLifetime, binding, command}, 4096, command);
   }
-  owner = Object.freeze({
-    status,
-    waitFor: wait,
-    async start() {
+  function copyAnchor(value) {
+    const typed = Object.getPrototypeOf(Uint8Array.prototype); let copy;
+    try {
+      need(isUint8Array(value),'INVALID_ANCHOR');
+      const count = Object.getOwnPropertyDescriptor(typed,'byteLength').get.call(value);
+      const backing = Object.getOwnPropertyDescriptor(typed,'buffer').get.call(value);
+      need(count > 0 && count <= 1024 && !isSharedArrayBuffer(backing),'INVALID_ANCHOR');
+      copy = new Uint8Array(count); Uint8Array.prototype.set.call(copy,value);
+    } catch {throw error('INVALID_ANCHOR');}
+    const anchor = strict.parseStrictJSON(copy,{maxBytes:1024,maxDepth:2,maxTokens:32});
+    need(exact(anchor,['schema','rootId','inventorySHA256']) && anchor.schema === 'native-executor-anchor/1'
+      && typeof anchor.rootId === 'string' && anchor.rootId.length <= 100 && /^[0-9]+:[0-9]+$/.test(anchor.rootId)
+      && typeof anchor.inventorySHA256 === 'string' && /^[a-f0-9]{64}$/.test(anchor.inventorySHA256)
+      && Buffer.from(JSON.stringify({schema:anchor.schema,rootId:anchor.rootId,inventorySHA256:anchor.inventorySHA256})).equals(Buffer.from(copy)), 'INVALID_ANCHOR');
+    return Buffer.from(copy);
+  }
+  async function prepareWorker(anchorBytes, anchored) {
       need(!startAttempted && !cancelAttempted && !releaseAttempted && occupied === null, 'START_REFUSED');
       startAttempted = true; occupied = owner;
       try {
+        const anchor = anchored ? copyAnchor(anchorBytes) : null;
         runtime(); expectedSources = sources();
         child = spawn(PYTHON, ['-I', '-S', '-B', path.join(HERE, 'owned-zip-worker.py')], {
           cwd: HERE, env: {SystemRoot: process.env.SystemRoot}, windowsHide: true, stdio: ['pipe','pipe','pipe'],
@@ -369,26 +384,86 @@ function createWorker(requestBytes, archiveBindingBytes, staging) {
         }
         if (cancelAttempted || releaseAttempted) {
           releaseAttempted = true;
-          write({schema: 'owned-zip-worker-abort/1', workerLifetime: ready.workerLifetime}, 4096);
-          await wait('closed'); throw error('CANCELLED_BEFORE_START');
+          await abortPreparedInert(); throw error('CANCELLED_BEFORE_START');
         }
         const packet = {schema: staging ? 'owned-zip-worker-start/2' : 'owned-zip-worker-start/1', workerLifetime: ready.workerLifetime,
           binding, archive, payload: request.plan.package.payload, total: request.plan.package.expectedUncompressedBytes,
           ...(staging ? {destination} : {})};
         const bytes = Buffer.from(JSON.stringify(packet)); need(bytes.length+1 <= START_MAX, 'START_LIMIT');
         packetSHA256 = sha(bytes);
-        const held = journal.begin(Buffer.from(JSON.stringify(request)), ready.workerLifetime, packetSHA256);
-        need(held.state === 'reserved' && held.workerLifetime === ready.workerLifetime && held.packetSHA256 === packetSHA256, 'JOURNAL_NOT_BOUND');
-        // Read-only preflight. Only the child may create these directories,
-        // relative to retained native parent handles rather than a raced path.
-        scopeIO.ancestry(WORK_BASE);
-        startSent = true; write(packet, START_MAX);
-        return await wait('accepted');
+        let transition = null;
+        if (anchored) {
+          const pending = journal.reservePending(Buffer.from(JSON.stringify(request)), ready.workerLifetime, packetSHA256, anchor);
+          need(exact(pending, ['schema','reservation','transition']) && pending.schema === 'native-executor-pending-reservation/1', 'JOURNAL_NOT_BOUND');
+          const held = pending.reservation;
+          need(held.state === 'reserved' && held.operationId === binding.operationId && held.nativeJobId === binding.nativeJobId
+            && held.requestSHA256 === requestSHA256 && held.workerLifetime === ready.workerLifetime && held.packetSHA256 === packetSHA256, 'JOURNAL_NOT_BOUND');
+          transition = pending.transition;
+          need(exact(transition,['schema','rootId','previousInventorySHA256','inventorySHA256','operationId','nativeJobId','requestSHA256','packetSHA256','workerLifetime'])
+            && transition.schema === 'native-executor-pending-transition/1' && transition.operationId === binding.operationId && transition.nativeJobId === binding.nativeJobId
+            && transition.requestSHA256 === requestSHA256 && transition.packetSHA256 === packetSHA256 && transition.workerLifetime === ready.workerLifetime
+            && transition.rootId === JSON.parse(anchor.toString('utf8')).rootId
+            && transition.previousInventorySHA256 === JSON.parse(anchor.toString('utf8')).inventorySHA256
+            && /^[a-f0-9]{64}$/.test(transition.previousInventorySHA256) && /^[a-f0-9]{64}$/.test(transition.inventorySHA256), 'JOURNAL_NOT_BOUND');
+        } else {
+          const held = journal.begin(Buffer.from(JSON.stringify(request)), ready.workerLifetime, packetSHA256);
+          need(held.state === 'reserved' && held.workerLifetime === ready.workerLifetime && held.packetSHA256 === packetSHA256, 'JOURNAL_NOT_BOUND');
+          // Preserve the legacy own-fixture preflight and inert-refusal boundary.
+          scopeIO.ancestry(WORK_BASE);
+        }
+        need(!cancelAttempted && !releaseAttempted && !firstError, 'PREPARE_CANCELLED');
+        // Exact packet is private. Returning the receipt never starts extraction.
+        preparedPacket = packet; preparedBytes = bytes; explicitPrepared = anchored;
+        preparedReceipt = Object.freeze({schema:'owned-zip-worker-prepared/1', binding,
+          workerLifetime:ready.workerLifetime,workerPid:child.pid,creationTime:ready.creationTime,packetSHA256,
+          transition:transition === null ? null : Object.freeze({...transition})});
+        // Keep the legacy READY observer ordering: queue START in this same
+        // continuation before any other ready waiter resumes. Anchored prepare
+        // always returns without starting.
+        if (!anchored) return startPreparedWorker();
+        return structuredClone(preparedReceipt);
       } catch (e) {
         if (!child) {if (occupied === owner) occupied = null;}
         e.owner = owner; throw e;
       }
-    },
+      }
+  async function startPreparedWorker() {
+    need(preparedPacket && preparedBytes && !startPreparedAttempted && !startSent && !cancelAttempted && !releaseAttempted && !firstError,'START_PREPARED_REFUSED');
+    startPreparedAttempted = true;
+    try {
+      const observed = terminal?.read();
+      need(observed?.spawnObserved && !observed.exitObserved && !observed.closeObserved && !observed.childErrorObserved && !observed.held && !observed.childResourcesClosed,'CUSTODY_LOST');
+      if (explicitPrepared) {
+        need(JSON.stringify(sources()) === JSON.stringify(expectedSources), 'SOURCE_CHANGED');
+        const t = preparedReceipt.transition;
+        const current = journal.read(binding.operationId, requestSHA256, binding.nativeJobId, packetSHA256);
+        need(current.state === 'reserved' && current.workerLifetime === ready.workerLifetime && current.packetSHA256 === packetSHA256,'JOURNAL_NOT_BOUND');
+        const inventory = journal.inventory({expectedRootId:t.rootId,expectedInventorySHA256:t.inventorySHA256});
+        need(inventory.complete && inventory.rootIdentityVerified && inventory.historySealVerified
+          && inventory.observedRootId === t.rootId && inventory.observedInventorySHA256 === t.inventorySHA256,'JOURNAL_CHANGED');
+        scopeIO.ancestry(WORK_BASE);
+      }
+      need(!cancelAttempted && !releaseAttempted && !firstError && sha(Buffer.from(JSON.stringify(preparedPacket))) === packetSHA256,'START_PREPARED_REFUSED');
+      const lastObservation = terminal?.read();
+      need(lastObservation?.spawnObserved && !lastObservation.exitObserved && !lastObservation.closeObserved && !lastObservation.childErrorObserved && !lastObservation.held && !lastObservation.childResourcesClosed,'CUSTODY_LOST');
+      startSent = true; write(preparedPacket, START_MAX, 'start');
+      return await wait('accepted');
+    } catch(e) { firstError ||= /^OWNED_ZIP_WORKER_([A-Z_]+)$/.exec(e?.message || '')?.[1] || 'START_PREPARED_FAILED';e.owner=owner;wake();throw e; }
+  }
+  async function abortPreparedInert() {
+    need(ready && startAttempted && !startPreparedAttempted && !startSent && !outbound.some(row=>row.command==='start'), 'INERT_ABORT_REFUSED');
+    if (!inertAbortAttempted) {
+      inertAbortAttempted=true;
+      write({schema:'owned-zip-worker-abort/1',workerLifetime:ready.workerLifetime},4096);
+    }
+    return await wait('closed');
+  }
+  owner = Object.freeze({
+    status,
+    waitFor: wait,
+    prepare(anchorBytes) { return prepareWorker(anchorBytes,true); },
+    startPrepared() { return startPreparedWorker(); },
+    start() { return prepareWorker(null,false); },
     copyProof() {
       const observation = terminal?.read();
       need(staging && copiedProof !== null && !childClosed && !firstError && last?.phase==='copied'
@@ -399,7 +474,7 @@ function createWorker(requestBytes, archiveBindingBytes, staging) {
     },
     cancel() {
       need(!releaseAttempted, 'RELEASE_PENDING');
-      if (!startSent) {cancelAttempted = true; return Promise.resolve(status());}
+      if (!startSent) {cancelAttempted = true; return ready && !startPreparedAttempted ? abortPreparedInert() : Promise.resolve(status());}
       if (!cancelAttempted) {cancelAttempted = true; control('cancel');}
       return wait('cancelled');
     },
@@ -413,6 +488,8 @@ function createWorker(requestBytes, archiveBindingBytes, staging) {
       if (!startSent) {
         if (!startAttempted) {releaseAttempted = true; return status();}
         if (childClosed) return await wait('closed');
+        need(!startPreparedAttempted,'INERT_ABORT_REFUSED');
+        if (inertAbortAttempted) return await wait('closed');
         if (!ready && inertLifetime) {
           if (!releaseAttempted) {
             releaseAttempted = true;
@@ -438,7 +515,7 @@ function createWorker(requestBytes, archiveBindingBytes, staging) {
     async retireInert() {
       // Explicit retirement of this exact child only. Once start was attempted
       // on the pipe, even a lost acknowledgement permanently forbids this route.
-      need(!startSent && !handoffAttempted, 'RETIRE_ACTIVE_REFUSED');
+      need(!startSent && !startPreparedAttempted && !handoffAttempted, 'RETIRE_ACTIVE_REFUSED');
       releaseAttempted = true;
       if (!child) return status();
       if (childClosed) return await wait('closed');

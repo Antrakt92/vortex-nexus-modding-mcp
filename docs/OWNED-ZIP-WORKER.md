@@ -156,6 +156,21 @@ Terminal history and bounded startup census are documented in
 one intent/job pair; only the future actual coordinator may append completion
 after registration, adoption, physical closure and release have all succeeded.
 
+The SDK also provides `prepare(mainAnchorBytes)` and `startPrepared()` for the
+explicit pre-START boundary. Preparation retains the exact packet and native
+parent, reserves the journal once through `reservePending`, and returns a compact
+receipt. It does not send START or create an output directory. The application
+must acknowledge the new main anchor before invoking `startPrepared()` on that
+same owner. Journal history, sources and the actual Python process are checked
+again before the one-shot START attempt. The legacy SDK `.start()` remains an
+own-fixture compatibility composition; managed integration must use the explicit
+[relay boundary](OWNED-ZIP-RELAY.md).
+
+Cancellation before `startPrepared()` begins may abort the known-inert Python
+child and join its actual process/pipes. Its journal reservation remains unresolved and
+cannot be replayed. Once START has been attempted, even an unknown response
+forbids the inert-abort and retirement routes.
+
 ## Local qualification
 
 ```powershell

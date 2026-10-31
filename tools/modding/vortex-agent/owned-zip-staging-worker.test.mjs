@@ -9,6 +9,7 @@ import {syncBuiltinESMExports} from 'node:module';
 import {fileURLToPath} from 'node:url';
 import job from './install-job-contract.cjs';
 import dispatch from './native-dispatch-contract.cjs';
+import {createNativeExecutorJournal} from './native-executor-journal.mjs';
 import * as sdk from './owned-zip-worker-client.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -244,3 +245,9 @@ ownTest('actual guardian death after copy invalidates live proof and does not pe
   stillHeld(worker);
   assert.equal(sha(fs.readFileSync(path.join(input.target, 'a.txt'))), input.value.payload['a.txt']);
 }));
+
+ownTest('explicit staging prepare retains the real parent but creates no target until separately acknowledged START and handoff',async t=>{
+ const input=fixture();process.env.NEXUS_WORKSPACE=path.join(input.root,'prepared-runtime');const journalRoot=path.join(process.env.NEXUS_WORKSPACE,'local-state/vortex-agent-build/native-install-executor');fs.mkdirSync(path.dirname(journalRoot),{recursive:true});fs.mkdirSync(journalRoot);const inventory=createNativeExecutorJournal({root:journalRoot}).inventory();assert.equal(inventory.complete,true);const anchor=encode({schema:'native-executor-anchor/1',rootId:inventory.observedRootId,inventorySHA256:inventory.observedInventorySHA256});
+ const worker=owner(t,input),receipt=await worker.prepare(anchor);assert.equal(worker.status().startSent,false);assert.equal(fs.existsSync(input.target),false);assert.deepEqual(worker.status().destination.parentIdentity,input.value.stagingIdentity);assert.equal(worker.status().destination.directoryIdentity,null);assert.throws(()=>fs.renameSync(input.request.plan.context.stagingPath,path.join(input.root,'moved-stage')));
+ await new Promise(resolve=>setTimeout(resolve,50));assert.equal(worker.status().startSent,false);fs.writeFileSync(path.join(input.root,'OWN-MAIN-ACK.json'),JSON.stringify(receipt.transition)+'\n',{flag:'wx'});await worker.startPrepared();await worker.waitFor('extracted',15000);assert.equal(fs.existsSync(input.target),false);await worker.handoff();assert.equal(worker.copyProof().files.length,2);await worker.release();assert.equal(worker.status().workerTerminal.childResourcesClosed,true);
+});
