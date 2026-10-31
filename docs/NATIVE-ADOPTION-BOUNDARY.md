@@ -647,6 +647,48 @@ Implement these boundaries before exposing an install endpoint:
 The prepared broad lifecycle patches remain independent work. They are not a
 reason to bypass these gates or to add unrelated writers to the critical path.
 
+## Tracked registration and renderer adoption
+
+The minimal registration interface above remains available with its original
+contract. The fixed `registerNativeTrackedMod` path accepts the version-2 request:
+operation/job/request/plan identifiers, game/mod/installation path, payload SHA256,
+and one finished download projection containing `id`, `state`, `game`,
+`localPath`, `size`, `fileMD5` and the raw archive's `archiveSHA256`. Archive and
+payload digests identify different inputs. The canonical request is bounded to
+8 KiB; it cannot carry SQL, callbacks or arbitrary attributes.
+
+One private backend transaction checks target absence across mods and profiles,
+the selected download's exact persisted fields, any optional persisted ID, the
+absence of an installed marker, global archive/hash references and duplicate
+download hashes/names. Ambiguous parent/leaf projections refuse admission. It
+writes the fixed mod record, archive association, operation marker and download
+installed association together. Readback must contain all eight exact writes
+and the unchanged source fields. Lost COMMIT acknowledgement leaves the owner
+held and refuses replay; it does not report rollback or power-loss durability.
+
+The observed version-2 result includes canonical `recordJSON`, its full digest,
+the base-record digest and archive-projection digest. `adoptNativeRendererTarget`
+accepts that record only through the actual root and persistence-hold owners.
+An internal action ticket binds the store/getState pair and both owners. The
+root inserts the mod and download association together; middleware suppresses
+only their accepted persistence diff and preserves unrelated pending work.
+Later unchanged references do not cause a full-record echo. Replay, spoofed
+actions, wrong owners, reentry, partial adoption or subscriber failure keep the
+operation held. One-shot adoption is scoped to the hold owner, so a new valid
+owner is not rejected merely because an earlier owner was consumed.
+
+Source-backed tests cover these cases, including non-primitive download fields
+without invoking their serialization callbacks. Ten real-LevelDB cases check
+the SQL transaction and reopen behavior; full main/renderer ownership is not
+exercised by that fixture. Compilation and the 291-case affected suite qualify
+the composed sources, not the installed application.
+
+The result is data, not remote authority. A source-bound coordinator must still
+bind the actual committed transaction, held archive and published payload before
+adoption. The digests supplied to registration do not themselves prove file
+custody. No full installer or MCP install endpoint is enabled. Durable recovery,
+coordinated release and two sequential successful installs remain required.
+
 ## Local checks
 
 Provide an existing official read-only Git cache and the already qualified

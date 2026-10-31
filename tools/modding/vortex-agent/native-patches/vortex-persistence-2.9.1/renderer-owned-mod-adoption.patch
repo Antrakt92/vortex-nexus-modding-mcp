@@ -1,0 +1,147 @@
+--- a/src/renderer/src/reducers/index.ts
++++ b/src/renderer/src/reducers/index.ts
+@@ -12,6 +12,8 @@
+ import { createReducer } from "redux-act";
+ import { enableBatching } from "redux-batched-actions";
+ 
++import { createNativePersistenceAdoption, consumeNativePersistenceAdoption, finishNativePersistenceAdoption,
++  failNativePersistenceAdoption, failNativePersistenceFlushAdoption, checkNativeAdoptionRecord, checkNativeAdoptionDownload } from "../store/persistDiffMiddleware";
+ import { log } from "../logging";
+ import type { IExtensionReducer } from "../types/extensions";
+ import type { IReducerSpec, IStateVerifier } from "../types/IExtensionContext";
+@@ -403,7 +405,8 @@
+   factory: object;
+   gameId: string;
+   modId: string;
+-  phase: "pending" | "reserved" | "held";
++  phase: "pending" | "reserved" | "committed_protected" | "held";
++  committed?: { gameId: string; modId: string; archiveId: string; recordJSON: string; record: Record<string, any>; projectionSHA256: string; archiveSHA256: string };
+ }
+ let nativeRendererTarget: NativeRendererTarget | undefined;
+ let nativeRendererState: any;
+@@ -518,8 +521,8 @@
+ }
+ 
+ function targetCopy(value: any, budget: { remaining: number }): Record<string, any> {
+-  const result = Object.create(null);
+-  for (const key of Object.keys(targetObject(value, budget))) result[key] = value[key];
++  const result: Record<string, any> = {};
++  for (const key of Object.keys(targetObject(value, budget))) Object.defineProperty(result, key, { value: value[key], enumerable: true, writable: true, configurable: true });
+   return result;
+ }
+ 
+@@ -532,7 +535,16 @@
+   const persistent = view(targetRequired(root, "persistent"));
+   const mods = view(targetRequired(persistent, "mods"));
+   const game = Object.hasOwn(mods, reservation.gameId) ? view(mods[reservation.gameId]) : undefined;
+-  if (game !== undefined && Object.hasOwn(game, reservation.modId)) targetFailure();
++  if (reservation.committed === undefined) {
++    if (game !== undefined && Object.hasOwn(game, reservation.modId)) targetFailure();
++  } else {
++    if (game === undefined || !Object.hasOwn(game, reservation.modId)) targetFailure();
++    checkNativeAdoptionRecord(game[reservation.modId], reservation.committed.recordJSON);
++    const downloads = view(targetRequired(persistent, "downloads")), files = view(targetRequired(downloads, "files"));
++    const row = view(targetRequired(files, reservation.committed.archiveId));
++    checkNativeAdoptionDownload(row, reservation.committed, true);
++    if (copy) { game[reservation.modId] = JSON.parse(reservation.committed.recordJSON); row.game = [reservation.gameId]; row.installed = targetCopy(row.installed, budget); files[reservation.committed.archiveId] = row; downloads.files = files; persistent.downloads = downloads; }
++  }
+   const profiles = view(targetRequired(persistent, "profiles"));
+   if (Object.keys(profiles).length > 4096) targetFailure();
+   for (const id of Object.keys(profiles)) {
+@@ -552,6 +564,29 @@
+     root.persistent = persistent;
+   }
+   return root;
++}
++
++function nativeTargetCommitted(reservation: NativeRendererTarget): boolean { return reservation.phase === "committed_protected"; }
++function nativeTargetProtected(reservation: NativeRendererTarget): boolean {
++  return reservation.phase === "reserved" || reservation.phase === "committed_protected";
++}
++
++// Future fixed coordinator must verify actual main commit before invoking this internal transition.
++export function adoptNativeRendererTarget(owner: object, flushOwner: object, observedJSON: string): void {
++  const reservation = nativeRendererTarget, binding = nativeStoreBinding;
++  if (reservation === undefined || reservation.owner !== owner) throw new Error("NATIVE_RENDERER_TARGET_REFUSED");
++  let action: object | undefined;
++  try {
++    checkNativeRendererTarget(owner);
++    if (binding === undefined || reservation.phase !== "reserved") targetFailure();
++    action = createNativePersistenceAdoption(flushOwner, owner, binding.store, observedJSON);
++    const dispatch = Object.getOwnPropertyDescriptor(binding.store, "dispatch");
++    if (dispatch === undefined || !("value" in dispatch) || typeof dispatch.value !== "function" || nativeTypes.isProxy(dispatch.value)) targetFailure();
++    Reflect.apply(dispatch.value, binding.store, [action]);
++    finishNativePersistenceAdoption(action);
++    if (!nativeTargetCommitted(reservation)) targetFailure();
++    checkNativeRendererTarget(owner);
++  } catch (error) { if (action !== undefined) failNativePersistenceAdoption(action); failNativePersistenceFlushAdoption(flushOwner); reservation.phase = "held"; holdNativeStore(); throw error; }
+ }
+ 
+ export function reserveNativeRendererTarget(gameId: string, modId: string): object {
+@@ -579,7 +614,7 @@
+ export function checkNativeRendererTarget(owner: object): void {
+   if (nativeStoreReading || nativeRendererDepth !== 0) { holdNativeStore(); throw new Error("NATIVE_RENDERER_STORE_HELD"); }
+   const reservation = nativeRendererTarget;
+-  if (reservation === undefined || reservation.owner !== owner || reservation.phase !== "reserved"
++  if (reservation === undefined || reservation.owner !== owner || !nativeTargetProtected(reservation)
+       || nativeRendererDepth !== 0) throw new Error("NATIVE_RENDERER_TARGET_REFUSED");
+   try {
+     sampleNativeStore("bound");
+@@ -600,10 +635,10 @@
+   const leaf = (state: any, action: any) => {
+     const reservation = nativeRendererTarget;
+     if (reservation === undefined) return reduce(state, action);
+-    if (reservation.phase !== "reserved") targetFailure();
++    if (!nativeTargetProtected(reservation)) targetFailure();
+     const working = targetWorkingState(state, reservation, true);
+     const result = reduce(working, action);
+-    if (reservation.phase !== "reserved") targetFailure();
++    if (!nativeTargetProtected(reservation)) targetFailure();
+     targetWorkingState(result, reservation);
+     return result;
+   };
+@@ -627,14 +662,41 @@
+       } finally { nativeRendererDepth--; }
+     }
+     if (nativeRendererDepth !== 0 || reservation.factory !== factory
+-        || state !== nativeRendererState || reservation.phase !== "reserved") targetFailure();
++        || state !== nativeRendererState || !nativeTargetProtected(reservation)) targetFailure();
+     nativeRendererDepth++;
+     try {
+       // Empty/nested-empty batches call no leaf: validate at both boundaries.
+       targetWorkingState(state, reservation);
+-      const result = batched(state, action);
+-      if (reservation.phase !== "reserved") targetFailure();
++      const binding = nativeStoreBinding;
++      if (binding === undefined) targetFailure();
++      const adoption = consumeNativePersistenceAdoption(action, reservation.owner, binding.store, reservation.gameId, reservation.modId);
++      let result: any;
++      if (adoption !== undefined) {
++        if (reservation.phase !== "reserved" || reservation.committed !== undefined) targetFailure();
++        result = targetWorkingState(state, reservation, true);
++        const budget = { remaining: 16384 };
++        const downloads = targetCopy(targetRequired(result.persistent, "downloads"), budget);
++        const files = targetCopy(targetRequired(downloads, "files"), budget), row = targetCopy(targetRequired(files, adoption.archiveId), budget);
++        checkNativeAdoptionDownload(row, adoption, false);
++        const game = Object.hasOwn(result.persistent.mods, reservation.gameId) ? result.persistent.mods[reservation.gameId] : {};
++        game[reservation.modId] = JSON.parse(adoption.recordJSON);
++        result.persistent.mods[reservation.gameId] = game;
++        row.installed = { gameId: reservation.gameId, modId: reservation.modId };
++        files[adoption.archiveId] = row; downloads.files = files; result.persistent.downloads = downloads;
++        reservation.committed = adoption; reservation.phase = "committed_protected";
++      } else result = batched(state, action);
++      if (!nativeTargetProtected(reservation)) targetFailure();
+       targetWorkingState(result, reservation);
++      // Equal protected values keep their old references so stateDiff does not
++      // echo already committed rows merely because the fence used working copies.
++      if (reservation.committed !== undefined && adoption === undefined) {
++        const committed = reservation.committed;
++        result.persistent.mods[reservation.gameId][reservation.modId] = state.persistent.mods[reservation.gameId][reservation.modId];
++        const priorDownload = state.persistent.downloads.files[committed.archiveId];
++        const currentDownload = result.persistent.downloads.files[committed.archiveId];
++        currentDownload.game = priorDownload.game;
++        currentDownload.installed = priorDownload.installed;
++      }
+       nativeRendererState = result;
+       return result;
+     } catch (err) {

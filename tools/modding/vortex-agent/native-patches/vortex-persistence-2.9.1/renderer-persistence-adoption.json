@@ -1,0 +1,24 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/renderer/src/store/persistDiffMiddleware.ts",
+  "originalSourceSHA256": "d4dbc85a48739c30239bda2b6b091ef9631b5e9df6b3affcd935a4a3a5cf0262",
+  "inputSHA256": "b4368a21ab8fb00ea5038708dd3008c270d2a3df3005221be9ac87fc088a1ca6",
+  "outputSHA256": "56862197cee81144c886bdce89e1fb9fe3c1b4ff8b5e2d879205531967621788",
+  "patchSHA256": "d5b46a4219cc4d322701c161002748341ceb320c28dc0a0944e85d4b7e32b1d0",
+  "prerequisitePatch": "renderer-acknowledged-hold.patch",
+  "prerequisitePatchSHA256": "ec4926d5d20e0854cdd6ab3636083c31bfaee099a2f9dd3af0671c70dce0c600",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "installationPermit": false,
+  "powerLossPersistenceVerified": false,
+  "releaseSupported": false,
+  "limitations": [
+    "Internal exact renderer adoption only; v2 data is not authenticated main commit authority. Future source-bound coordinator must verify commit before minting.",
+    "Main/SQL/backend release and renderer target release are not implemented; renderer flush remains held.",
+    "Trusted Redux/enhancer integration, not arbitrary privileged JavaScript isolation."
+  ]
+}

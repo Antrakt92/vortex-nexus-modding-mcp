@@ -1,0 +1,210 @@
+--- a/src/main/src/store/LevelPersist.ts
++++ b/src/main/src/store/LevelPersist.ts
+@@ -91,4 +91,48 @@
+   } catch { throw new Error("NATIVE_REGISTRATION_REQUEST"); }
+ }
++export interface NativeTrackedModRegistrationRequest extends Omit<NativeNewModRegistrationRequest, "schema" | "archiveId"> {
++  schema: "native-tracked-mod-registration-request/2";
++  archive: { id: string; state: "finished"; game: string[]; localPath: string; size: number; fileMD5: string; archiveSHA256: string };
++}
++export function snapshotNativeTrackedModRegistration(bytes: Uint8Array): NativeTrackedModRegistrationRequest {
++  try {
++    if (!nativeRegistrationTypes.isUint8Array(bytes) || nativeRegistrationTypes.isProxy(bytes)) throw new Error();
++    const typed = Object.getPrototypeOf(Uint8Array.prototype);
++    const size = Object.getOwnPropertyDescriptor(typed, "byteLength")?.get?.call(bytes);
++    const buffer = Object.getOwnPropertyDescriptor(typed, "buffer")?.get?.call(bytes);
++    if (typeof size !== "number" || size < 1 || size > 8192 || nativeRegistrationTypes.isSharedArrayBuffer(buffer)) throw new Error();
++    const copy = new Uint8Array(size); Uint8Array.prototype.set.call(copy, bytes);
++    const text = new NativeRegistrationDecoder("utf-8", { fatal: true }).decode(copy);
++    const value = JSON.parse(text) as NativeTrackedModRegistrationRequest;
++    const keys = ["schema", "operationId", "nativeJobId", "requestSHA256", "planId", "gameId", "modId", "installationPath", "payloadSHA256", "archive"];
++    const archiveKeys = ["id", "state", "game", "localPath", "size", "fileMD5", "archiveSHA256"];
++    if (value === null || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== keys.length
++        || keys.some(key => !Object.hasOwn(value, key)) || value.schema !== "native-tracked-mod-registration-request/2") throw new Error();
++    const archive = value.archive;
++    if (archive === null || typeof archive !== "object" || Array.isArray(archive) || Object.keys(archive).length !== archiveKeys.length
++        || archiveKeys.some(key => !Object.hasOwn(archive, key)) || archive.state !== "finished"
++        || !Array.isArray(archive.game) || archive.game.length !== 1 || archive.game[0] !== value.gameId
++        || typeof archive.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(archive.id)
++        || ["__proto__", "constructor", "prototype"].includes(archive.id.toLowerCase())
++        || !Number.isSafeInteger(archive.size) || archive.size < 1 || archive.size > 1099511627776
++        || typeof archive.fileMD5 !== "string" || !/^[a-f0-9]{32}$/.test(archive.fileMD5)
++        || typeof archive.archiveSHA256 !== "string" || !/^[a-f0-9]{64}$/.test(archive.archiveSHA256)) throw new Error();
++    const leaf = archive.localPath;
++    if (typeof leaf !== "string" || leaf.length < 1 || leaf.length > 255 || !/^[\x20-\x7e]+$/.test(leaf)
++        || /[<>:"/\\|?*]/.test(leaf) || /[. ]$/.test(leaf) || [".", ".."].includes(leaf)
++        || /^(?:con|prn|aux|nul|conin\$|conout\$|com[1-9]|lpt[1-9])(?:\.|$)/i.test(leaf)) throw new Error();
++    const minimal = { schema: "native-new-mod-registration-request/1", operationId: value.operationId, nativeJobId: value.nativeJobId,
++      requestSHA256: value.requestSHA256, planId: value.planId, gameId: value.gameId, modId: value.modId,
++      installationPath: value.installationPath, payloadSHA256: value.payloadSHA256, archiveId: null };
++    snapshotNativeNewModRegistration(Buffer.from(JSON.stringify(minimal)));
++    // Explicit key order, including the nested archive, rejects duplicates and lossy JSON.
++    const detached = Object.fromEntries(keys.map(key => [key, key === "archive"
++      ? Object.fromEntries(archiveKeys.map(name => [name, archive[name as keyof typeof archive]]))
++      : value[key as keyof typeof value]]));
++    if (text !== JSON.stringify(detached)) throw new Error();
++    Object.freeze(archive.game); Object.freeze(archive); return Object.freeze(value);
++  } catch { throw new Error("NATIVE_TRACKED_REGISTRATION_REQUEST"); }
++}
++
+ interface NativeRegistrationAttempt {
+   backendOwner: object; sqlOwner: object; registry: QueryRegistry;
+@@ -297,6 +341,89 @@
+   }
+ 
++  async #readTrackedArchive(request: NativeTrackedModRegistrationRequest) {
++    const archive = request.archive, base = ["persistent", "downloads", "files", archive.id].join(SEPARATOR);
++    const source = ["state", "game", "localPath", "size", "fileMD5"].map(key => ({ key: base + SEPARATOR + key,
++      value: JSON.stringify(archive[key as "state" | "game" | "localPath" | "size" | "fileMD5"]) }));
++    const allowed = new Map(source.map(row => [row.key, row.value]));
++    allowed.set(base + SEPARATOR + "id", JSON.stringify(archive.id));
++    const selected = await this.#mConnection.runAndReadAll(
++      `SELECT key, CASE WHEN key IN ($2,$3,$4,$5,$6,$7) THEN value ELSE NULL END FROM ${this.#mAlias}.kv
++       WHERE key IN ('persistent###downloads','persistent###downloads###files',$1,$2,$3,$4,$5,$6,$7)
++         OR key = $1 || '###installed' OR starts_with(key, $1 || '###installed###')
++         OR starts_with(key,$2 || '###') OR starts_with(key,$3 || '###') OR starts_with(key,$4 || '###')
++         OR starts_with(key,$5 || '###') OR starts_with(key,$6 || '###') OR starts_with(key,$7 || '###') LIMIT 8`,
++      [base, ...source.map(row => row.key), base + SEPARATOR + "id"]);
++    const found = selected.getRows(), missing = new Set(source.map(row => row.key));
++    if (!Array.isArray(found) || found.length < 5 || found.length > 6) throw new Error("NATIVE_TRACKED_ARCHIVE_CONFLICT");
++    const seen = new Set<string>();
++    for (const row of found) {
++      if (!Array.isArray(row) || row.length !== 2 || typeof row[0] !== "string" || seen.has(row[0])
++          || !allowed.has(row[0]) || allowed.get(row[0]) !== row[1]) throw new Error("NATIVE_TRACKED_ARCHIVE_CONFLICT");
++      seen.add(row[0]); missing.delete(row[0]);
++    }
++    if (missing.size !== 0) throw new Error("NATIVE_TRACKED_ARCHIVE_CONFLICT");
++    // Only reference/hash/name projections cross into JS, never urls or modInfo.
++    // Parent/blob representations and malformed relevant fields cannot prove absence.
++    const global = await this.#mConnection.runAndReadAll(
++      `WITH keys AS (SELECT key,value,string_split(key,'###') AS p FROM ${this.#mAlias}.kv)
++       SELECT CASE WHEN length(key)<=512 THEN key ELSE '' END,
++              CASE WHEN length(value)<=512 THEN value ELSE NULL END FROM keys
++       WHERE (starts_with(key,'persistent###mods###') AND (array_length(p)<=4
++          OR list_extract(p,5) IN ('archiveId','fileMD5')
++          OR (list_extract(p,5)='attributes' AND (array_length(p)=5 OR list_extract(p,6)='fileMD5'))))
++         OR (starts_with(key,'persistent###downloads###files###') AND (array_length(p)<=4
++          OR list_extract(p,5) IN ('fileMD5','localPath'))) LIMIT 40001`);
++    const rows = global.getRows();
++    if (!Array.isArray(rows) || rows.length > 40000) throw new Error("NATIVE_TRACKED_ARCHIVE_LIMIT");
++    const pairs = new Map<string, Set<string>>();
++    let budget = 0;
++    for (const row of rows) {
++      if (!Array.isArray(row) || row.length !== 2 || typeof row[0] !== "string" || typeof row[1] !== "string"
++          || (budget += row[0].length + row[1].length) > 8 * 1024 * 1024) throw new Error("NATIVE_TRACKED_ARCHIVE_CONFLICT");
++      const parts = row[0].split(SEPARATOR); let value: unknown;
++      try { value = JSON.parse(row[1]); } catch { throw new Error("NATIVE_TRACKED_ARCHIVE_CONFLICT"); }
++      if (typeof value !== "string") throw new Error("NATIVE_TRACKED_ARCHIVE_CONFLICT");
++      if (parts[1] === "mods") {
++        if (parts.length === 5 && parts[4] === "archiveId") {
++          if (value === archive.id) throw new Error("NATIVE_TRACKED_ARCHIVE_CONFLICT");
++        } else if ((parts.length === 5 && parts[4] === "fileMD5")
++            || (parts.length === 6 && parts[4] === "attributes" && parts[5] === "fileMD5")) {
++          if (!/^[a-f0-9]{32}$/.test(value) || value === archive.fileMD5) throw new Error("NATIVE_TRACKED_ARCHIVE_CONFLICT");
++        } else throw new Error("NATIVE_TRACKED_ARCHIVE_CONFLICT");
++      } else if (parts.length === 5) {
++        const downloadId = parts[3], field = parts[4];
++        if (typeof downloadId !== "string" || typeof field !== "string") throw new Error("NATIVE_TRACKED_ARCHIVE_CONFLICT");
++        if ((field === "fileMD5" && !/^[a-f0-9]{32}$/.test(value)) || value.length === 0) throw new Error("NATIVE_TRACKED_ARCHIVE_CONFLICT");
++        if (downloadId !== archive.id && ((field === "fileMD5" && value === archive.fileMD5)
++            || (field === "localPath" && value.toLowerCase() === archive.localPath.toLowerCase()))) throw new Error("NATIVE_TRACKED_ARCHIVE_CONFLICT");
++        const pair = pairs.get(downloadId) ?? new Set<string>();
++        if (pair.has(field)) throw new Error("NATIVE_TRACKED_ARCHIVE_CONFLICT");
++        pair.add(field); pairs.set(downloadId, pair);
++      } else throw new Error("NATIVE_TRACKED_ARCHIVE_CONFLICT");
++    }
++    const inventory = await this.#mConnection.runAndReadAll(
++      `SELECT DISTINCT CASE WHEN length(list_extract(string_split(key,'###'),4))<=200
++         THEN list_extract(string_split(key,'###'),4) ELSE '' END FROM ${this.#mAlias}.kv
++       WHERE starts_with(key,'persistent###downloads###files###') LIMIT 10001`);
++    const ids = inventory.getRows();
++    if (!Array.isArray(ids) || ids.length > 10000 || ids.length !== pairs.size) throw new Error("NATIVE_TRACKED_ARCHIVE_CONFLICT");
++    const inventorySeen = new Set<string>();
++    for (const row of ids) {
++      if (!Array.isArray(row) || row.length !== 1 || typeof row[0] !== "string" || inventorySeen.has(row[0])
++          || !pairs.get(row[0])?.has("localPath") || !pairs.get(row[0])?.has("fileMD5")) throw new Error("NATIVE_TRACKED_ARCHIVE_CONFLICT");
++      inventorySeen.add(row[0]);
++    }
++    return { base, source, optionalId: seen.has(base + SEPARATOR + "id")
++      ? [{ key: base + SEPARATOR + "id", value: JSON.stringify(archive.id) }] : [] };
++  }
++
+   /** Fixed one-shot primitive; this does not authorize tracked installation or release. */
+-  public async registerNativeNewMod(backendOwner: object, sqlOwner: object, registry: QueryRegistry, bytes: Uint8Array) {
++  public registerNativeNewMod(backendOwner: object, sqlOwner: object, registry: QueryRegistry, bytes: Uint8Array) {
++    return this.#registerNativeMod(backendOwner, sqlOwner, registry, bytes, "minimal");
++  }
++  public registerNativeTrackedMod(backendOwner: object, sqlOwner: object, registry: QueryRegistry, bytes: Uint8Array) {
++    return this.#registerNativeMod(backendOwner, sqlOwner, registry, bytes, "tracked");
++  }
++  async #registerNativeMod(backendOwner: object, sqlOwner: object, registry: QueryRegistry, bytes: Uint8Array, mode: "minimal" | "tracked") {
+     const hold = this.#mNativeWriteHold, sql = this.#mNativeSQL;
+     if (hold === undefined || hold.owner !== backendOwner || hold.phase !== "reserved" || sql === undefined
+@@ -307,9 +434,13 @@
+     try {
+       this.#checkOwnedRegistration(attempt);
+-      const request = snapshotNativeNewModRegistration(bytes);
+-      const record = { id: request.modId, state: "installed", type: "", installationPath: request.installationPath };
++      const tracked = mode === "tracked" ? snapshotNativeTrackedModRegistration(bytes) : undefined;
++      const request = tracked ?? snapshotNativeNewModRegistration(bytes);
++      const record = { id: request.modId, state: "installed", type: "", installationPath: request.installationPath,
++        ...(tracked === undefined ? {} : { archiveId: tracked.archive.id }) };
+       const recordSHA256 = nativeRegistrationHash("sha256").update(JSON.stringify(record)).digest("hex");
+-      const marker = { schema: "native-new-mod-registration/1", operationId: request.operationId, nativeJobId: request.nativeJobId,
+-        requestSHA256: request.requestSHA256, planId: request.planId, payloadSHA256: request.payloadSHA256, recordSHA256, archiveId: null };
++      const marker = { schema: tracked === undefined ? "native-new-mod-registration/1" : "native-tracked-mod-registration/2", operationId: request.operationId, nativeJobId: request.nativeJobId,
++        requestSHA256: request.requestSHA256, planId: request.planId, payloadSHA256: request.payloadSHA256, recordSHA256,
++        archiveId: tracked?.archive.id ?? null, ...(tracked === undefined ? {} : { archiveSHA256: tracked.archive.archiveSHA256,
++          downloadProjectionSHA256: nativeRegistrationHash("sha256").update(JSON.stringify(tracked.archive)).digest("hex") }) };
+       const prefix = ["persistent", "mods", request.gameId, request.modId].join(SEPARATOR);
+       const rows = Object.entries(record).map(([key, value]) => ({ key: prefix + SEPARATOR + key, value: JSON.stringify(value) }));
+@@ -327,4 +458,10 @@
+       this.#checkOwnedRegistration(attempt);
+       if (conflict !== false) throw new Error("NATIVE_REGISTRATION_CONFLICT");
++      const archive = tracked === undefined ? undefined : await this.#readTrackedArchive(tracked);
++      this.#checkOwnedRegistration(attempt);
++      if (archive !== undefined) {
++        rows.push({ key: archive.base + SEPARATOR + "installed" + SEPARATOR + "gameId", value: JSON.stringify(request.gameId) });
++        rows.push({ key: archive.base + SEPARATOR + "installed" + SEPARATOR + "modId", value: JSON.stringify(request.modId) });
++      }
+       attempt.phase = "writing";
+       const placeholders = rows.map((_row, index) => `($${index * 2 + 1}, $${index * 2 + 2})`).join(", ");
+@@ -340,4 +477,8 @@
+       attempt.transaction = "committed";
+       this.#checkOwnedRegistration(attempt);
++      const expectedRows = [...rows, ...(archive === undefined ? [] : [...archive.source, ...archive.optionalId])];
++      const extraKeys = archive === undefined ? [] : expectedRows.map(row => row.key);
++      const extraSQL = archive === undefined ? "" : ` OR key = $4 OR key = $4 || '###installed'
++        OR starts_with(key,$4 || '###installed###') OR key IN (${extraKeys.map((_key,index) => "$" + (index + 5)).join(",")})`;
+       const reader = await this.#mConnection.runAndReadAll(
+         `WITH keys AS (SELECT key, value, string_split(key, '###') AS parts FROM ${this.#mAlias}.kv)
+@@ -345,10 +486,12 @@
+            OR key IN ('persistent', 'persistent###mods', 'persistent###profiles', $2)
+            OR (starts_with(key, 'persistent###profiles###') AND (array_length(parts) = 3
+-             OR (list_extract(parts, 4) = 'modState' AND (array_length(parts) = 4 OR list_extract(parts, 5) = $3)))) LIMIT 6`,
+-        [prefix, ["persistent", "mods", request.gameId].join(SEPARATOR), request.modId]);
++             OR (list_extract(parts, 4) = 'modState' AND (array_length(parts) = 4 OR list_extract(parts, 5) = $3))))
++           ${extraSQL} LIMIT ${expectedRows.length + 1}`,
++        [prefix, ["persistent", "mods", request.gameId].join(SEPARATOR), request.modId,
++          ...(archive === undefined ? [] : [archive.base, ...extraKeys])]);
+       this.#checkOwnedRegistration(attempt);
+       const observed = reader.getRows();
+-      if (!Array.isArray(observed) || observed.length !== rows.length) throw new Error("NATIVE_REGISTRATION_READBACK");
+-      const expected = new Map(rows.map(row => [row.key, row.value]));
++      if (!Array.isArray(observed) || observed.length !== expectedRows.length) throw new Error("NATIVE_REGISTRATION_READBACK");
++      const expected = new Map(expectedRows.map(row => [row.key, row.value]));
+       for (const row of observed) {
+         if (!Array.isArray(row) || row.length !== 2 || typeof row[0] !== "string" || expected.get(row[0]) !== row[1]) throw new Error("NATIVE_REGISTRATION_READBACK");
+@@ -358,4 +501,12 @@
+       if (expected.size !== 0) throw new Error("NATIVE_REGISTRATION_READBACK");
+       attempt.phase = "committed";
++      if (tracked !== undefined) {
++        const recordJSON = JSON.stringify({ ...record, attributes: { __nmtNativeRegistration: marker } });
++        return Object.freeze({ schema: "native-tracked-mod-registration-observed/2", operationId: request.operationId,
++          nativeJobId: request.nativeJobId, requestSHA256: request.requestSHA256, recordSHA256, recordJSON,
++          fullRecordSHA256: nativeRegistrationHash("sha256").update(recordJSON).digest("hex"),
++          commitObserved: true, readbackVerified: true, trackedAssociationVerified: true,
++          trackedInstallComplete: false, effectsAllowed: false, installationPermit: false, powerLossPersistenceVerified: false });
++      }
+       return Object.freeze({ schema: "native-new-mod-registration-observed/1", operationId: request.operationId, nativeJobId: request.nativeJobId,
+         requestSHA256: request.requestSHA256, recordSHA256, commitObserved: true, readbackVerified: true,

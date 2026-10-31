@@ -1,0 +1,42 @@
+--- a/src/main/src/store/ReduxPersistorIPC.ts
++++ b/src/main/src/store/ReduxPersistorIPC.ts
+@@ -19,5 +19,5 @@
+ import { terminate } from "../errorHandling";
+ import { log } from "../logging";
+-import LevelPersist, { snapshotNativeNewModRegistration } from "./LevelPersist";
++import LevelPersist, { snapshotNativeNewModRegistration, snapshotNativeTrackedModRegistration } from "./LevelPersist";
+ import type QueryInvalidator from "./QueryInvalidator";
+ 
+@@ -71,4 +71,6 @@
+  */
+ const nativeRegistrationWrite = LevelPersist.prototype.registerNativeNewMod;
++const nativeTrackedRegistrationWrite = LevelPersist.prototype.registerNativeTrackedMod;
++const nativeTrackedRegistrationSnapshot = snapshotNativeTrackedModRegistration;
+ const nativeRegistrationCheck = LevelPersist.prototype.checkNativeNewModRegistration;
+ const nativeRegistrationSnapshot = snapshotNativeNewModRegistration;
+@@ -479,4 +481,10 @@
+   /** Internal minimal registration only; no renderer adoption, release or tracked-install permit. */
+   public registerNativeNewMod(owner: object, bytes: Uint8Array): Promise<unknown> {
++    return this.#registerNativeMod(owner, bytes, "minimal");
++  }
++  public registerNativeTrackedMod(owner: object, bytes: Uint8Array): Promise<unknown> {
++    return this.#registerNativeMod(owner, bytes, "tracked");
++  }
++  #registerNativeMod(owner: object, bytes: Uint8Array, mode: "minimal" | "tracked"): Promise<unknown> {
+     const reservation = this.mNativeModPersistenceReservation;
+     if (reservation === undefined || reservation.owner !== owner || reservation.phase !== "reserved" || this.mNativeRegistration !== undefined) return Promise.reject(new Error("NATIVE_REGISTRATION_REFUSED"));
+@@ -484,5 +492,5 @@
+     this.mNativeRegistration = attempt;
+     try {
+-      const request = nativeRegistrationSnapshot(bytes);
++      const request = mode === "tracked" ? nativeTrackedRegistrationSnapshot(bytes) : nativeRegistrationSnapshot(bytes);
+       if (request.gameId !== reservation.gameId || request.modId !== reservation.modId || request.installationPath !== reservation.modId) throw new Error("NATIVE_REGISTRATION_TARGET");
+       const detached = Buffer.from(JSON.stringify(request));
+@@ -492,5 +500,6 @@
+         if (attempt.phase !== "claimed" || reservation.backendOwner === undefined || reservation.sqlOwner === undefined || reservation.registry === undefined) throw new Error("NATIVE_REGISTRATION_HELD");
+         attempt.phase = "writing";
+-        const result = await nativeRegistrationWrite.call(reservation.levelPersist, reservation.backendOwner, reservation.sqlOwner, reservation.registry, detached);
++        const write = mode === "tracked" ? nativeTrackedRegistrationWrite : nativeRegistrationWrite;
++        const result = await write.call(reservation.levelPersist, reservation.backendOwner, reservation.sqlOwner, reservation.registry, detached);
+         this.checkNativeModPersistenceBackend(reservation);
+         if (attempt.phase !== "writing" || this.mNativeRegistration !== attempt) throw new Error("NATIVE_REGISTRATION_HELD");
