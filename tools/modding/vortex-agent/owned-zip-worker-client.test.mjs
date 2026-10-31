@@ -81,7 +81,7 @@ function cloneSources(input) {
   fs.mkdirSync(foreign);
   const files = ['owned-zip-worker-client.mjs', 'owned-zip-worker.py', 'owned-file-transfer.py', 'owned-zip-extractor.py',
     'native-executor-journal.mjs', 'native-intent-journal.mjs', 'immutable-records.mjs', 'paths.cjs',
-    'native-dispatch-contract.cjs', 'install-job-contract.cjs', 'strict-json.cjs'];
+    'native-dispatch-contract.cjs', 'install-job-contract.cjs', 'strict-json.cjs', 'child-terminal-observer.cjs'];
   for (const file of files) fs.copyFileSync(path.join(HERE, file), path.join(modules, file));
   return {clone, modules, foreign};
 }

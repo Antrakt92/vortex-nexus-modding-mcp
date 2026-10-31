@@ -8,7 +8,8 @@ import {fileURLToPath} from 'node:url';
 import strict from './strict-json.cjs';
 import dispatch from './native-dispatch-contract.cjs';
 import {createNativeExecutorJournal} from './native-executor-journal.mjs';
-import {createImmutableRecordIO} from './immutable-records.mjs';
+import {createImmutableRecordIO, generation} from './immutable-records.mjs';
+import childTerminal from './child-terminal-observer.cjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PYTHON = 'C:/Python314/python.exe';
@@ -74,6 +75,12 @@ function nativeIdentity(v) {
     && [['volumeSerialNumber', 64n], ['fileId', 128n]].every(([k, bits]) =>
       typeof v[k] === 'string' && /^[1-9][0-9]{0,38}$/.test(v[k]) && BigInt(v[k]) < 2n**bits);
 }
+const sameIdentity = (a,b) => nativeIdentity(a) && nativeIdentity(b)
+  && ['schema','volumeSerialNumber','fileId'].every(key=>a[key]===b[key]);
+const sameDestination = (a,b) => exact(a,['parent','leaf','parentIdentity','directoryIdentity'])
+  && exact(b,['parent','leaf','parentIdentity','directoryIdentity']) && a.parent===b.parent && a.leaf===b.leaf
+  && sameIdentity(a.parentIdentity,b.parentIdentity)
+  && (a.directoryIdentity===null && b.directoryIdentity===null || sameIdentity(a.directoryIdentity,b.directoryIdentity));
 function nativeComponent(value) {
   return typeof value === 'string' && value.length > 0 && value.length <= 255
     && /^[\x20-\x7e]+$/.test(value) && !/[<>:"/\\|?*~]/.test(value)
@@ -106,7 +113,18 @@ function archiveValue(bytes, request) {
 }
 
 export function createOwnedZipWorker(requestBytes, archiveBindingBytes) {
+  return createWorker(requestBytes, archiveBindingBytes, false);
+}
+export function createOwnedStagingZipWorker(requestBytes, archiveBindingBytes) {
+  return createWorker(requestBytes, archiveBindingBytes, true);
+}
+function createWorker(requestBytes, archiveBindingBytes, staging) {
   const request = dispatch.parseDispatchRequest(requestBytes);
+  if (staging) {
+    const identifier = value => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(value)
+      && !['__proto__','constructor','prototype'].includes(value.toLowerCase());
+    need(identifier(request.plan.package.expectedModId) && identifier(request.plan.package.downloadId), 'UNSUPPORTED_REGISTRATION_ID');
+  }
   need(Object.keys(request.plan.package.payload).every(name => /^[A-Za-z0-9_./ -]+$/.test(name)
     && name.split('/').length <= 32 && name.split('/').every(nativeComponent)), 'UNSUPPORTED_PAYLOAD');
   const requestSHA256 = dispatch.dispatchRequestDigest(Buffer.from(JSON.stringify(request)));
@@ -121,6 +139,7 @@ export function createOwnedZipWorker(requestBytes, archiveBindingBytes) {
   let childClosed = false, packetSHA256 = null, last = null, firstError = null, sequence = 0;
   let pending = Buffer.alloc(0), stderrBytes = 0;
   let writing = false;
+  let terminal = null, destination = null, copiedProof = null;
   let outbound = [];
   const seen = new Set(), waiters = new Set();
   const journal = createNativeExecutorJournal();
@@ -132,13 +151,18 @@ export function createOwnedZipWorker(requestBytes, archiveBindingBytes) {
       creationTime: ready?.creationTime ?? null, startAttempted, startSent, handoffAttempted,
       cancelAttempted, releaseAttempted, childClosed, phase: last?.phase ?? (ready ? 'ready' : 'not_started'),
       childExitCode: child?.exitCode ?? null, childSignal: child?.signalCode ?? null,
-      worker: last, errorCode: firstError, stderrObserved: stderrBytes > 0,
+      worker: last, destination: last?.destination ?? (destination ? {...destination, directoryIdentity:null} : null),
+      copyProof: last?.copyProof ?? null, workerTerminal: terminal?.read() ?? null,
+      errorCode: firstError, stderrObserved: stderrBytes > 0,
       effectsAllowed: false, nativeInstallAccepted: false, powerLossPersistenceVerified: false});
   }
+  function terminalClosed() {return terminal?.read().childResourcesClosed === true;}
+  function observed(phase) {return seen.has(phase) && (phase !== 'closed' || terminalClosed());}
   function wake() {
+    if (childClosed && terminalClosed() && occupied === owner) occupied = null;
     for (const item of [...waiters]) {
-      if (seen.has(item.phase)) {clearTimeout(item.timer); waiters.delete(item); item.resolve(status());}
-      else if (childClosed || firstError && item.phase !== 'closed') {clearTimeout(item.timer); waiters.delete(item); item.reject(error(firstError || 'WORKER_CLOSED'));}
+      if (observed(item.phase)) {clearTimeout(item.timer); waiters.delete(item); item.resolve(status());}
+      else if ((childClosed || firstError) && item.phase !== 'closed') {clearTimeout(item.timer); waiters.delete(item); item.reject(error(firstError || 'WORKER_CLOSED'));}
       else if (['held','cancelled'].includes(last?.phase) && !['held','cancelled','released','closed'].includes(item.phase)) {
         clearTimeout(item.timer); waiters.delete(item); item.reject(error(last.errorCode || 'WORKER_STOPPED'));
       }
@@ -146,10 +170,10 @@ export function createOwnedZipWorker(requestBytes, archiveBindingBytes) {
   }
   function fail(code) {firstError ||= code; wake();}
   function wait(phase, timeoutMs = 30000) {
-    need(['ready', 'accepted', 'closed', ...PHASES].includes(phase) && Number.isSafeInteger(timeoutMs)
+    need(['ready', 'accepted', 'closed', 'destination_prepared', ...PHASES].includes(phase) && Number.isSafeInteger(timeoutMs)
       && timeoutMs > 0 && timeoutMs <= 120000, 'INVALID_OBSERVATION');
-    if (seen.has(phase)) return Promise.resolve(status());
-    if (childClosed || firstError && phase !== 'closed') return Promise.reject(error(firstError || 'WORKER_CLOSED'));
+    if (observed(phase)) return Promise.resolve(status());
+    if ((childClosed || firstError) && phase !== 'closed') return Promise.reject(error(firstError || 'WORKER_CLOSED'));
     if (['held','cancelled'].includes(last?.phase) && !['held','cancelled','released','closed'].includes(phase))
       return Promise.reject(error(last.errorCode || 'WORKER_STOPPED'));
     need(waiters.size < 8, 'OBSERVER_CAPACITY');
@@ -177,15 +201,38 @@ export function createOwnedZipWorker(requestBytes, archiveBindingBytes) {
       need(JSON.stringify(sources()) === JSON.stringify(expectedSources), 'SOURCE_CHANGED');
       ready = value; seen.add('ready'); wake(); return;
     }
-    need(startSent && exact(value, ['schema', 'workerLifetime', 'binding', 'packetSHA256', 'sequence',
-      'phase', 'zipStatus', 'copiedFiles', 'workRoot', 'errorCode', 'effectsAllowed', 'nativeInstallAccepted', 'persistenceVerified'])
-      && value.schema === 'owned-zip-worker-status/1' && value.workerLifetime === ready.workerLifetime
+    if (value?.schema === 'owned-zip-worker-destination/1') {
+      need(staging && !startSent && destination === null
+        && exact(value, ['schema','workerLifetime','binding','destination','effectsAllowed','nativeInstallAccepted'])
+        && value.workerLifetime === ready.workerLifetime && bindingEqual(value.binding)
+        && value.effectsAllowed === false && value.nativeInstallAccepted === false
+        && exact(value.destination,['parent','leaf','parentIdentity'])
+        && nativeIdentity(value.destination.parentIdentity)
+        && path.resolve(value.destination.parent).toLowerCase() === path.resolve(request.plan.context.stagingPath).toLowerCase()
+        && value.destination.leaf === request.plan.package.expectedModId, 'DESTINATION_MISMATCH');
+      destination = value.destination; seen.add('destination_prepared'); wake(); return;
+    }
+    const preparingHeld = staging && !startSent && value?.phase === 'held' && value.packetSHA256 === null;
+    need((startSent || preparingHeld) && exact(value, ['schema', 'workerLifetime', 'binding', 'packetSHA256', 'sequence',
+      'phase', 'zipStatus', 'copiedFiles', 'workRoot', 'errorCode', 'effectsAllowed', 'nativeInstallAccepted', 'persistenceVerified',
+      ...(staging ? ['destination','copyProof'] : [])])
+      && value.schema === (staging ? 'owned-zip-worker-status/2' : 'owned-zip-worker-status/1') && value.workerLifetime === ready.workerLifetime
       && bindingEqual(value.binding) && value.packetSHA256 === packetSHA256
       && Number.isSafeInteger(value.sequence) && value.sequence > sequence && PHASES.has(value.phase)
       && Number.isSafeInteger(value.copiedFiles) && value.copiedFiles >= 0 && value.copiedFiles <= payloadFiles
       && (value.workRoot === null || typeof value.workRoot === 'string' && path.resolve(value.workRoot) === workRoot)
       && finiteCode(value.errorCode) && value.effectsAllowed === false
       && value.nativeInstallAccepted === false && value.persistenceVerified === false, 'STATUS_MISMATCH');
+    if (staging) {
+      need(value.destination === null ? preparingHeld : exact(value.destination,['parent','leaf','parentIdentity','directoryIdentity'])
+        && destination !== null && value.destination.parent === destination.parent && value.destination.leaf === destination.leaf
+        && sameIdentity(value.destination.parentIdentity,destination.parentIdentity)
+        && (value.destination.directoryIdentity === null || nativeIdentity(value.destination.directoryIdentity)), 'DESTINATION_MISMATCH');
+      need(value.copyProof === null || exact(value.copyProof,['identity','bytes','sha256','files','totalBytes'])
+        && nativeIdentity(value.copyProof.identity) && Number.isSafeInteger(value.copyProof.bytes) && value.copyProof.bytes > 0
+        && value.copyProof.bytes <= 4*1024*1024 && typeof value.copyProof.sha256==='string' && /^[a-f0-9]{64}$/.test(value.copyProof.sha256)
+        && value.copyProof.files === payloadFiles && value.copyProof.totalBytes === request.plan.package.expectedUncompressedBytes, 'COPY_PROOF_MISMATCH');
+    }
     const zip = value.zipStatus;
     need(zip === null || exact(zip, ['backend', 'startAttempted', 'started', 'completed', 'cancelled', 'poisoned',
       'closed', 'errorCode', 'binding', 'createdFiles', 'verifiedFiles', 'writtenBytes', 'effectsAllowed', 'nativeInstallAccepted', 'persistenceVerified'])
@@ -201,8 +248,45 @@ export function createOwnedZipWorker(requestBytes, archiveBindingBytes) {
       && value.workRoot !== null, 'COMPLETION_MISMATCH');
     if (['copying','copied'].includes(value.phase)) need(handoffAttempted, 'UNREQUESTED_HANDOFF');
     if (value.phase === 'released') need(releaseAttempted, 'UNREQUESTED_RELEASE');
-    if (value.phase === 'copied') need(value.copiedFiles === payloadFiles, 'COPY_COUNT_MISMATCH');
-    sequence = value.sequence; last = value; seen.add('accepted'); seen.add(value.phase); wake();
+    if (value.phase === 'copied') {
+      need(value.copiedFiles === payloadFiles, 'COPY_COUNT_MISMATCH');
+      if (staging && copiedProof === null) copiedProof = readCopyProof(value);
+    }
+    sequence = value.sequence; last = value; if (startSent) seen.add('accepted'); seen.add(value.phase); wake();
+  }
+
+  function readCopyProof(value) {
+    const meta = value.copyProof;
+    need(meta !== null && nativeIdentity(value.destination?.directoryIdentity), 'COPY_PROOF_MISMATCH');
+    const ancestors = scopeIO.ancestry(workRoot); need(ancestors, 'COPY_PROOF_MISMATCH');
+    const file = path.join(workRoot,'CopyProof.json'), before = fs.lstatSync(file,{bigint:true});
+    need(before.isFile() && !before.isSymbolicLink() && before.nlink === 1n && before.size === BigInt(meta.bytes), 'COPY_PROOF_MISMATCH');
+    const fd = fs.openSync(file,'r'); let raw;
+    try {
+      need(generation(fs.fstatSync(fd,{bigint:true})) === generation(before), 'COPY_PROOF_CHANGED');
+      const buffer = Buffer.alloc(meta.bytes+1); let used = 0;
+      while (used < buffer.length) {const n=fs.readSync(fd,buffer,used,Math.min(65536,buffer.length-used),used); if (n===0) break; used+=n;}
+      need(used === meta.bytes && generation(fs.fstatSync(fd,{bigint:true})) === generation(before)
+        && generation(fs.lstatSync(file,{bigint:true})) === generation(before), 'COPY_PROOF_CHANGED');
+      raw=buffer.subarray(0,used); need(sha(raw)===meta.sha256,'COPY_PROOF_CHANGED');
+    } finally {fs.closeSync(fd);}
+    const proof = strict.parseStrictJSON(raw,{maxBytes:4*1024*1024,maxDepth:10,maxTokens:200000});
+    need(exact(proof,['schema','workerLifetime','binding','packetSHA256','destination','files','copiedFiles','totalBytes','effectsAllowed','nativeInstallAccepted','persistenceVerified'])
+      && proof.schema==='owned-zip-copy-proof/1' && proof.workerLifetime===ready.workerLifetime && bindingEqual(proof.binding)
+      && proof.packetSHA256===packetSHA256 && sameDestination(proof.destination,value.destination)
+      && proof.copiedFiles===payloadFiles && proof.totalBytes===request.plan.package.expectedUncompressedBytes
+      && proof.effectsAllowed===false && proof.nativeInstallAccepted===false && proof.persistenceVerified===false
+      && Array.isArray(proof.files) && proof.files.length===payloadFiles,'COPY_PROOF_MISMATCH');
+    const names=Object.keys(request.plan.package.payload).sort(), ids=new Set(); let total=0;
+    for (const [index,row] of proof.files.entries()) {
+      need(exact(row,['path','bytes','sha256','sourceIdentity','destinationIdentity']) && row.path===names[index]
+        && row.sha256===request.plan.package.payload[row.path] && Number.isSafeInteger(row.bytes) && row.bytes>=0
+        && nativeIdentity(row.sourceIdentity) && nativeIdentity(row.destinationIdentity), 'COPY_PROOF_MISMATCH');
+      const id=row.destinationIdentity.volumeSerialNumber+':'+row.destinationIdentity.fileId;
+      need(!ids.has(id),'COPY_PROOF_MISMATCH'); ids.add(id); total+=row.bytes;
+    }
+    need(total===proof.totalBytes,'COPY_PROOF_MISMATCH'); scopeIO.sameAncestry(workRoot,ancestors);
+    return proof;
   }
   function data(bytes) {
     if (firstError) return;
@@ -256,25 +340,41 @@ export function createOwnedZipWorker(requestBytes, archiveBindingBytes) {
         child = spawn(PYTHON, ['-I', '-S', '-B', path.join(HERE, 'owned-zip-worker.py')], {
           cwd: HERE, env: {SystemRoot: process.env.SystemRoot}, windowsHide: true, stdio: ['pipe','pipe','pipe'],
         });
+        terminal = childTerminal.observeChildTerminal(child,binding);
+        for (const stream of [child.stdin,child.stdout,child.stderr]) stream.on('close',wake);
         child.stdout.on('data', data);
         child.stderr.on('data', bytes => {stderrBytes = Math.min(8193, stderrBytes+bytes.length); if (stderrBytes > 8192) fail('STDERR_LIMIT');});
         child.stdin.on('error', () => {if (!releaseAttempted) fail('CONTROL_CLOSED');});
         child.on('error', () => fail('SPAWN_FAILED'));
         child.on('close', (code, signal) => {
-          childClosed = true; outbound = []; seen.add('closed'); if (occupied === owner) occupied = null;
+          childClosed = true; outbound = []; seen.add('closed'); if (occupied === owner && terminalClosed()) occupied = null;
           if (pending.length) firstError ||= 'TRUNCATED_FRAME';
           if (startSent && !seen.has('released')) firstError ||= 'CUSTODY_LOST';
           if (seen.has('released') && (code !== 0 || signal !== null)) firstError ||= 'RELEASE_EXIT_FAILED';
           wake();
         });
         await wait('ready');
+        if (staging && !cancelAttempted && !releaseAttempted) {
+          const stage = request.plan.context.stagingPath;
+          const check = () => {
+            need(scopeIO.ancestry(stage), 'STAGING_CONTEXT_CHANGED');
+            const stat=fs.lstatSync(stage,{bigint:true});
+            need(stat.isDirectory() && !stat.isSymbolicLink()
+              && `${stat.dev}:${stat.ino}`===request.plan.context.filesystemIds.stagingPath,'STAGING_CONTEXT_CHANGED');
+          };
+          check();
+          write({schema:'owned-zip-worker-prepare-destination/1',workerLifetime:ready.workerLifetime,binding,
+            destination:{parent:stage,leaf:request.plan.package.expectedModId}},4096);
+          await wait('destination_prepared'); check();
+        }
         if (cancelAttempted || releaseAttempted) {
           releaseAttempted = true;
           write({schema: 'owned-zip-worker-abort/1', workerLifetime: ready.workerLifetime}, 4096);
           await wait('closed'); throw error('CANCELLED_BEFORE_START');
         }
-        const packet = {schema: 'owned-zip-worker-start/1', workerLifetime: ready.workerLifetime,
-          binding, archive, payload: request.plan.package.payload, total: request.plan.package.expectedUncompressedBytes};
+        const packet = {schema: staging ? 'owned-zip-worker-start/2' : 'owned-zip-worker-start/1', workerLifetime: ready.workerLifetime,
+          binding, archive, payload: request.plan.package.payload, total: request.plan.package.expectedUncompressedBytes,
+          ...(staging ? {destination} : {})};
         const bytes = Buffer.from(JSON.stringify(packet)); need(bytes.length+1 <= START_MAX, 'START_LIMIT');
         packetSHA256 = sha(bytes);
         const held = journal.begin(Buffer.from(JSON.stringify(request)), ready.workerLifetime, packetSHA256);
@@ -289,6 +389,14 @@ export function createOwnedZipWorker(requestBytes, archiveBindingBytes) {
         e.owner = owner; throw e;
       }
     },
+    copyProof() {
+      const observation = terminal?.read();
+      need(staging && copiedProof !== null && !childClosed && !firstError && last?.phase==='copied'
+        && !cancelAttempted && !releaseAttempted && observation?.spawnObserved
+        && !observation.exitObserved && !observation.closeObserved && !observation.childErrorObserved
+        && !observation.held, 'COPY_PROOF_UNAVAILABLE');
+      return structuredClone(copiedProof);
+    },
     cancel() {
       need(!releaseAttempted, 'RELEASE_PENDING');
       if (!startSent) {cancelAttempted = true; return Promise.resolve(status());}
@@ -301,10 +409,10 @@ export function createOwnedZipWorker(requestBytes, archiveBindingBytes) {
       handoffAttempted = true; control('handoff'); return wait('copied');
     },
     async release() {
-      if (childClosed && seen.has('released')) return status();
+      if (childClosed && seen.has('released')) return await wait('closed');
       if (!startSent) {
         if (!startAttempted) {releaseAttempted = true; return status();}
-        if (childClosed) return status();
+        if (childClosed) return await wait('closed');
         if (!ready && inertLifetime) {
           if (!releaseAttempted) {
             releaseAttempted = true;
@@ -324,14 +432,16 @@ export function createOwnedZipWorker(requestBytes, archiveBindingBytes) {
         && (last?.phase !== 'held' || cancelAttempted)
         && (!handoffAttempted || seen.has('copied') || ['cancelled','held'].includes(last?.phase)), 'RELEASE_REFUSED');
       if (!releaseAttempted) {releaseAttempted = true; control('release');}
-      await wait('released'); child.stdin.end(); return await wait('closed');
+      await wait('released'); child.stdin.end();
+      const closed=await wait('closed'); need(closed.workerTerminal?.exitSucceeded===true,'RELEASE_EXIT_FAILED'); return closed;
     },
     async retireInert() {
       // Explicit retirement of this exact child only. Once start was attempted
       // on the pipe, even a lost acknowledgement permanently forbids this route.
       need(!startSent && !handoffAttempted, 'RETIRE_ACTIVE_REFUSED');
       releaseAttempted = true;
-      if (!child || childClosed) return status();
+      if (!child) return status();
+      if (childClosed) return await wait('closed');
       need(expectedSources !== null && child.kill('SIGTERM'), 'INERT_RETIRE_FAILED');
       return await wait('closed');
     },

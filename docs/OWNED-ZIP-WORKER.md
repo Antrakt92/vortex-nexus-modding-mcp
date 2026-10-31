@@ -5,9 +5,12 @@ acquires the archive lease, drives the [ZIP decoder](OWNED-ZIP-EXTRACTOR.md)
 locally and retains its handles across extraction and copying. Reading status
 does not advance the decoder.
 
-This internal component writes its own scratch directories. It does not register
-a Vortex mod, import a tracked archive, enable or deploy anything. The public MCP
-installation operation remains disabled.
+The original factory writes its own scratch directories. A separate staging
+factory can prepare the plan's existing parent and publish one new destination;
+it has been exercised only in own synthetic staging fixtures. Neither factory
+registers a Vortex mod, imports a tracked archive, enables or deploys anything.
+The public MCP installation operation remains disabled. Managed use still needs
+the source-bound coordinator and durable startup/discovery gate.
 
 ## Fixed scope and runtime
 
@@ -28,7 +31,7 @@ generations. A size check does not authorize an unbounded whole-file read.
 
 The separate archive binding requires explicit `win-file-id128/1` parent/file
 identities. Node `dev:ino` context labels must not be converted into that domain.
-All output paths derive from the maintained source checkout:
+The original factory's output paths derive from the maintained source checkout:
 `local-state/owned-zip-worker-work/<operationId>/Extract` and `Final`.
 The coordinator checks the scratch ancestry without creating directories. The
 guardian opens or exclusively creates the fixed parent directories relative to
@@ -36,6 +39,46 @@ retained native handles, refusing reparse points even after coordinator prefligh
 The operation directory and outputs are created exclusively. Embedded game and
 staging paths do not authorize writes there. A real staging target still needs
 native admission, shared exclusion and registration.
+
+The staging factory keeps `Extract` and its proof file in the same owned work
+directory, but derives the final parent/leaf exclusively from
+`plan.context.stagingPath` and `plan.package.expectedModId`. It does not accept a
+second caller-selected output path. Plan fields remain data, not native authority.
+
+## Prepared staging parent
+
+`createOwnedStagingZipWorker(requestBytes, archiveBindingBytes)` uses the existing
+SDK lifecycle and permanent journal. It rejects the intersection of IDs unsupported
+by native v2 registration before spawning; case variants of reserved download
+IDs also refuse. This early check does not replace parsing the complete native
+registration request in the future coordinator.
+
+After ready, the SDK checks the plan's Node filesystem identity, then sends one
+read-only destination preparation request. Python walks and retains the native
+parent chain and returns its `win-file-id128/1` observation. The SDK checks the
+Node identity again while that chain remains held. These are separately bound
+identity domains; neither is cast into the other.
+
+The version-2 START packet includes the exact returned destination tuple. Its
+digest is reserved by the existing executor journal before START delivery.
+Python checks it against its retained token and parent handle. Handoff creates
+the new leaf relative to that handle without reopening the parent path. Existing
+targets, including case aliases, refuse without merging or overwriting files.
+
+After successful copying, the guardian creates `CopyProof.json` exclusively
+through its held operation-directory handle. The bounded proof binds worker,
+request and packet identities, native destination directory identity and every
+verified source/destination file identity, byte count and SHA-256. The SDK reads
+at most the admitted four-MiB limit, verifies exact bytes/hash, schema, ancestry
+and the complete expected payload before accepting `copied`. Status exposes only
+the compact proof metadata; `copyProof()` returns a detached full snapshot while
+the copied worker still has live custody. Cancellation, release, errors or actual
+child exit invalidate this live accessor, even before the last pipe closes.
+
+The destination becomes visible before copying completes. This is not atomic
+directory publication. Restart-before-discovery reconciliation remains required
+before this component can operate on managed Vortex staging. EOF and partial
+failure do not delete, retry or register that directory.
 
 ## Intent and job reservation
 
@@ -68,9 +111,10 @@ Only one worker may occupy a coordinator module at a time.
 | `status()` | Copies cached bound observations without I/O |
 | `waitFor(phase, timeoutMs)` | Waits passively; timeout preserves ownership and never restarts or kills work |
 | `cancel()` | Reserves cancellation before delivery; stops future steps and retains partial output |
-| `handoff()` | Once only, in the same Python process; copies the frozen payload through original handles to the fixed Final root |
+| `handoff()` | Once only, in the same Python process; copies the frozen payload through original handles to Final or the prepared staging destination |
 | `release()` | After completed work or acknowledged cancellation, closes borrower, ZIP owner, parent and runtime guard, then observes child/stdio closure |
 | `inspectIntent()` | Reads original journal bindings without resuming work |
+| `copyProof()` | Staging factory only: returns the checked full manifest while copied custody remains live; no additional pipe command or filesystem effects |
 | `retireInert()` | Explicit retirement of that exact retained child only before a start-packet write attempt; refuses active/uncertain work |
 
 NDJSON frames have fixed schemas and size limits. The coordinator permits one
@@ -100,6 +144,17 @@ custody. The coordinator records `CUSTODY_LOST`, refuses handoff and preserves
 the no-replay journal. Tests deliberately retire their own quiescent held process;
 this is not an automatic active-worker termination or recovery API. Survival of
 a coordinator/OS job/boot is not established by the EOF test.
+
+`workerTerminal` separately observes the actual Python child and its three exact
+pipes through `child-terminal-observer.cjs`. The historical `childClosed` event
+alone cannot resolve `waitFor('closed')`; all owned pipe close facts must also be
+observed. A successful release additionally requires normal process exit.
+Neither observation establishes descendant termination or power-loss durability.
+
+Terminal history and bounded startup census are documented in
+[Executor terminal history](NATIVE-EXECUTOR-TERMINAL.md). The SDK still reserves
+one intent/job pair; only the future actual coordinator may append completion
+after registration, adoption, physical closure and release have all succeeded.
 
 ## Local qualification
 
