@@ -276,7 +276,7 @@
     },
     {
       "path": "docs/LOCAL-INSTALL-IMPLEMENTATION.md",
-      "sha256_lf": "aaa56ecf2e8e305db796db350612faa74abe98d42e81401543d4fedc65e8c5f4"
+      "sha256_lf": "9821180fee97d158fefb5978a2223470e655a5c8f5d335567f1272b7e8fe19b1"
     },
     {
       "path": "docs/MAINTENANCE.md",
@@ -393,6 +393,10 @@
     {
       "path": "docs/OWNED-ZIP-EXTRACTOR.md",
       "sha256_lf": "c31d9e3c6983cdfb4ee5604b1ebfb1ac9aeeac8aeda2e8a6c683862f186e622c"
+    },
+    {
+      "path": "docs/OWNED-ZIP-RELAY.md",
+      "sha256_lf": "74e4723d35f44a717595998fefaa919853a0081d3dd75627ea8d99d88f88e765"
     },
     {
       "path": "docs/OWNED-ZIP-WORKER.md",
@@ -1933,6 +1937,18 @@
     {
       "path": "tools/modding/vortex-agent/owned-zip-extractor.test.py",
       "sha256_lf": "6f8d46bd08e4ce135e9f159dab2f9e0b43d6afcd4eacaebefaaebdd5f482db57"
+    },
+    {
+      "path": "tools/modding/vortex-agent/owned-zip-relay-client.mjs",
+      "sha256_lf": "0a18fde1dfbc6ec9a29225415e999c887d141b35cb499e15543a6a7f3fb444a3"
+    },
+    {
+      "path": "tools/modding/vortex-agent/owned-zip-relay-runner.mjs",
+      "sha256_lf": "a5e70ffc7fc82c81d5185bf84113c8c08ca98edb40211beb3330f036d30d960c"
+    },
+    {
+      "path": "tools/modding/vortex-agent/owned-zip-relay.test.mjs",
+      "sha256_lf": "eaca09040c0d782d44ad9a99f25d2a3fe593b6ac564080a95d193e84224a2651"
     },
     {
       "path": "tools/modding/vortex-agent/owned-zip-staging-worker.test.mjs",
