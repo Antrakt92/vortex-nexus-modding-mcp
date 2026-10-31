@@ -1,0 +1,23 @@
+--- a/src/main/src/store/QueryRegistry.ts
++++ b/src/main/src/store/QueryRegistry.ts
+@@ -374,4 +374,20 @@
+   }
+ 
++  /** Internal source-created finalizer; no SQL, event or caller callback. */
++  public prepareNativeQueryRelease(owner: object, connection: DuckDBConnection): () => void {
++    this.checkNativeQueryOwner(owner, connection);
++    const generation = this.#mNativeGeneration;
++    let consumed = false;
++    return () => {
++      // Qualified query rows/params are detached and frozen at initialization.
++      if (consumed || this.#mNativeOwner !== owner || this.#mConnection !== connection
++          || Object.getPrototypeOf(this) !== QueryRegistry.prototype || Reflect.ownKeys(this).length !== 0
++          || !this.#mNativeQualified || this.#mNativeBroken || this.#mNativePending !== 0
++          || this.#mNativeInitializations !== 1 || this.#mNativeGeneration !== generation) throw new Error("NATIVE_QUERY_RELEASE_REFUSED");
++      consumed = true;
++      this.#mNativeOwner = undefined;
++    };
++  }
++
+   public checkNativeQueryOwner(owner: object, connection: DuckDBConnection): void {
+     this.#nativeExact();

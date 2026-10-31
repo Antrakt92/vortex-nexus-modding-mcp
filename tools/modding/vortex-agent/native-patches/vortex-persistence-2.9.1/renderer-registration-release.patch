@@ -1,0 +1,102 @@
+--- a/src/renderer/src/reducers/index.ts
++++ b/src/renderer/src/reducers/index.ts
+@@ -12,6 +12,9 @@
+ import { createReducer } from "redux-act";
+ import { enableBatching } from "redux-batched-actions";
+ 
++import { prepareNativePersistenceRegistrationRelease, checkNativePersistenceRegistrationRelease,
++  armNativePersistenceRegistrationRelease, failNativePersistenceRegistrationRelease } from "../store/persistDiffMiddleware";
++import type { NativeRendererReleaseFinalizer } from "../store/persistDiffMiddleware";
+ import { createNativePersistenceAdoption, consumeNativePersistenceAdoption, finishNativePersistenceAdoption,
+   failNativePersistenceAdoption, failNativePersistenceFlushAdoption, checkNativeAdoptionRecord, checkNativeAdoptionDownload } from "../store/persistDiffMiddleware";
+ import { log } from "../logging";
+@@ -409,6 +412,11 @@
+   committed?: { gameId: string; modId: string; archiveId: string; recordJSON: string; record: Record<string, any>; projectionSHA256: string; archiveSHA256: string };
+ }
+ let nativeRendererTarget: NativeRendererTarget | undefined;
++interface NativeTargetRelease { owner: object; target: NativeRendererTarget; binding: NativeRendererStoreBinding; flushOwner: object;
++  flushTicket?: object; phase: "preparing" | "prepared" | "armed" | "released" | "held"; }
++let nativeTargetRelease: NativeTargetRelease | undefined;
++const nativeTargetReleaseTickets = new WeakMap<object, NativeTargetRelease>();
++let nativeTargetReleaseDepth = 0;
+ let nativeRendererState: any;
+ let nativeRendererDepth = 0;
+ let nativeRendererFactory: object | undefined;
+@@ -587,6 +595,77 @@
+     if (!nativeTargetCommitted(reservation)) targetFailure();
+     checkNativeRendererTarget(owner);
+   } catch (error) { if (action !== undefined) failNativePersistenceAdoption(action); failNativePersistenceFlushAdoption(flushOwner); reservation.phase = "held"; holdNativeStore(); throw error; }
++}
++
++const nativeTargetReleaseHeld = (record: NativeTargetRelease): boolean => record.phase === "held";
++function failNativeTargetRelease(record: NativeTargetRelease): void {
++  record.phase = "held";
++  failNativePersistenceFlushAdoption(record.flushOwner);
++  if (record.flushTicket !== undefined) failNativePersistenceRegistrationRelease(record.flushTicket);
++  holdNativeStore();
++}
++export function prepareNativeRendererTargetRelease(rootOwner: object, flushOwner: object): object {
++  const target = nativeRendererTarget, binding = nativeStoreBinding;
++  if (target === undefined || target.owner !== rootOwner || binding === undefined) throw new Error("NATIVE_RENDERER_RELEASE_REFUSED");
++  if (nativeTargetRelease !== undefined || nativeTargetReleaseDepth !== 0) {
++    if (nativeTargetRelease !== undefined) failNativeTargetRelease(nativeTargetRelease);
++    throw new Error("NATIVE_RENDERER_RELEASE_HELD");
++  }
++  const record: NativeTargetRelease = { owner: Object.freeze({}), target, binding, flushOwner, phase: "preparing" };
++  nativeTargetRelease = record; nativeTargetReleaseTickets.set(record.owner, record);
++  ++nativeTargetReleaseDepth;
++  try {
++    checkNativeRendererTarget(rootOwner);
++    if (!nativeTargetCommitted(target) || target.committed === undefined || record.phase !== "preparing") throw new Error();
++    record.flushTicket = prepareNativePersistenceRegistrationRelease(flushOwner, rootOwner, binding.store);
++    if (record.phase !== "preparing" || nativeRendererTarget !== target || nativeStoreBinding !== binding) throw new Error();
++    record.phase = "prepared";
++  } catch (error) { failNativeTargetRelease(record); throw error; }
++  finally { --nativeTargetReleaseDepth; }
++  checkNativeRendererTargetRelease(record.owner);
++  return record.owner;
++}
++export function checkNativeRendererTargetRelease(ticket: object): void {
++  const record = nativeTargetReleaseTickets.get(ticket);
++  if (record === undefined || nativeTargetRelease !== record) throw new Error("NATIVE_RENDERER_RELEASE_REFUSED");
++  if (nativeTargetReleaseDepth !== 0) { failNativeTargetRelease(record); throw new Error("NATIVE_RENDERER_RELEASE_REENTRY"); }
++  ++nativeTargetReleaseDepth;
++  try {
++    if (record.phase !== "prepared" && record.phase !== "armed") throw new Error();
++    checkNativeRendererTarget(record.target.owner);
++    if (!nativeTargetCommitted(record.target) || nativeRendererTarget !== record.target || nativeStoreBinding !== record.binding
++        || record.flushTicket === undefined || record.target.committed !== checkNativePersistenceRegistrationRelease(record.flushTicket)) throw new Error();
++    if (nativeTargetReleaseHeld(record)) throw new Error();
++  } catch (error) { failNativeTargetRelease(record); throw error; }
++  finally { --nativeTargetReleaseDepth; }
++}
++export function failNativeRendererTargetRelease(ticket: object): void {
++  const record = nativeTargetReleaseTickets.get(ticket);
++  if (record !== undefined && nativeTargetRelease === record) failNativeTargetRelease(record);
++}
++export function armNativeRendererTargetRelease(ticket: object): NativeRendererReleaseFinalizer {
++  checkNativeRendererTargetRelease(ticket);
++  const record = nativeTargetReleaseTickets.get(ticket);
++  if (record === undefined || record.phase !== "prepared" || record.flushTicket === undefined) throw new Error("NATIVE_RENDERER_RELEASE_HELD");
++  try {
++    const flush = armNativePersistenceRegistrationRelease(record.flushTicket);
++    checkNativeRendererTargetRelease(ticket);
++    record.phase = "armed";
++    const check = () => {
++      try {
++      if (nativeTargetRelease !== record || record.phase !== "armed" || nativeRendererTarget !== record.target
++          || !nativeTargetCommitted(record.target) || nativeStoreBinding !== record.binding || nativeStoreBindingPhase !== "bound"
++          || nativeRendererDepth !== 0 || nativeStoreReading || nativeRendererAmbiguous || nativeTargetReleaseDepth !== 0
++          || nativeRendererFactory !== record.binding.factory) throw new Error("NATIVE_RENDERER_RELEASE_HELD");
++      flush.check();
++      } catch (error) { failNativeTargetRelease(record); throw error; }
++    };
++    return Object.freeze({ check, finish: () => {
++      check();
++      flush.finish();
++      record.phase = "released"; nativeRendererTarget = undefined; nativeTargetRelease = undefined;
++    } });
++  } catch (error) { failNativeTargetRelease(record); throw error; }
+ }
+ 
+ export function reserveNativeRendererTarget(gameId: string, modId: string): object {

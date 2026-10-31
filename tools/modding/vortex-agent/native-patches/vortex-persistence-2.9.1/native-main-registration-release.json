@@ -1,0 +1,29 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/main/src/store/ReduxPersistorIPC.ts",
+  "originalSourceSHA256": "2a86c8e57e643172e8babf3474bd2e697a1cf8b3f3e3f3ea1f44934781a737e3",
+  "inputSHA256": "df4f0f7e3561e96d303c1d2ed03de7705144bcc7d2a379561c3e9ea05969bdcd",
+  "outputSHA256": "ad26a49faa523fc0830b625b00b0974cb9562802b10c4a1b4d1b9239d8e26dbf",
+  "patchSHA256": "de61d2f5cdb8c3ffe603bf86b27a6981ab87ad1034aaf404ae332011a5e5120a",
+  "prerequisitePatch": "native-main-tracked-mod-registration.patch",
+  "prerequisitePatchSHA256": "ca80023e439085d49f8c9be140af53d1b107da9e1b1ce382b28e5b0dfc693b69",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "installationPermit": false,
+  "powerLossPersistenceVerified": false,
+  "releaseSupported": false,
+  "trackedInstallComplete": false,
+  "durableConsumedIDsVerified": false,
+  "limitations": [
+    "Internal successful v2 registration release only; no remote adoption assertion or installed coordinator.",
+    "Consumed ID defense is process-lifetime only; existing durable operation/job journal remains required across restart.",
+    "Finalizers are fixed source-created one-shot closures; all guards precede the first owner clear."
+  ],
+  "requiredCompanionPatch": "native-backend-registration-release.patch",
+  "requiredCompanionPatchSHA256": "0bb9d8ca2c31a9a0c2d563ae3fb86ab9ecca45bdf5aca7da46c0159d2c60dbde",
+  "requiredCompanionOutputSHA256": "c509be8df5498636db703244d5e874d6f988dd836a681d48e741da6168517d0d"
+}

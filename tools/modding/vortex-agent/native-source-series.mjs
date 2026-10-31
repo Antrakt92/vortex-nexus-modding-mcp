@@ -12,7 +12,7 @@ const PACKETS = Object.freeze({
   lifecycle: path.join(HERE, 'native-patches/vortex-2.9.1'),
   persistence: path.join(HERE, 'native-patches/vortex-persistence-2.9.1'),
 });
-const SERIES_SHA256 = '54bcb56cf7f394dc01408c3534c536ee3be65ebfac7cc405f02f85a3a4b0a097';
+const SERIES_SHA256 = '56eba5307cbcd11f3407df296f6f3a44d7be3e738d4b45abfe0dcfa7986375cf';
 export const NATIVE_SOURCE_PATHS = Object.freeze([
   "src/renderer/src/extensions/mod_management/eventHandlers.ts",
   "src/renderer/src/extensions/mod_management/index.ts",
@@ -111,16 +111,16 @@ function readPacket() {
       return bytes.subarray(0, used);
     } finally {fs.closeSync(fd);}
   };
-  const raw = read(path.join(HERE, 'native-source-series.json'), 64*1024);
+  const raw = read(path.join(HERE, 'native-source-series.json'), 96*1024);
   need(sha(raw) === SERIES_SHA256, 'SERIES');
-  const series = strict.parseStrictJSON(raw, {maxBytes: 64*1024, maxDepth: 8, maxTokens: 8000});
+  const series = strict.parseStrictJSON(raw, {maxBytes: 96*1024, maxDepth: 8, maxTokens: 8000});
   need(series.schema === 'native-source-series/2' && series.files.length === 24
-    && series.patches.length === 68 && exact(Object.fromEntries(series.files.map(row => [row.path, true])), NATIVE_SOURCE_PATHS), 'SERIES');
+    && series.patches.length === 75 && exact(Object.fromEntries(series.files.map(row => [row.path, true])), NATIVE_SOURCE_PATHS), 'SERIES');
   const inventory = () => {
     for (const {id, directory: packet} of roots) {
       const names = series.patches.filter(row => row.packet === id)
         .flatMap(row => [row.name+'.json', row.name+'.patch']).sort();
-      need(names.length === (id === 'lifecycle' ? 64 : 72), 'SERIES');
+      need(names.length === (id === 'lifecycle' ? 66 : 84), 'SERIES');
       const directory = fs.opendirSync(packet), actual = [];
       try {
         for (let entry = directory.readSync(); entry !== null; entry = directory.readSync()) {
@@ -150,6 +150,8 @@ function readPacket() {
       && ['inputSHA256', 'outputSHA256', 'patchSHA256', 'prerequisitePatch', 'prerequisitePatchSHA256', 'requiredManagerPatchSHA256',
         'requiredCompanionPatch', 'requiredCompanionPatchSHA256', 'requiredCompanionOutputSHA256']
         .every(key => (manifest[key] ?? null) === row[key]), 'GRAPH');
+    need((manifest.requiredCompanionPacket ?? null) === (row.requiredCompanionPacket ?? null)
+      && (row.requiredCompanionPacket == null || Object.hasOwn(PACKETS, row.requiredCompanionPacket)), 'GRAPH');
     return {row, patch: decode(patchBytes)};
   });
   const verify = () => {
@@ -196,11 +198,11 @@ export function assembleNativeSources(input) {
         need(/^[a-z][a-z-]{0,63}\.patch$/.test(row.requiredCompanionPatch), 'GRAPH');
         const companion = applied.get(row.requiredCompanionPatch.slice(0, -6));
         // This is the retained intermediate node receipt, not today's final text.
-        need(companion && companion.packet === row.packet
+        need(companion && companion.packet === (row.requiredCompanionPacket ?? row.packet)
           && companion.patchSHA256 === row.requiredCompanionPatchSHA256
           && companion.outputSHA256 === row.requiredCompanionOutputSHA256, 'GRAPH');
       } else need(row.requiredCompanionPatchSHA256 === null
-        && row.requiredCompanionOutputSHA256 === null, 'GRAPH');
+        && row.requiredCompanionOutputSHA256 === null && row.requiredCompanionPacket == null, 'GRAPH');
       const source = texts.get(row.path);
       need(sha(source) === row.inputSHA256, 'PATCH');
       const output = applyExact(source, patch, row.path);

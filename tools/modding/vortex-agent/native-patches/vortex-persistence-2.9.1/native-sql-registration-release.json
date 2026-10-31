@@ -1,0 +1,29 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/main/src/store/DuckDBSingleton.ts",
+  "originalSourceSHA256": "d11e7ca11c9bc0b0ee9659b4a4d26c7fba14e6a56ccae03b25df33d91e4589a0",
+  "inputSHA256": "2f78d0bbd1ccfede3b0b9a9fb5f136a0dc5ad0ab24c7bfe13703582ded5b8344",
+  "outputSHA256": "fe8733d7cd06c2f49f690607041f0ecad3f890b9bf79480bec688a8628926dda",
+  "patchSHA256": "1a1859fa73c6279cc78b78e00d7d533525cfa619216ab96c370035bb0b8be890",
+  "prerequisitePatch": "native-singleton-sql-admission.patch",
+  "prerequisitePatchSHA256": "aff6e9868e6a9a7f3e4bf93c1c1bb30320b2886cbe5f9858b6a490027e9105c1",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "installationPermit": false,
+  "powerLossPersistenceVerified": false,
+  "releaseSupported": false,
+  "trackedInstallComplete": false,
+  "durableConsumedIDsVerified": false,
+  "limitations": [
+    "Internal successful v2 registration release only; no remote adoption assertion or installed coordinator.",
+    "Consumed ID defense is process-lifetime only; existing durable operation/job journal remains required across restart.",
+    "Finalizers are fixed source-created one-shot closures; all guards precede the first owner clear."
+  ],
+  "requiredCompanionPatch": "native-query-registration-release.patch",
+  "requiredCompanionPatchSHA256": "a03113119fc360a0029f3c097d5733c0d580dec91d987363217752119d2dbed8",
+  "requiredCompanionOutputSHA256": "7edf748170eff539c95f66009f1356a8e88b1ce614042d939e5ebe2833849bc7"
+}

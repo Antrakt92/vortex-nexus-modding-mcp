@@ -1,0 +1,27 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/renderer/src/reducers/index.ts",
+  "originalSourceSHA256": "e59a69384003bade4d1216ee28a8347b38d27291f9b3688c82dc488c168a4e22",
+  "inputSHA256": "b38465930bedaeb68abe68a1e5e2e6fe51ad27c68033c66474a002bcf8d20a92",
+  "outputSHA256": "36290d8a0a158bfd87f2024461bcf6a711913841f5f94048f9b20e139a8fca69",
+  "patchSHA256": "9627e58347f3c88c016fb1165163478899901a0cf17e5e5115f8da27cc47131b",
+  "prerequisitePatch": "renderer-owned-mod-adoption.patch",
+  "prerequisitePatchSHA256": "1a8ccc4909c2ed0fd024de8b1ab1d3110db4a60240d4bf6b0907fefce1c13b06",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "installationPermit": false,
+  "powerLossPersistenceVerified": false,
+  "releaseSupported": true,
+  "limitations": [
+    "Internal source-bound successful local renderer registration release only; future coordinator must obtain exact main release ACK first. No caller boolean proves main state.",
+    "No durable replay/recovery authority; bounded lifetime consumed operation/job/request IDs refuse reuse and capacity without eviction.",
+    "Unknown/partial preparation stays held; no failed-operation reset or arbitrary privileged JavaScript isolation."
+  ],
+  "requiredCompanionPatch": "renderer-persistence-release.patch",
+  "requiredCompanionPatchSHA256": "a70d3918843f7c99130393a991df872f6e8dc94f90d195d512242bc30cb5c7c4",
+  "requiredCompanionOutputSHA256": "32639c4e836a0ceac7e75ab9b12a69cd73fb283f3a3937512d815b151abfad35"
+}

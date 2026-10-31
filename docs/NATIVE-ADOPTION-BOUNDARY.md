@@ -689,6 +689,69 @@ adoption. The digests supplied to registration do not themselves prove file
 custody. No full installer or MCP install endpoint is enabled. Durable recovery,
 coordinated release and two sequential successful installs remain required.
 
+### Remaining filesystem and restart gates
+
+The current ZIP worker copies into its own scratch `Final` directory. Publishing
+to real staging needs a retained native parent handle, an exclusive new mod
+directory, and the created directory/file identities bound to the existing
+executor request and packet digest. A plan's `dev:ino` strings are not native
+`win-file-id128` identities. Parse the prospective version-2 registration before
+starting effects: the older plan accepts some IDs and names that registration
+refuses. The standalone worker's Electron refusal must remain; use a fixed,
+pinned main-owned relay rather than importing its runtime into Electron.
+
+Copying creates a directory before all payload files exist. Before publishing
+there, durable reconciliation must run before discovery after restart/reload.
+The renderer bootstrap can await the source-owned main result before
+`extensions.doOnce()`. Assert the same frame/generation-bound result at the start
+of mod-management `once`, `onGameModeActivatedTracked` and `onPathsChangedTracked`,
+before cleanup, purge or refresh effects. Existing lifecycle holds are memory-only.
+`refreshMods` discovers normal directories and normalizes `.installing` names;
+that suffix is not quarantine and can lead to deletion. Moving a finished
+directory atomically would still leave a rename-to-database crash window.
+
+These are required integration gates, not implemented startup protection. Keep
+unknown journal operations and partial outputs held; do not infer completion,
+retry permission or cleanup ownership from directory presence.
+
+## Successful registration release
+
+The prepared source path can release a known successful tracked registration.
+It cannot release minimal version-1 registrations, failed writes, unknown COMMIT
+results or poisoned owners. Main and Level retain the actual parsed request and
+committed result privately. `releaseNativeTrackedMod(owner)` validates that
+attempt and returns a preallocated observation bound to its operation, job,
+request and record digests; caller-supplied records or adoption booleans are not
+release authority.
+
+Query, SQL pool, backend and main finalizers recurse through source-created
+one-shot closures. Every fallible guard executes before the innermost owner
+opens. Successful unwinding clears only source-owned fields, without awaits,
+logging, query I/O or callbacks. Main checks its ordinary own-field descriptors
+before entering this tail; a nonwritable field cannot cause a later partial
+release. A nested release poisons the current attempt before it can open gates.
+
+Renderer release is prepared through the actual install manager and is bound to
+the completed adoption, root owner, flush owner and store. The future coordinator
+must obtain the exact main release acknowledgement before finalizing it.
+Finalization validates and arms scheduling while gates remain closed, then
+opens flush, root and manager in one callback-free synchronous tail. An armed
+finalizer that outlives its pending timer is invalidated rather than silently
+dropping buffered writes. Unknown main acknowledgement leaves renderer and
+manager held; there is no unconditional retry or clear operation.
+
+Consumed operation, job and request bindings survive successful release in
+bounded lifetime sets. Capacity is refused rather than evicting old IDs. These
+sets are not durable restart authority: the existing executor journal must be
+bound by the complete coordinator. Neither mod attributes nor a source release
+observation can replace that journal. Store qualification, connection provenance,
+ambiguity, raw-exposure and sticky failure flags are not reset for another cycle.
+
+These methods are internal source primitives. They do not publish payloads,
+reconcile a crashed job, establish native application acceptance or enable an
+installation MCP endpoint. The coordinator must also confirm physical custody
+release before ordinary writers resume.
+
 ## Local checks
 
 Provide an existing official read-only Git cache and the already qualified

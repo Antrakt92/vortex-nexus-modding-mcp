@@ -16,7 +16,7 @@
     },
     {
       "path": "src/renderer/src/extensions/mod_management/InstallManager.ts",
-      "finalSHA256": "a4f1b06cacdfd499e884f7fbe4b139166ecdac315c85d1493955c1284978c084",
+      "finalSHA256": "38ceb37ac994f9da61e0a93b3be8e0e7618a9833b7e514e5aec710638653d667",
       "originalSHA256": "577d56a8728052069f850face9bb57437dbf2886bd41409fe6a66cfefc08ed33"
     },
     {
@@ -62,22 +62,22 @@
     {
       "path": "src/main/src/store/DuckDBSingleton.ts",
       "originalSHA256": "d11e7ca11c9bc0b0ee9659b4a4d26c7fba14e6a56ccae03b25df33d91e4589a0",
-      "finalSHA256": "2f78d0bbd1ccfede3b0b9a9fb5f136a0dc5ad0ab24c7bfe13703582ded5b8344"
+      "finalSHA256": "fe8733d7cd06c2f49f690607041f0ecad3f890b9bf79480bec688a8628926dda"
     },
     {
       "path": "src/main/src/store/LevelPersist.ts",
       "originalSHA256": "742929670876a79c7332a13d16381cf2098ee55f57f838e3e35668853d1455a1",
-      "finalSHA256": "f6c7ce6f3a9f8bc8481925d4ffbba05ffd2d1ff89b81df27a417f7fb5fd6c0d5"
+      "finalSHA256": "c509be8df5498636db703244d5e874d6f988dd836a681d48e741da6168517d0d"
     },
     {
       "path": "src/main/src/store/QueryRegistry.ts",
       "originalSHA256": "f7c78fd586349761f077ac178ecee3745dd027911021dc6a3978bfcd7ca31839",
-      "finalSHA256": "6c304abb07fe9074d26866f3635c9f203b70b77b6fbb6463d4437d37301019a5"
+      "finalSHA256": "7edf748170eff539c95f66009f1356a8e88b1ce614042d939e5ebe2833849bc7"
     },
     {
       "path": "src/main/src/store/ReduxPersistorIPC.ts",
       "originalSHA256": "2a86c8e57e643172e8babf3474bd2e697a1cf8b3f3e3f3ea1f44934781a737e3",
-      "finalSHA256": "df4f0f7e3561e96d303c1d2ed03de7705144bcc7d2a379561c3e9ea05969bdcd"
+      "finalSHA256": "ad26a49faa523fc0830b625b00b0974cb9562802b10c4a1b4d1b9239d8e26dbf"
     },
     {
       "path": "src/main/src/store/mainPersistence.ts",
@@ -97,12 +97,12 @@
     {
       "path": "src/renderer/src/reducers/index.ts",
       "originalSHA256": "e59a69384003bade4d1216ee28a8347b38d27291f9b3688c82dc488c168a4e22",
-      "finalSHA256": "b38465930bedaeb68abe68a1e5e2e6fe51ad27c68033c66474a002bcf8d20a92"
+      "finalSHA256": "36290d8a0a158bfd87f2024461bcf6a711913841f5f94048f9b20e139a8fca69"
     },
     {
       "path": "src/renderer/src/store/persistDiffMiddleware.ts",
       "originalSHA256": "d4dbc85a48739c30239bda2b6b091ef9631b5e9df6b3affcd935a4a3a5cf0262",
-      "finalSHA256": "56862197cee81144c886bdce89e1fb9fe3c1b4ff8b5e2d879205531967621788"
+      "finalSHA256": "32639c4e836a0ceac7e75ab9b12a69cd73fb283f3a3937512d815b151abfad35"
     },
     {
       "path": "src/shared/src/types/ipc.ts",
@@ -139,7 +139,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "callback-order",
@@ -154,7 +155,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "native-activity",
@@ -169,7 +171,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "strict-selection",
@@ -184,7 +187,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "copy-error",
@@ -199,7 +203,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "transfer-join",
@@ -214,7 +219,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "manager-exclusion",
@@ -229,7 +235,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "lifecycle-owner-bridge",
@@ -244,7 +251,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "lifecycle-result-bridge",
@@ -259,7 +267,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "lifecycle-handler-ownership",
@@ -274,7 +283,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "refresh-lifecycle",
@@ -289,7 +299,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "deployment-cancel",
@@ -304,7 +315,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "deployment-lifecycle",
@@ -319,7 +331,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "activation-join",
@@ -334,7 +347,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "activation-ownership",
@@ -349,7 +363,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "purge-join",
@@ -364,7 +379,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "purge-ownership",
@@ -379,7 +395,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "handler-promise-types",
@@ -394,7 +411,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "deployment-error-types",
@@ -409,7 +427,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "activation-promise-types",
@@ -424,7 +443,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "startup-cleanup-ownership",
@@ -439,7 +459,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "staging-transfer-join",
@@ -454,7 +475,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "staging-transfer-collision",
@@ -469,7 +491,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "staging-cleanup-error",
@@ -484,7 +507,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "staging-settings-ownership",
@@ -499,7 +523,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "staging-pending-transfer-hold",
@@ -514,7 +539,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "download-pending-transfer-hold",
@@ -529,7 +555,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "download-transfer-cleanup-hold",
@@ -544,7 +571,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "download-settings-ownership",
@@ -559,7 +587,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "native-transfer-marker-admission",
@@ -574,7 +603,8 @@
       "packet": "lifecycle",
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "ack-shared-ipc",
@@ -589,7 +619,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "ack-shared-preload",
@@ -604,7 +635,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "batch-acknowledgement",
@@ -619,7 +651,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "new-mod-conflict-query",
@@ -634,7 +667,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "target-reservation",
@@ -649,7 +683,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": "new-mod-conflict-query.patch",
       "requiredCompanionPatchSHA256": "5c77c9092b375508450d5a783518b7fb1006d5352af68054227536ab7d2b765f",
-      "requiredCompanionOutputSHA256": "789e8cc72682d65def311535ce20d36d4fc992cd01cdb0f9b58084696848f7e0"
+      "requiredCompanionOutputSHA256": "789e8cc72682d65def311535ce20d36d4fc992cd01cdb0f9b58084696848f7e0",
+      "requiredCompanionPacket": null
     },
     {
       "name": "acknowledged-packet",
@@ -664,7 +699,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "backend-write-admission",
@@ -679,7 +715,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "backend-reservation-admission",
@@ -694,7 +731,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": "backend-write-admission.patch",
       "requiredCompanionPatchSHA256": "9cdf70626318a53bb92dc467e056274efa83a60dcec65ea3d7067de403dedca3",
-      "requiredCompanionOutputSHA256": "f26dc362445ea63ad6df32a9c6c1cd67a8c8490005b161c0e4186bd157b38487"
+      "requiredCompanionOutputSHA256": "f26dc362445ea63ad6df32a9c6c1cd67a8c8490005b161c0e4186bd157b38487",
+      "requiredCompanionPacket": null
     },
     {
       "name": "legacy-rollback-primary",
@@ -709,7 +747,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "native-query-source-admission",
@@ -724,7 +763,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "native-singleton-sql-admission",
@@ -739,7 +779,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": "native-query-source-admission.patch",
       "requiredCompanionPatchSHA256": "35090f46fe6410f6597788edf58adaffccd31cd3cdbedc5adbbc195c73c37816",
-      "requiredCompanionOutputSHA256": "6c304abb07fe9074d26866f3635c9f203b70b77b6fbb6463d4437d37301019a5"
+      "requiredCompanionOutputSHA256": "6c304abb07fe9074d26866f3635c9f203b70b77b6fbb6463d4437d37301019a5",
+      "requiredCompanionPacket": null
     },
     {
       "name": "native-backend-sql-admission",
@@ -754,7 +795,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": "native-singleton-sql-admission.patch",
       "requiredCompanionPatchSHA256": "aff6e9868e6a9a7f3e4bf93c1c1bb30320b2886cbe5f9858b6a490027e9105c1",
-      "requiredCompanionOutputSHA256": "2f78d0bbd1ccfede3b0b9a9fb5f136a0dc5ad0ab24c7bfe13703582ded5b8344"
+      "requiredCompanionOutputSHA256": "2f78d0bbd1ccfede3b0b9a9fb5f136a0dc5ad0ab24c7bfe13703582ded5b8344",
+      "requiredCompanionPacket": null
     },
     {
       "name": "native-main-sql-admission",
@@ -769,7 +811,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": "native-backend-sql-admission.patch",
       "requiredCompanionPatchSHA256": "5c19256cbc96a9e8b269296fda3a7754ecee36e7054c49ae5ecd6385e6669f63",
-      "requiredCompanionOutputSHA256": "ef39796be6ba9aa2f8d4030686ef1a3f30175db8c289fdce80301c5c5ba1d00f"
+      "requiredCompanionOutputSHA256": "ef39796be6ba9aa2f8d4030686ef1a3f30175db8c289fdce80301c5c5ba1d00f",
+      "requiredCompanionPacket": null
     },
     {
       "name": "native-query-owner-binding",
@@ -784,7 +827,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": "native-main-sql-admission.patch",
       "requiredCompanionPatchSHA256": "c4e6980946efa25697bda75956bd3ad24563218f16c36777f356000f7a97ab72",
-      "requiredCompanionOutputSHA256": "85a0340ccc4927875d65e3c8a34b8ad8654120c6bb2d6bee8859c2d4b144bc04"
+      "requiredCompanionOutputSHA256": "85a0340ccc4927875d65e3c8a34b8ad8654120c6bb2d6bee8859c2d4b144bc04",
+      "requiredCompanionPacket": null
     },
     {
       "name": "ack-main-ipc",
@@ -799,7 +843,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "ack-application-owner",
@@ -814,7 +859,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "ack-preload",
@@ -829,7 +875,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "renderer-acknowledged-flush",
@@ -844,7 +891,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "renderer-target-fence",
@@ -859,7 +907,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "renderer-store-binding",
@@ -874,7 +923,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "renderer-store-initialization",
@@ -889,7 +939,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": "renderer-store-binding.patch",
       "requiredCompanionPatchSHA256": "f4ed4c4e7ae11b5f98a0c7c46ea0077956c444eedd905bfcbc29e430e3469a3e",
-      "requiredCompanionOutputSHA256": "4824d5ec9ffb9e768835d430e043e47b91d8e52cc18c2d9f1272c099e4d730c9"
+      "requiredCompanionOutputSHA256": "4824d5ec9ffb9e768835d430e043e47b91d8e52cc18c2d9f1272c099e4d730c9",
+      "requiredCompanionPacket": null
     },
     {
       "name": "native-main-readiness",
@@ -904,7 +955,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "renderer-extension-readiness",
@@ -919,7 +971,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "renderer-load-readiness",
@@ -934,7 +987,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": "renderer-extension-readiness.patch",
       "requiredCompanionPatchSHA256": "83bf53f8a597466d6f18a79cf6d66fea98853d129c76a91bd2872412bc61be0b",
-      "requiredCompanionOutputSHA256": "fb39e4270de69b2529872b624e16499a9a25517ba3fe6a739750b8f7473757af"
+      "requiredCompanionOutputSHA256": "fb39e4270de69b2529872b624e16499a9a25517ba3fe6a739750b8f7473757af",
+      "requiredCompanionPacket": null
     },
     {
       "name": "manager-startup-readiness",
@@ -949,7 +1003,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "native-main-readiness-shared-ipc",
@@ -964,7 +1019,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "native-main-readiness-shared-preload",
@@ -979,7 +1035,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": "native-main-readiness-shared-ipc.patch",
       "requiredCompanionPatchSHA256": "b5d9c3cc260796e8a2432afacd3566fda59db1c093aae28fdc2a03128da65135",
-      "requiredCompanionOutputSHA256": "d3474309d186d9909b4056f54ebdf079f765e96d2832249cb83ef196bb6d6e9a"
+      "requiredCompanionOutputSHA256": "d3474309d186d9909b4056f54ebdf079f765e96d2832249cb83ef196bb6d6e9a",
+      "requiredCompanionPacket": null
     },
     {
       "name": "native-main-readiness-preload",
@@ -994,7 +1051,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": "native-main-readiness-shared-preload.patch",
       "requiredCompanionPatchSHA256": "483b5128c1717974c8d5d3a36432a413bb5c8a928cd03448e89c390f0d3ca84c",
-      "requiredCompanionOutputSHA256": "25df90ae322ef579ef7ffcef9ae9892d01704e0fa53faa2605b65b4bd2ad9171"
+      "requiredCompanionOutputSHA256": "25df90ae322ef579ef7ffcef9ae9892d01704e0fa53faa2605b65b4bd2ad9171",
+      "requiredCompanionPacket": null
     },
     {
       "name": "native-main-readiness-ipc",
@@ -1009,7 +1067,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": "native-main-readiness.patch",
       "requiredCompanionPatchSHA256": "eb482bec5663042300dfdb3b6897e11dfee28a30306974ba42295aa7ebafe53d",
-      "requiredCompanionOutputSHA256": "90e5a0c97eb1d02360de088a9ebe897021b825bf2cb0a6888bdac8f94c01b904"
+      "requiredCompanionOutputSHA256": "90e5a0c97eb1d02360de088a9ebe897021b825bf2cb0a6888bdac8f94c01b904",
+      "requiredCompanionPacket": null
     },
     {
       "name": "native-manager-instance-access",
@@ -1024,7 +1083,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "native-static-manager-binding",
@@ -1039,7 +1099,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "renderer-acknowledged-hold",
@@ -1054,7 +1115,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "native-owned-mod-registration",
@@ -1069,7 +1131,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "native-main-mod-registration",
@@ -1084,7 +1147,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": "native-owned-mod-registration.patch",
       "requiredCompanionPatchSHA256": "17a96234582b17dabafab567a8a5386a0ae28b29aa9d9e7e987db3dcbf593687",
-      "requiredCompanionOutputSHA256": "bf7d7295dcb15c146ffaaea33223eab964cc36c4c1fe9e34cb7b52fc1941a853"
+      "requiredCompanionOutputSHA256": "bf7d7295dcb15c146ffaaea33223eab964cc36c4c1fe9e34cb7b52fc1941a853",
+      "requiredCompanionPacket": null
     },
     {
       "name": "native-tracked-mod-registration",
@@ -1099,7 +1163,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "native-main-tracked-mod-registration",
@@ -1114,7 +1179,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": "native-tracked-mod-registration.patch",
       "requiredCompanionPatchSHA256": "56b23c552c435d6850bf128ac0ac92786a28dd083568c141940482520eee3bc8",
-      "requiredCompanionOutputSHA256": "f6c7ce6f3a9f8bc8481925d4ffbba05ffd2d1ff89b81df27a417f7fb5fd6c0d5"
+      "requiredCompanionOutputSHA256": "f6c7ce6f3a9f8bc8481925d4ffbba05ffd2d1ff89b81df27a417f7fb5fd6c0d5",
+      "requiredCompanionPacket": null
     },
     {
       "name": "renderer-persistence-adoption",
@@ -1129,7 +1195,8 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": null,
       "requiredCompanionPatchSHA256": null,
-      "requiredCompanionOutputSHA256": null
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
     },
     {
       "name": "renderer-owned-mod-adoption",
@@ -1144,7 +1211,120 @@
       "requiredManagerPatchSHA256": null,
       "requiredCompanionPatch": "renderer-persistence-adoption.patch",
       "requiredCompanionPatchSHA256": "d5b46a4219cc4d322701c161002748341ceb320c28dc0a0944e85d4b7e32b1d0",
-      "requiredCompanionOutputSHA256": "56862197cee81144c886bdce89e1fb9fe3c1b4ff8b5e2d879205531967621788"
+      "requiredCompanionOutputSHA256": "56862197cee81144c886bdce89e1fb9fe3c1b4ff8b5e2d879205531967621788",
+      "requiredCompanionPacket": null
+    },
+    {
+      "name": "native-query-registration-release",
+      "packet": "persistence",
+      "path": "src/main/src/store/QueryRegistry.ts",
+      "manifestSHA256": "4bae5dfe5a9c341110ff49de9dc30241a685793070b395fbdd988318c8d5d9fa",
+      "patchSHA256": "a03113119fc360a0029f3c097d5733c0d580dec91d987363217752119d2dbed8",
+      "inputSHA256": "6c304abb07fe9074d26866f3635c9f203b70b77b6fbb6463d4437d37301019a5",
+      "outputSHA256": "7edf748170eff539c95f66009f1356a8e88b1ce614042d939e5ebe2833849bc7",
+      "prerequisitePatch": "native-query-source-admission.patch",
+      "prerequisitePatchSHA256": "35090f46fe6410f6597788edf58adaffccd31cd3cdbedc5adbbc195c73c37816",
+      "requiredManagerPatchSHA256": null,
+      "requiredCompanionPatch": null,
+      "requiredCompanionPatchSHA256": null,
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
+    },
+    {
+      "name": "native-sql-registration-release",
+      "packet": "persistence",
+      "path": "src/main/src/store/DuckDBSingleton.ts",
+      "manifestSHA256": "d536848741e1c5f4cc7c47610ff2bd543258fff87f44bc437f0a2d3bcef8848a",
+      "patchSHA256": "1a1859fa73c6279cc78b78e00d7d533525cfa619216ab96c370035bb0b8be890",
+      "inputSHA256": "2f78d0bbd1ccfede3b0b9a9fb5f136a0dc5ad0ab24c7bfe13703582ded5b8344",
+      "outputSHA256": "fe8733d7cd06c2f49f690607041f0ecad3f890b9bf79480bec688a8628926dda",
+      "prerequisitePatch": "native-singleton-sql-admission.patch",
+      "prerequisitePatchSHA256": "aff6e9868e6a9a7f3e4bf93c1c1bb30320b2886cbe5f9858b6a490027e9105c1",
+      "requiredManagerPatchSHA256": null,
+      "requiredCompanionPatch": "native-query-registration-release.patch",
+      "requiredCompanionPatchSHA256": "a03113119fc360a0029f3c097d5733c0d580dec91d987363217752119d2dbed8",
+      "requiredCompanionOutputSHA256": "7edf748170eff539c95f66009f1356a8e88b1ce614042d939e5ebe2833849bc7",
+      "requiredCompanionPacket": null
+    },
+    {
+      "name": "native-backend-registration-release",
+      "packet": "persistence",
+      "path": "src/main/src/store/LevelPersist.ts",
+      "manifestSHA256": "2552a419bcf017f6d3de6a856c4670f44eb5aa10d97558324edba0373cbfa983",
+      "patchSHA256": "0bb9d8ca2c31a9a0c2d563ae3fb86ab9ecca45bdf5aca7da46c0159d2c60dbde",
+      "inputSHA256": "f6c7ce6f3a9f8bc8481925d4ffbba05ffd2d1ff89b81df27a417f7fb5fd6c0d5",
+      "outputSHA256": "c509be8df5498636db703244d5e874d6f988dd836a681d48e741da6168517d0d",
+      "prerequisitePatch": "native-tracked-mod-registration.patch",
+      "prerequisitePatchSHA256": "56b23c552c435d6850bf128ac0ac92786a28dd083568c141940482520eee3bc8",
+      "requiredManagerPatchSHA256": null,
+      "requiredCompanionPatch": "native-sql-registration-release.patch",
+      "requiredCompanionPatchSHA256": "1a1859fa73c6279cc78b78e00d7d533525cfa619216ab96c370035bb0b8be890",
+      "requiredCompanionOutputSHA256": "fe8733d7cd06c2f49f690607041f0ecad3f890b9bf79480bec688a8628926dda",
+      "requiredCompanionPacket": null
+    },
+    {
+      "name": "native-main-registration-release",
+      "packet": "persistence",
+      "path": "src/main/src/store/ReduxPersistorIPC.ts",
+      "manifestSHA256": "ba0de768ea722a00c0497a98dc0ac8b3f560c0edc805562d7ef52976527f26f8",
+      "patchSHA256": "de61d2f5cdb8c3ffe603bf86b27a6981ab87ad1034aaf404ae332011a5e5120a",
+      "inputSHA256": "df4f0f7e3561e96d303c1d2ed03de7705144bcc7d2a379561c3e9ea05969bdcd",
+      "outputSHA256": "ad26a49faa523fc0830b625b00b0974cb9562802b10c4a1b4d1b9239d8e26dbf",
+      "prerequisitePatch": "native-main-tracked-mod-registration.patch",
+      "prerequisitePatchSHA256": "ca80023e439085d49f8c9be140af53d1b107da9e1b1ce382b28e5b0dfc693b69",
+      "requiredManagerPatchSHA256": null,
+      "requiredCompanionPatch": "native-backend-registration-release.patch",
+      "requiredCompanionPatchSHA256": "0bb9d8ca2c31a9a0c2d563ae3fb86ab9ecca45bdf5aca7da46c0159d2c60dbde",
+      "requiredCompanionOutputSHA256": "c509be8df5498636db703244d5e874d6f988dd836a681d48e741da6168517d0d",
+      "requiredCompanionPacket": null
+    },
+    {
+      "name": "renderer-persistence-release",
+      "packet": "persistence",
+      "path": "src/renderer/src/store/persistDiffMiddleware.ts",
+      "manifestSHA256": "c2b06420f32bf5680bc66cdb4dc4d8ca9e2be53b81c9710d6c3f13ff88012d68",
+      "patchSHA256": "a70d3918843f7c99130393a991df872f6e8dc94f90d195d512242bc30cb5c7c4",
+      "inputSHA256": "56862197cee81144c886bdce89e1fb9fe3c1b4ff8b5e2d879205531967621788",
+      "outputSHA256": "32639c4e836a0ceac7e75ab9b12a69cd73fb283f3a3937512d815b151abfad35",
+      "prerequisitePatch": "renderer-persistence-adoption.patch",
+      "prerequisitePatchSHA256": "d5b46a4219cc4d322701c161002748341ceb320c28dc0a0944e85d4b7e32b1d0",
+      "requiredManagerPatchSHA256": null,
+      "requiredCompanionPatch": null,
+      "requiredCompanionPatchSHA256": null,
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
+    },
+    {
+      "name": "renderer-registration-release",
+      "packet": "persistence",
+      "path": "src/renderer/src/reducers/index.ts",
+      "manifestSHA256": "78afd48d9684a066fee796fac4884d73202af36676f7147943826bf2fd033647",
+      "patchSHA256": "9627e58347f3c88c016fb1165163478899901a0cf17e5e5115f8da27cc47131b",
+      "inputSHA256": "b38465930bedaeb68abe68a1e5e2e6fe51ad27c68033c66474a002bcf8d20a92",
+      "outputSHA256": "36290d8a0a158bfd87f2024461bcf6a711913841f5f94048f9b20e139a8fca69",
+      "prerequisitePatch": "renderer-owned-mod-adoption.patch",
+      "prerequisitePatchSHA256": "1a8ccc4909c2ed0fd024de8b1ab1d3110db4a60240d4bf6b0907fefce1c13b06",
+      "requiredManagerPatchSHA256": null,
+      "requiredCompanionPatch": "renderer-persistence-release.patch",
+      "requiredCompanionPatchSHA256": "a70d3918843f7c99130393a991df872f6e8dc94f90d195d512242bc30cb5c7c4",
+      "requiredCompanionOutputSHA256": "32639c4e836a0ceac7e75ab9b12a69cd73fb283f3a3937512d815b151abfad35",
+      "requiredCompanionPacket": null
+    },
+    {
+      "name": "native-manager-registration-release",
+      "packet": "lifecycle",
+      "path": "src/renderer/src/extensions/mod_management/InstallManager.ts",
+      "manifestSHA256": "f64060e2da239bc926dbab5241e4a5e756a2b469b1d9719cb07ceeec39ee356d",
+      "patchSHA256": "a89507c72cf8c8d74c2cc9f63692b27c206654b9d6e7ea610465e9275bdca16a",
+      "inputSHA256": "a4f1b06cacdfd499e884f7fbe4b139166ecdac315c85d1493955c1284978c084",
+      "outputSHA256": "38ceb37ac994f9da61e0a93b3be8e0e7618a9833b7e514e5aec710638653d667",
+      "prerequisitePatch": "native-transfer-marker-admission.patch",
+      "prerequisitePatchSHA256": "68ba2f9f35553264241edc95dee41c1e7a49247c3048566206406753af8f6704",
+      "requiredManagerPatchSHA256": null,
+      "requiredCompanionPatch": "renderer-registration-release.patch",
+      "requiredCompanionPatchSHA256": "9627e58347f3c88c016fb1165163478899901a0cf17e5e5115f8da27cc47131b",
+      "requiredCompanionOutputSHA256": "36290d8a0a158bfd87f2024461bcf6a711913841f5f94048f9b20e139a8fca69",
+      "requiredCompanionPacket": "persistence"
     }
   ]
 }
