@@ -1,0 +1,25 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/main/src/store/LevelPersist.ts",
+  "originalSourceSHA256": "742929670876a79c7332a13d16381cf2098ee55f57f838e3e35668853d1455a1",
+  "inputSHA256": "c509be8df5498636db703244d5e874d6f988dd836a681d48e741da6168517d0d",
+  "outputSHA256": "ce2c560f068f1d9867b902ce9975c47cb39b458497da90573e4a39c83b5691fb",
+  "patchSHA256": "2dda802a76e811070e5f2987cfdfc49689d2c8db50c640e21a0a562525cd8751",
+  "prerequisitePatch": "native-backend-registration-release.patch",
+  "prerequisitePatchSHA256": "0bb9d8ca2c31a9a0c2d563ae3fb86ab9ecca45bdf5aca7da46c0159d2c60dbde",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "installationPermit": false,
+  "powerLossPersistenceVerified": false,
+  "releaseSupported": false,
+  "trackedInstallComplete": false,
+  "limitations": [
+    "Fixed main-private raw KV anchor only; no renderer hydration or arbitrary key access.",
+    "Owned compare-and-swap observes COMMIT and exact readback; no power-loss guarantee or main coordinator installation.",
+    "Unknown/error outcomes stay held without retry or rollback after a COMMIT attempt."
+  ]
+}

@@ -67,7 +67,7 @@
     {
       "path": "src/main/src/store/LevelPersist.ts",
       "originalSHA256": "742929670876a79c7332a13d16381cf2098ee55f57f838e3e35668853d1455a1",
-      "finalSHA256": "c509be8df5498636db703244d5e874d6f988dd836a681d48e741da6168517d0d"
+      "finalSHA256": "ce2c560f068f1d9867b902ce9975c47cb39b458497da90573e4a39c83b5691fb"
     },
     {
       "path": "src/main/src/store/QueryRegistry.ts",
@@ -77,12 +77,12 @@
     {
       "path": "src/main/src/store/ReduxPersistorIPC.ts",
       "originalSHA256": "2a86c8e57e643172e8babf3474bd2e697a1cf8b3f3e3f3ea1f44934781a737e3",
-      "finalSHA256": "ad26a49faa523fc0830b625b00b0974cb9562802b10c4a1b4d1b9239d8e26dbf"
+      "finalSHA256": "d7a0e8f23e0d949be5ef7c7d44aa8d7f8c2df7f352fe1816c9da75414281e56b"
     },
     {
       "path": "src/main/src/store/mainPersistence.ts",
       "originalSHA256": "7d3e28cb829914fb092774eca3fc357645fa7ef508177d1a0e3b32eed58f05fe",
-      "finalSHA256": "90e5a0c97eb1d02360de088a9ebe897021b825bf2cb0a6888bdac8f94c01b904"
+      "finalSHA256": "a11eb2b2c645116020c1797a5c2f2584a3eecf739b5aa94223176d5b1b190f4a"
     },
     {
       "path": "src/main/src/store/persistenceIPC.ts",
@@ -1325,6 +1325,54 @@
       "requiredCompanionPatchSHA256": "9627e58347f3c88c016fb1165163478899901a0cf17e5e5115f8da27cc47131b",
       "requiredCompanionOutputSHA256": "36290d8a0a158bfd87f2024461bcf6a711913841f5f94048f9b20e139a8fca69",
       "requiredCompanionPacket": "persistence"
+    },
+    {
+      "name": "native-executor-anchor-storage",
+      "packet": "persistence",
+      "path": "src/main/src/store/LevelPersist.ts",
+      "manifestSHA256": "1fe17598d039966ffb646abb1b3099f5df745b2784fd6885f10f9d56e81fcd3c",
+      "patchSHA256": "2dda802a76e811070e5f2987cfdfc49689d2c8db50c640e21a0a562525cd8751",
+      "inputSHA256": "c509be8df5498636db703244d5e874d6f988dd836a681d48e741da6168517d0d",
+      "outputSHA256": "ce2c560f068f1d9867b902ce9975c47cb39b458497da90573e4a39c83b5691fb",
+      "prerequisitePatch": "native-backend-registration-release.patch",
+      "prerequisitePatchSHA256": "0bb9d8ca2c31a9a0c2d563ae3fb86ab9ecca45bdf5aca7da46c0159d2c60dbde",
+      "requiredManagerPatchSHA256": null,
+      "requiredCompanionPatch": null,
+      "requiredCompanionPatchSHA256": null,
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
+    },
+    {
+      "name": "native-main-executor-anchor",
+      "packet": "persistence",
+      "path": "src/main/src/store/ReduxPersistorIPC.ts",
+      "manifestSHA256": "7ac7fef46afd14341b7ee95c17b1008e1206b0f09441c9003e32177a4f549966",
+      "patchSHA256": "8c9ff78c329d7cead964215ac6c623340cd9528fba73e0f9ae83ce32906101d8",
+      "inputSHA256": "ad26a49faa523fc0830b625b00b0974cb9562802b10c4a1b4d1b9239d8e26dbf",
+      "outputSHA256": "d7a0e8f23e0d949be5ef7c7d44aa8d7f8c2df7f352fe1816c9da75414281e56b",
+      "prerequisitePatch": "native-main-registration-release.patch",
+      "prerequisitePatchSHA256": "de61d2f5cdb8c3ffe603bf86b27a6981ab87ad1034aaf404ae332011a5e5120a",
+      "requiredManagerPatchSHA256": null,
+      "requiredCompanionPatch": "native-executor-anchor-storage.patch",
+      "requiredCompanionPatchSHA256": "2dda802a76e811070e5f2987cfdfc49689d2c8db50c640e21a0a562525cd8751",
+      "requiredCompanionOutputSHA256": "ce2c560f068f1d9867b902ce9975c47cb39b458497da90573e4a39c83b5691fb",
+      "requiredCompanionPacket": null
+    },
+    {
+      "name": "native-main-anchor-binding",
+      "packet": "persistence",
+      "path": "src/main/src/store/mainPersistence.ts",
+      "manifestSHA256": "3f2ae9731b04bf0298fa8bae829f72c530b9da696f8d7e0d35c9a87997ab8770",
+      "patchSHA256": "3cad5662e53dac7cd43304cfe6569b8834468c19789d4c8aaad045fa08c2c810",
+      "inputSHA256": "90e5a0c97eb1d02360de088a9ebe897021b825bf2cb0a6888bdac8f94c01b904",
+      "outputSHA256": "a11eb2b2c645116020c1797a5c2f2584a3eecf739b5aa94223176d5b1b190f4a",
+      "prerequisitePatch": "native-main-readiness.patch",
+      "prerequisitePatchSHA256": "eb482bec5663042300dfdb3b6897e11dfee28a30306974ba42295aa7ebafe53d",
+      "requiredManagerPatchSHA256": null,
+      "requiredCompanionPatch": "native-main-executor-anchor.patch",
+      "requiredCompanionPatchSHA256": "8c9ff78c329d7cead964215ac6c623340cd9528fba73e0f9ae83ce32906101d8",
+      "requiredCompanionOutputSHA256": "d7a0e8f23e0d949be5ef7c7d44aa8d7f8c2df7f352fe1816c9da75414281e56b",
+      "requiredCompanionPacket": null
     }
   ]
 }

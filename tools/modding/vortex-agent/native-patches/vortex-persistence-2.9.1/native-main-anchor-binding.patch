@@ -1,0 +1,101 @@
+--- a/src/main/src/store/mainPersistence.ts
++++ b/src/main/src/store/mainPersistence.ts
+@@ -24,7 +24,7 @@
+ import { log } from "../logging";
+ import { Database } from "./Database";
+ import DuckDBSingleton from "./DuckDBSingleton";
+-import type LevelPersist from "./LevelPersist";
++import LevelPersist, { snapshotNativeExecutorAnchor, isNativeExecutorAnchorKey } from "./LevelPersist";
+ import { setupPersistenceIPC } from "./persistenceIPC";
+ import QueryInvalidator from "./QueryInvalidator";
+ import type { ParsedQuery } from "./queryParser";
+@@ -33,6 +33,10 @@
+ import QueryWatcher from "./QueryWatcher";
+ import ReduxPersistorIPC from "./ReduxPersistorIPC";
+ import SubPersistor from "./SubPersistor";
++
++const nativeHistoryAnchorRead = LevelPersist.prototype.readNativeExecutorAnchor;
++const nativeHistoryAnchorSnapshot = snapshotNativeExecutorAnchor;
++const nativeHistoryAnchorKey = isNativeExecutorAnchorKey;
+ 
+ let mainPersistor: ReduxPersistorIPC | undefined;
+ let levelPersist: LevelPersist | undefined;
+@@ -87,6 +91,21 @@
+   }
+ }
+ 
++/** Strict main-private read bound to the actual initialized selected backend. */
++export async function readNativeExecutorHistoryAnchor(owner: object): Promise<Uint8Array | null> {
++  checkNativeMainPersistenceReady(owner);
++  const attempt = nativeMainAttempt;
++  if (attempt === undefined || attempt.owner !== owner) throw new Error("NATIVE_EXECUTOR_ANCHOR_HOLD");
++  const backend = attempt.backend;
++  const bytes = await nativeHistoryAnchorRead.call(backend);
++  checkNativeMainPersistenceReady(owner);
++  if (nativeMainAttempt !== attempt || levelPersist !== backend) throw new Error("NATIVE_EXECUTOR_ANCHOR_HOLD");
++  const result = bytes === null ? null : new Uint8Array(Buffer.from(JSON.stringify(nativeHistoryAnchorSnapshot(bytes))));
++  checkNativeMainPersistenceReady(owner);
++  if (nativeMainAttempt !== attempt || levelPersist !== backend) throw new Error("NATIVE_EXECUTOR_ANCHOR_HOLD");
++  return result;
++}
++
+ /**
+  * Get the Database instance for typed model access.
+  * Available after the query system initializes (async).
+@@ -117,6 +136,7 @@
+     // Set up factory to create persistors on demand for unknown hives
+     // (e.g., extension-registered hives that main doesn't know about)
+     mainPersistor.setPersistorFactory((hive: string) => {
++      if (nativeHistoryAnchorKey(hive)) return undefined;
+       if (mainPersistor !== attempt.main || levelPersist !== attempt.backend) {
+         return undefined;
+       }
+@@ -224,6 +244,7 @@
+  * @returns Promise resolving to the hydration data for this hive
+  */
+ export function registerHive(hive: string): Promise<{ [key: string]: Serializable }> {
++  if (nativeHistoryAnchorKey(hive)) return Promise.reject(new Error("NATIVE_EXECUTOR_ANCHOR_PRIVATE"));
+   if (mainPersistor === undefined || levelPersist === undefined) {
+     return Promise.reject(
+       new Error("Main persistence not initialized. Call initMainPersistence() first."),
+@@ -315,6 +336,7 @@
+  * @returns Promise resolving to the value, or undefined if not found
+  */
+ export async function readPersistedValue<T>(hive: string, path: string[]): Promise<T | undefined> {
++  if (nativeHistoryAnchorKey(hive)) throw new Error("NATIVE_EXECUTOR_ANCHOR_PRIVATE");
+   if (levelPersist === undefined) {
+     return undefined;
+   }
+@@ -391,6 +413,7 @@
+   path: string[],
+   value: T,
+ ): Promise<void> {
++  if (nativeHistoryAnchorKey(hive)) throw new Error("NATIVE_EXECUTOR_ANCHOR_PRIVATE");
+   if (levelPersist === undefined) {
+     return;
+   }
+@@ -416,6 +439,7 @@
+  * @returns Promise resolving to the hive data, or empty object if not found
+  */
+ export async function readHiveData(hive: string): Promise<{ [key: string]: Serializable }> {
++  if (nativeHistoryAnchorKey(hive)) throw new Error("NATIVE_EXECUTOR_ANCHOR_PRIVATE");
+   if (mainPersistor === undefined || levelPersist === undefined) {
+     return {};
+   }
+@@ -445,7 +469,7 @@
+   }
+ 
+   try {
+-    return await levelPersist.getPersistedHives();
++    return (await levelPersist.getPersistedHives()).filter(hive => !nativeHistoryAnchorKey(hive));
+   } catch (err) {
+     const message = getErrorMessageOrDefault(err);
+     log("warn", "Could not get persisted hives", { error: message });
+@@ -472,6 +496,7 @@
+   const result: { [hive: string]: Serializable } = {};
+ 
+   for (const hive of hives) {
++    if (nativeHistoryAnchorKey(hive)) continue;
+     try {
+       const subPersistor = new SubPersistor(levelPersist, hive);
+       result[hive] = await mainPersistor.insertPersistor(hive, subPersistor);

@@ -1,0 +1,185 @@
+--- a/src/main/src/store/ReduxPersistorIPC.ts
++++ b/src/main/src/store/ReduxPersistorIPC.ts
+@@ -18,7 +18,7 @@
+ 
+ import { terminate } from "../errorHandling";
+ import { log } from "../logging";
+-import LevelPersist, { snapshotNativeNewModRegistration, snapshotNativeTrackedModRegistration } from "./LevelPersist";
++import LevelPersist, { snapshotNativeNewModRegistration, snapshotNativeTrackedModRegistration, snapshotNativeExecutorAnchor, isNativeExecutorAnchorKey } from "./LevelPersist";
+ import type QueryInvalidator from "./QueryInvalidator";
+ 
+ /**
+@@ -69,6 +69,9 @@
+  * ReduxPersistor that works via IPC instead of direct store subscription.
+  * Receives diff operations from renderer and persists them to LevelDB.
+  */
++const nativeExecutorAnchorWrite = LevelPersist.prototype.writeNativeExecutorAnchor;
++const nativeExecutorAnchorSnapshot = snapshotNativeExecutorAnchor;
++const nativeExecutorAnchorKey = isNativeExecutorAnchorKey;
+ const nativeReleasePrepareBackend = LevelPersist.prototype.prepareNativeTrackedRegistrationRelease;
+ const nativeRegistrationWrite = LevelPersist.prototype.registerNativeNewMod;
+ const nativeTrackedRegistrationWrite = LevelPersist.prototype.registerNativeTrackedMod;
+@@ -108,6 +111,7 @@
+   #mNativeConsumedJobs = new Set<string>();
+   #mNativeConsumedRequests = new Set<string>();
+   #mNativeReleaseInProgress = false;
++  #mNativeExecutorAnchor: { reservation: INativeModPersistenceReservation; phase: "claimed" | "writing" | "held" } | undefined;
+   #mLevelPersist: LevelPersist | undefined;
+   #mInvalidator: QueryInvalidator | undefined;
+   #mQueryRegistry: QueryRegistry | undefined;
+@@ -155,6 +159,7 @@
+     hive: string,
+     persistor: IPersistor,
+   ): Promise<{ [key: string]: Serializable }> {
++    if (nativeExecutorAnchorKey(hive)) return Promise.reject(new Error("NATIVE_EXECUTOR_ANCHOR_PRIVATE"));
+     if (hive === "persistent" && this.mNativeModPersistenceReservation !== undefined) {
+       this.mNativeModPersistenceReservation.phase = "held";
+       return Promise.reject(new Error("Reserved native persistence hive cannot be replaced"));
+@@ -183,6 +188,7 @@
+     const result: { [hive: string]: Serializable } = {};
+ 
+     for (const [hive, persistor] of Object.entries(this.mPersistors)) {
++      if (nativeExecutorAnchorKey(hive)) continue;
+       try {
+         result[hive] = await this.loadHydrationData(hive, persistor);
+       } catch (err) {
+@@ -203,6 +209,7 @@
+    */
+   public applyDiffOperations(hive: string, operations: DiffOperation[]): void {
+     this.guardNativeBackendWriteAdmission();
++    if (nativeExecutorAnchorKey(hive)) throw new Error("NATIVE_EXECUTOR_ANCHOR_PRIVATE");
+     if (hive === "persistent" && this.mNativeModPersistenceReservation !== undefined) {
+       try {
+         operations = this.snapshotAcknowledgedPersistenceOperations(operations);
+@@ -259,7 +266,7 @@
+   ): Promise<void> {
+     try {
+       this.guardNativeBackendWriteAdmission();
+-      if (typeof hive !== "string" || hive.length === 0
++      if (typeof hive !== "string" || nativeExecutorAnchorKey(hive) || hive.length === 0
+           || ["__proto__", "constructor", "prototype"].includes(hive)) {
+         throw new Error("Invalid acknowledged persistence hive");
+       }
+@@ -328,7 +335,7 @@
+       const ready = detached.map((batch: { hive: string; operations: DiffOperation[] }) => {
+         if (batch === null || typeof batch !== "object" || Object.keys(batch).length !== 2
+             || !Object.hasOwn(batch, "hive") || !Object.hasOwn(batch, "operations")
+-            || typeof batch.hive !== "string"
++            || typeof batch.hive !== "string" || nativeExecutorAnchorKey(batch.hive)
+             || !/^[A-Za-z][A-Za-z0-9_.-]{0,127}$/.test(batch.hive)
+             || ["constructor", "prototype"].includes(batch.hive)
+             || seen.has(batch.hive) || !Object.hasOwn(this.mPersistors, batch.hive)
+@@ -387,6 +394,12 @@
+   }
+ 
+   private guardNativeBackendWriteAdmission(): void {
++    if (this.#mNativeExecutorAnchor !== undefined) {
++      this.#mNativeExecutorAnchor.phase = "held";
++      this.mPersistenceWriteFailureObserved = true;
++      this.#mNativeExecutorAnchor.reservation.phase = "held";
++      throw new Error("NATIVE_EXECUTOR_ANCHOR_HELD");
++    }
+     if (this.mNativeModPersistenceReservation !== undefined) {
+       this.mNativeModPersistenceReservation.phase = "held";
+       throw new Error("Native persistence writes are held");
+@@ -424,6 +437,7 @@
+    */
+   public reserveNativeModPersistence(gameId: string, modId: string): Promise<object> {
+     try {
++      this.#checkNativeExecutorAnchorIdle();
+       const valid = (id: string) => typeof id === "string"
+         && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(id)
+         && !["__proto__", "constructor", "prototype"].includes(id);
+@@ -481,6 +495,7 @@
+   }
+ 
+   public checkNativeModPersistenceReservation(owner: object): void {
++    this.#checkNativeExecutorAnchorIdle();
+     const reservation = this.mNativeModPersistenceReservation;
+     if (reservation === undefined || reservation.owner !== owner || reservation.phase !== "reserved") {
+       throw new Error("Native persistence reservation owner or state mismatch");
+@@ -489,6 +504,52 @@
+     this.checkNativeModPersistenceBackend(reservation);
+   }
+ 
++  #checkNativeExecutorAnchorIdle(): void {
++    if (this.#mNativeExecutorAnchor !== undefined) throw new Error(this.#mNativeExecutorAnchor.phase === "held"
++      ? "NATIVE_EXECUTOR_ANCHOR_HELD" : "NATIVE_EXECUTOR_ANCHOR_BUSY");
++  }
++
++  /** Fixed main-private CAS. It neither validates a journal transition nor grants START. */
++  public writeNativeExecutorAnchor(owner: object, expectedBytes: Uint8Array | null, nextBytes: Uint8Array) {
++    const reservation = this.mNativeModPersistenceReservation;
++    if (reservation === undefined || reservation.owner !== owner || reservation.phase !== "reserved"
++        || this.#mNativeExecutorAnchor !== undefined || this.mNativeRegistration !== undefined
++        || this.#mNativeReleaseInProgress || this.mPersistenceWriteFailureObserved) {
++      return Promise.reject(new Error("NATIVE_EXECUTOR_ANCHOR_REFUSED"));
++    }
++    // Claim before parsing or any backend/queue callback can reenter.
++    const attempt = { reservation, phase: "claimed" as "claimed" | "writing" | "held" };
++    this.#mNativeExecutorAnchor = attempt;
++    const hold = () => {
++      attempt.phase = "held"; reservation.phase = "held"; this.mPersistenceWriteFailureObserved = true;
++    };
++    const anchorHeld = () => attempt.phase === "held";
++    const check = () => {
++      if (this.#mNativeExecutorAnchor !== attempt || anchorHeld() || this.mNativeRegistration !== undefined
++          || this.#mNativeReleaseInProgress || this.mNativeModPersistenceReservation !== reservation
++          || reservation.phase !== "reserved" || this.mPersistenceWriteFailureObserved) throw new Error("NATIVE_EXECUTOR_ANCHOR_HELD");
++      this.checkNativeModPersistenceBackend(reservation);
++      if (this.#mNativeExecutorAnchor !== attempt || anchorHeld() || reservation.phase !== "reserved") throw new Error("NATIVE_EXECUTOR_ANCHOR_HELD");
++    };
++    try {
++      const expected = expectedBytes === null ? null : Buffer.from(JSON.stringify(nativeExecutorAnchorSnapshot(expectedBytes)));
++      const next = Buffer.from(JSON.stringify(nativeExecutorAnchorSnapshot(nextBytes)));
++      check();
++      const completion = this.mUpdateQueue.then(async () => {
++        check();
++        if (reservation.backendOwner === undefined || reservation.sqlOwner === undefined || reservation.registry === undefined) throw new Error("NATIVE_EXECUTOR_ANCHOR_HELD");
++        attempt.phase = "writing";
++        const observed = await nativeExecutorAnchorWrite.call(reservation.levelPersist, reservation.backendOwner,
++          reservation.sqlOwner, reservation.registry, expected, next);
++        check();
++        this.#mNativeExecutorAnchor = undefined;
++        return observed;
++      }).catch((primary) => { hold(); throw primary; });
++      this.mUpdateQueue = completion.then(() => undefined, () => undefined);
++      return completion;
++    } catch (primary) { hold(); return Promise.reject(primary); }
++  }
++
+   /** Internal minimal registration only; no renderer adoption, release or tracked-install permit. */
+   public registerNativeNewMod(owner: object, bytes: Uint8Array): Promise<unknown> {
+     return this.#registerNativeMod(owner, bytes, "minimal");
+@@ -497,6 +558,7 @@
+     return this.#registerNativeMod(owner, bytes, "tracked");
+   }
+   #registerNativeMod(owner: object, bytes: Uint8Array, mode: "minimal" | "tracked"): Promise<unknown> {
++    if (this.#mNativeExecutorAnchor !== undefined) return Promise.reject(new Error("NATIVE_EXECUTOR_ANCHOR_BUSY"));
+     const reservation = this.mNativeModPersistenceReservation;
+     if (reservation === undefined || reservation.owner !== owner || reservation.phase !== "reserved" || this.mNativeRegistration !== undefined) return Promise.reject(new Error("NATIVE_REGISTRATION_REFUSED"));
+     const attempt: NativeMainRegistrationAttempt = { phase: "claimed" };
+@@ -545,6 +607,7 @@
+ 
+   /** Fixed internal successful release; remote renderer adoption is a coordinator gate. */
+   public releaseNativeTrackedMod(owner: object) {
++    this.#checkNativeExecutorAnchorIdle();
+     const reservation = this.mNativeModPersistenceReservation, attempt = this.mNativeRegistration;
+     if (reservation === undefined || reservation.owner !== owner || attempt === undefined
+         || attempt.phase !== "committed" || attempt.binding === undefined || attempt.observed === undefined) throw new Error("NATIVE_REGISTRATION_RELEASE_REFUSED");
+@@ -584,6 +647,7 @@
+   }
+ 
+   public checkNativeNewModRegistration(owner: object): void {
++    this.#checkNativeExecutorAnchorIdle();
+     const reservation = this.mNativeModPersistenceReservation, attempt = this.mNativeRegistration;
+     if (reservation === undefined || reservation.owner !== owner || attempt === undefined) throw new Error("NATIVE_REGISTRATION_REFUSED");
+     try {
+@@ -807,6 +871,7 @@
+     hive: string,
+     persistor: IPersistor,
+   ): Promise<{ [key: string]: Serializable }> {
++    if (nativeExecutorAnchorKey(hive)) throw new Error("NATIVE_EXECUTOR_ANCHOR_PRIVATE");
+     let kvPairs: Array<{ key: PersistorKey; value: Serializable }>;
+ 
+     if (persistor.getAllKVs !== undefined) {
