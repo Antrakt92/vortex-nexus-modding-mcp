@@ -207,6 +207,26 @@ export function validateRelayCopyProof(proof, sdk, request, binding) {
     const canonical = relayCopyProofBytes(proof);
     need(canonical.length <= 4 * 1024 * 1024 && canonical.length === sdk.copyProof.bytes && digest(canonical) === sdk.copyProof.sha256, 'COPY_PROOF_DIGEST_MISMATCH');
 }
+export function validateRelayPreparedReceipt(value, binding, anchor) {
+    need(exact(value, ['schema', 'binding', 'workerLifetime', 'workerPid', 'creationTime', 'packetSHA256', 'transition']) && value.schema === 'owned-zip-worker-prepared/1' && equal(value.binding, binding)
+        && label(value.workerLifetime, 'worker') && Number.isSafeInteger(value.workerPid) && value.workerPid > 0 && typeof value.creationTime === 'string' && /^[1-9][0-9]{0,19}$/.test(value.creationTime)
+        && typeof value.packetSHA256 === 'string' && /^[a-f0-9]{64}$/.test(value.packetSHA256), 'PREPARED_MISMATCH');
+    const t = value.transition;
+    need(exact(t, ['schema', 'rootId', 'previousInventorySHA256', 'inventorySHA256', 'operationId', 'nativeJobId', 'requestSHA256', 'packetSHA256', 'workerLifetime'])
+        && t.schema === 'native-executor-pending-transition/1' && t.rootId === anchor.rootId && t.previousInventorySHA256 === anchor.inventorySHA256
+        && typeof t.inventorySHA256 === 'string' && /^[a-f0-9]{64}$/.test(t.inventorySHA256)
+        && t.operationId === binding.operationId && t.nativeJobId === binding.nativeJobId && t.requestSHA256 === binding.requestSHA256 && t.packetSHA256 === value.packetSHA256 && t.workerLifetime === value.workerLifetime, 'PREPARED_MISMATCH');
+}
+export function copyRelayAnchor(bytes) {
+    const copy = bytesCopy(bytes, 1024), anchor = strict.parseStrictJSON(copy, {
+        maxBytes: 1024, maxDepth: 2, maxTokens: 32
+    });
+    need(exact(anchor, ['schema', 'rootId', 'inventorySHA256']) && anchor.schema === 'native-executor-anchor/1' && typeof anchor.rootId === 'string' && anchor.rootId.length <= 100 && /^[0-9]+:[0-9]+$/.test(anchor.rootId) && typeof anchor.inventorySHA256 === 'string' && /^[a-f0-9]{64}$/.test(anchor.inventorySHA256)
+        && Buffer.from(JSON.stringify({
+            schema: anchor.schema, rootId: anchor.rootId, inventorySHA256: anchor.inventorySHA256
+        })).equals(copy), 'INVALID_ANCHOR');
+    return copy;
+}
 export function validateRelayProofEnvelope(v, lifetime, binding, startSHA256, sequence, nonce) {
     need(exact(v, [
         'schema', 'relayLifetime', 'binding', 'startSHA256', 'sequence', 'nonce', 'proof'
@@ -238,6 +258,7 @@ export function createOwnedZipRelay(requestBytes, archiveBindingBytes, mode = 's
     const workspace = paths.resolvePaths().workspace;
     let child = null, observer = null, ready = null, sources = null, firstError = null, last = null, startAttempted = false, startSent = false, cancelAttempted = false, handoffAttempted = false, releaseAttempted = false, closed = false, controllerEnded = false, sequence = 0, startSHA256 = null, pending = Buffer.alloc(0), stderrBytes = 0, writing = false, outbound = [], protocolBroken = false;
     const seen = new Set(), waiters = new Set();
+    let preparedReceipt = null, preparedDigest = null, preparedAnchor = null, prepareNonce = null, explicitPrepare = false, startPreparedAttempted = false;
     let owner, proofFlight = null, proofCache = null, proofNonce = null, proofReceived = false, proofTimedOut = false;
     function proofLive() {
         const sdk = last?.sdk, relay = observer?.read();
@@ -294,7 +315,7 @@ export function createOwnedZipRelay(requestBytes, archiveBindingBytes, mode = 's
         wake();
     }
     function waitFor(phase, timeoutMs = 30000) {
-        need(['ready', 'accepted', 'closed', ...PHASES].includes(phase) && Number.isSafeInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 120000, 'OBSERVATION');
+        need(['ready', 'prepared', 'accepted', 'closed', ...PHASES].includes(phase) && Number.isSafeInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 120000, 'OBSERVATION');
         wake();
         if (seen.has(phase))
             return Promise.resolve(status());
@@ -319,6 +340,16 @@ export function createOwnedZipRelay(requestBytes, archiveBindingBytes, mode = 's
             need(equal(readRelaySourceClosure(), sources), 'SOURCE_CHANGED');
             ready = v;
             seen.add('ready');
+            wake();
+            return;
+        }
+        if (v.schema === 'owned-zip-relay-prepared/1') {
+            need(explicitPrepare && prepareNonce !== null && preparedReceipt === null && exact(v, ['schema', 'relayLifetime', 'binding', 'startSHA256', 'sequence', 'nonce', 'preparedSHA256', 'prepared']) && v.relayLifetime === ready.relayLifetime && equal(v.binding, binding) && v.startSHA256 === startSHA256 && Number.isSafeInteger(v.sequence) && v.sequence > sequence && v.nonce === prepareNonce && digest(Buffer.from(JSON.stringify(v.prepared))) === v.preparedSHA256, 'PREPARED_MISMATCH');
+            validateRelayPreparedReceipt(v.prepared, binding, preparedAnchor);
+            sequence = v.sequence;
+            preparedReceipt = structuredClone(v.prepared);
+            preparedDigest = v.preparedSHA256;
+            seen.add('prepared');
             wake();
             return;
         }
@@ -414,72 +445,100 @@ export function createOwnedZipRelay(requestBytes, archiveBindingBytes, mode = 's
             schema: 'owned-zip-relay-control/1', relayLifetime: ready.relayLifetime, binding, command
         }, 4096);
     }
+    async function beginRelay(anchorBytes, anchored) {
+        need(!startAttempted && !cancelAttempted && !releaseAttempted && occupied === null, 'START_REFUSED');
+        startAttempted = true;
+        occupied = owner;
+        try {
+            const anchor = anchored ? copyRelayAnchor(anchorBytes) : null;
+            explicitPrepare = anchored;
+            preparedAnchor = anchor ? JSON.parse(anchor.toString('utf8')) : null;
+            prepareNonce = anchored ? crypto.randomBytes(16).toString('hex') : null;
+            verifyRelayNode();
+            sources = readRelaySourceClosure();
+            child = spawn(RELAY_NODE, [path.join(HERE, 'owned-zip-relay-runner.mjs')], {
+                cwd: HERE, env: {
+                    SystemRoot: process.env.SystemRoot, NEXUS_WORKSPACE: workspace
+                }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe']
+            });
+            observer = terminal.observeChildTerminal(child, binding);
+            child.stdout.on('data', data);
+            child.stderr.on('data', b => {
+                stderrBytes = Math.min(8193, stderrBytes + b.length);
+                if (stderrBytes > 8192)
+                    fail('STDERR_LIMIT');
+            });
+            child.on('error', () => fail('SPAWN_FAILED'));
+            child.stdin.on('error', () => {
+                if (!releaseAttempted)
+                    fail('CONTROL_CLOSED');
+            });
+            child.on('exit', () => {
+                invalidateProof();
+                wake();
+            });
+            child.on('close', () => {
+                if (pending.length)
+                    firstError ??= 'TRUNCATED_FRAME';
+                if (startSent && !seen.has('released'))
+                    firstError ??= 'CUSTODY_LOST';
+                invalidateProof();
+                setImmediate(wake);
+            });
+            for (const stream of [child.stdin, child.stdout, child.stderr])
+                stream.on('close', () => setImmediate(wake));
+            await waitFor('ready');
+            if (cancelAttempted || releaseAttempted) {
+                releaseAttempted = true;
+                control('abort');
+                await waitFor('released');
+                controllerEnded = true;
+                child.stdin.end();
+                await waitFor('closed');
+                throw error('CANCELLED_BEFORE_START');
+            }
+            need(equal(readRelaySourceClosure(), sources), 'SOURCE_CHANGED');
+            const packet = {
+                schema: anchored ? 'owned-zip-relay-prepare/1' : 'owned-zip-relay-start/1', relayLifetime: ready.relayLifetime, binding, mode, requestJSON, archiveJSON, ...(anchored ? {
+                    anchorJSON: anchor.toString('utf8'), nonce: prepareNonce
+                } : {})
+            };
+            const raw = Buffer.from(JSON.stringify(packet));
+            need(raw.length + 1 <= MAX_START, 'START_LIMIT');
+            startSHA256 = digest(raw);
+            startSent = true;
+            write(packet, MAX_START);
+            if (anchored) {
+                await waitFor('prepared');
+                return structuredClone(preparedReceipt);
+            }
+            return await waitFor('accepted');
+        }
+        catch (e) {
+            if (!child && occupied === owner)
+                occupied = null;
+            e.owner = owner;
+            throw e;
+        }
+    }
     owner = Object.freeze({
         status, waitFor, async start() {
-            need(!startAttempted && !cancelAttempted && !releaseAttempted && occupied === null, 'START_REFUSED');
-            startAttempted = true;
-            occupied = owner;
-            try {
-                verifyRelayNode();
-                sources = readRelaySourceClosure();
-                child = spawn(RELAY_NODE, [path.join(HERE, 'owned-zip-relay-runner.mjs')], {
-                    cwd: HERE, env: {
-                        SystemRoot: process.env.SystemRoot, NEXUS_WORKSPACE: workspace
-                    }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe']
-                });
-                observer = terminal.observeChildTerminal(child, binding);
-                child.stdout.on('data', data);
-                child.stderr.on('data', b => {
-                    stderrBytes = Math.min(8193, stderrBytes + b.length);
-                    if (stderrBytes > 8192)
-                        fail('STDERR_LIMIT');
-                });
-                child.on('error', () => fail('SPAWN_FAILED'));
-                child.stdin.on('error', () => {
-                    if (!releaseAttempted)
-                        fail('CONTROL_CLOSED');
-                });
-                child.on('exit', () => {
-                    invalidateProof();
-                    wake();
-                });
-                child.on('close', () => {
-                    if (pending.length)
-                        firstError ??= 'TRUNCATED_FRAME';
-                    if (startSent && !seen.has('released'))
-                        firstError ??= 'CUSTODY_LOST';
-                    invalidateProof();
-                    setImmediate(wake);
-                });
-                for (const stream of [child.stdin, child.stdout, child.stderr])
-                    stream.on('close', () => setImmediate(wake));
-                await waitFor('ready');
-                if (cancelAttempted || releaseAttempted) {
-                    releaseAttempted = true;
-                    control('abort');
-                    await waitFor('released');
-                    controllerEnded = true;
-                    child.stdin.end();
-                    await waitFor('closed');
-                    throw error('CANCELLED_BEFORE_START');
-                }
-                need(equal(readRelaySourceClosure(), sources), 'SOURCE_CHANGED');
-                const packet = {
-                    schema: 'owned-zip-relay-start/1', relayLifetime: ready.relayLifetime, binding, mode, requestJSON, archiveJSON
-                };
-                const raw = Buffer.from(JSON.stringify(packet));
-                need(raw.length + 1 <= MAX_START, 'START_LIMIT');
-                startSHA256 = digest(raw);
-                startSent = true;
-                write(packet, MAX_START);
-                return await waitFor('accepted');
-            }
-            catch (e) {
-                if (!child && occupied === owner)
-                    occupied = null;
-                e.owner = owner;
-                throw e;
-            }
+            need(mode === 'scratch', 'STAGING_PREPARE_REQUIRED');
+            return beginRelay(null, false);
+        },
+        prepare(anchorBytes) {
+            return beginRelay(anchorBytes, true);
+        },
+        async startPrepared() {
+            need(explicitPrepare && preparedReceipt && !startPreparedAttempted && !cancelAttempted && !releaseAttempted && !firstError, 'START_PREPARED_REFUSED');
+            startPreparedAttempted = true;
+            need(equal(readRelaySourceClosure(), sources), 'SOURCE_CHANGED');
+            const live = observer?.read();
+            need(live?.spawnObserved && !live.exitObserved && !live.closeObserved && !live.childErrorObserved && !live.held && !live.childResourcesClosed, 'CUSTODY_LOST');
+            write({
+                schema: 'owned-zip-relay-control/1', relayLifetime: ready.relayLifetime, binding, command: 'startPrepared', preparedSHA256: preparedDigest
+            }, 4096);
+            return await waitFor('accepted');
         }, copyProof() {
             need(proofLive(), 'COPY_PROOF_UNAVAILABLE');
             if (proofCache)

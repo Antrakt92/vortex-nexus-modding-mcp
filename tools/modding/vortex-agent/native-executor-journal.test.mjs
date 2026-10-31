@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawn} from 'node:child_process';
+import crypto from 'node:crypto';
 import {createNativeExecutorJournal, INVENTORY_LIMITS} from './native-executor-journal.mjs';
 import {createNativeIntentJournal} from './native-intent-journal.mjs';
 import job from './install-job-contract.cjs';
@@ -44,6 +45,13 @@ const binding = (r = request()) => ({operationId: r.operationId, nativeJobId: r.
 const evidence = () => ({schema: 'native-executor-terminal-evidence/1', outcome: 'committed_adopted_closed',
   fullRecordSHA256: '1'.repeat(64), registrationObservationSHA256: '2'.repeat(64),
   adoptionObservationSHA256: '3'.repeat(64), workerClosureObservationSHA256: '4'.repeat(64), releaseObservationSHA256: '5'.repeat(64)});
+function trustedFixtureAnchor(store) {
+  // Only own fixtures establish their initial trusted input this way. Production
+  // must obtain it from independently acknowledged main state.
+  const snapshot = store.inventory();
+  return encode({schema: 'native-executor-anchor/1', rootId: snapshot.observedRootId,
+    inventorySHA256: snapshot.observedInventorySHA256});
+}
 function noAuthority(value) {
   for (const key of ['canReplay', 'effectsAllowed', 'installationPermit', 'powerLossPersistenceVerified',
     'independentCompletionVerified', 'currentStateVerified']) assert.equal(value[key], false, key);
@@ -75,10 +83,109 @@ test('immutable dual-index reservation survives a fresh bound reader and detache
   const result = store.begin(bytes, worker, packet); bytes.fill(0); r.plan.context.profileId = 'changed';
   held(result); assert.equal(result.state, 'reserved'); assert.equal(result.workerLifetime, worker);
   assert.equal(result.packetSHA256, packet); assert.equal(result.request.plan.context.profileId, 'fixture');
-  assert(Object.isFrozen(result.request.plan)); assert.deepEqual(Object.keys(store).sort(), ['appendTerminal', 'begin', 'inventory', 'read']);
+  assert(Object.isFrozen(result.request.plan)); assert.deepEqual(Object.keys(store).sort(), ['appendTerminal', 'begin', 'inventory', 'read', 'reservePending']);
   assert.deepEqual(read(createNativeExecutorJournal({root})), result);
   assert.deepEqual(fs.readdirSync(path.dirname(bindingPath(root))), ['binding.json']);
   assert.deepEqual(fs.readdirSync(path.dirname(intentPath(root))), ['intent.json']);
+});
+
+test('pending preparation verifies an anchored empty predecessor before one exact dual-index addition', () => {
+  const {root, store} = fixture(); fs.mkdirSync(root);
+  const anchor = trustedFixtureAnchor(store), input = JSON.parse(anchor), r = request();
+  const result = store.reservePending(encode(r), worker, packet, anchor);
+  held(result.reservation); assert.equal(result.reservation.state, 'reserved');
+  const transition = result.transition;
+  assert.equal(transition.schema, 'native-executor-pending-transition/1');
+  assert.equal(transition.rootId, input.rootId);
+  assert.equal(transition.previousInventorySHA256, input.inventorySHA256);
+  assert.equal(transition.requestSHA256, digest(r));
+  assert.equal(transition.packetSHA256, packet); assert.equal(transition.workerLifetime, worker);
+  const after = store.inventory({expectedRootId: transition.rootId, expectedInventorySHA256: transition.inventorySHA256});
+  assert.equal(after.historySealVerified, true); assert.equal(after.unresolvedCount, 1);
+  assert.equal(after.startupHoldRequired, true); noAuthority(after);
+  assert(Object.isFrozen(result) && Object.isFrozen(transition));
+  assert.deepEqual(fs.readdirSync(root).sort(), ['jobs', 'operations']);
+  assert.throws(() => store.reservePending(encode(r), worker, packet, anchor), /PREDECESSOR_NOT_SEALED/);
+});
+
+test('pending preparation preserves existing closed history and refuses unresolved or stale predecessors', () => {
+  const {root, store} = fixture(), first = request();
+  store.begin(encode(first), worker, packet); store.appendTerminal(binding(first), encode(evidence()));
+  const anchor = trustedFixtureAnchor(store), original = fs.readFileSync(terminalPath(root));
+  const result = store.reservePending(encode(request(2)), worker, packet, anchor);
+  assert.equal(result.transition.previousInventorySHA256, JSON.parse(anchor).inventorySHA256);
+  assert(fs.readFileSync(terminalPath(root)).equals(original));
+  const pendingAnchor = trustedFixtureAnchor(store);
+  assert.throws(() => store.reservePending(encode(request(3)), worker, packet, pendingAnchor), /PREDECESSOR_NOT_SEALED/);
+  assert.equal(fs.existsSync(path.dirname(intentPath(root, request(3)))), false);
+});
+
+test('closed anchor input refuses malformed bytes and caller code before any reservation', () => {
+  const {root, store} = fixture(), valid = {schema: 'native-executor-anchor/1', rootId: '1:2', inventorySHA256: h};
+  let calls = 0;
+  const proxy = new Proxy(Buffer.from('x'), {get() {calls++; throw Error('caller');}});
+  for (const bytes of [undefined, valid, proxy, new Uint8Array(new SharedArrayBuffer(64)),
+    Buffer.from([255]), encode({...valid, allow: true}), encode({...valid, rootId: '../escape'}),
+    encode({...valid, inventorySHA256: 'invalid'}), Buffer.from(' ' + encode(valid)),
+    Buffer.from(encode(valid).toString().replace('"rootId":', '"rootId":"1:3","rootId":'))])
+    assert.throws(() => store.reservePending(encode(request()), worker, packet, bytes), /INVALID_ANCHOR/);
+  assert.equal(calls, 0); assert.equal(fs.existsSync(root), false);
+  assert.throws(() => store.reservePending(encode(request()), worker, packet, encode(valid)), /PREDECESSOR_NOT_SEALED/);
+  assert.equal(fs.existsSync(root), false);
+});
+
+test('a changed prior terminal during reservation cannot be blessed by a new pending census', () => {
+  const {root, store} = fixture(); store.begin(encode(request()), worker, packet);
+  store.appendTerminal(binding(), encode(evidence()));
+  const anchor = trustedFixtureAnchor(store), original = fs.mkdirSync; let injected = false;
+  fs.mkdirSync = (file, ...args) => {
+    const result = original(file, ...args);
+    if (!injected && path.resolve(String(file)) === path.dirname(intentPath(root, request(2)))) {
+      injected = true;
+      mutate(terminalPath(root), record => {
+        record.fullRecordSHA256 = 'e'.repeat(64);
+        const changed = {...evidence(), fullRecordSHA256: record.fullRecordSHA256};
+        record.evidenceSHA256 = crypto.createHash('sha256').update(encode(changed)).digest('hex');
+      });
+      // Keep this replacement canonically valid, so the transition comparison
+      // must detect it rather than relying on malformed-record rejection.
+      fs.appendFileSync(terminalPath(root), '\n');
+    }
+    return result;
+  };
+  try {assert.throws(() => store.reservePending(encode(request(2)), worker, packet, anchor), /RESERVATION_TRANSITION_CHANGED/);}
+  finally {fs.mkdirSync = original;}
+  assert(injected); assert.equal(store.inventory().complete, true);
+  held(store.read(request(2).operationId, digest(request(2)), request(2).nativeJobId, packet));
+  assert.throws(() => store.begin(encode(request(2)), worker, packet), /INTENT_HELD/);
+});
+
+test('an extra concurrent reservation is retained and rejects the single-addition transition', () => {
+  const {root, store} = fixture(); fs.mkdirSync(root);
+  const anchor = trustedFixtureAnchor(store), original = fs.mkdirSync; let injected = false;
+  fs.mkdirSync = (file, ...args) => {
+    const result = original(file, ...args);
+    if (!injected && path.resolve(String(file)) === path.dirname(intentPath(root))) {
+      injected = true;
+      assert.throws(() => store.reservePending(encode(request(3)), worker, packet, anchor), /RESERVATION_BUSY/);
+      createNativeExecutorJournal({root}).begin(encode(request(2)), worker, packet);
+    }
+    return result;
+  };
+  try {assert.throws(() => store.reservePending(encode(request()), worker, packet, anchor), /RESERVATION_TRANSITION_CHANGED/);}
+  finally {fs.mkdirSync = original;}
+  assert(injected); assert.equal(store.inventory().unresolvedCount, 2);
+});
+
+test('partial reservation failure preserves permanent holds and never produces a transition', () => {
+  const {root, store} = fixture(); fs.mkdirSync(root);
+  const anchor = trustedFixtureAnchor(store), original = fs.linkSync; let calls = 0;
+  fs.linkSync = (...args) => {if (++calls === 2) throw Error('own job publication failure'); return original(...args);};
+  try {assert.throws(() => store.reservePending(encode(request()), worker, packet, anchor), /NATIVE_EXECUTOR_/);}
+  finally {fs.linkSync = original;}
+  assert.equal(calls, 2); assert(fs.existsSync(intentPath(root)));
+  assert.throws(() => store.reservePending(encode(request()), worker, packet, anchor), /PREDECESSOR_NOT_SEALED/);
+  assert.throws(() => store.begin(encode(request()), worker, packet), /INTENT_HELD/);
 });
 
 test('every externally supplied read binding must match without modifying either index', () => {
@@ -623,4 +730,42 @@ test('inventory-only reader remembers validated pending jobs after both indexes 
   const second = reader.inventory();
   assert.equal(second.complete, false); assert.match(second.code, /PATH_CHANGED/);
   assert.equal(second.startupHoldRequired, true); assert.equal(second.observedInventorySHA256, null); noAuthority(second);
+});
+
+
+test('a complete 1024-record closed census refuses the next pending reservation before writing', {timeout: 15000}, () => {
+  const {root, store} = fixture();
+  store.begin(encode(request()), worker, packet); store.appendTerminal(binding(), encode(evidence()));
+  const seedIntent = JSON.parse(fs.readFileSync(intentPath(root)));
+  const seedJob = JSON.parse(fs.readFileSync(bindingPath(root)));
+  const seedTerminal = JSON.parse(fs.readFileSync(terminalPath(root)));
+  // Build retained own fixtures efficiently, without 1024 fsync/publication
+  // cycles. Every directory identity and request digest is real; the actual
+  // production inventory below validates the whole closed corpus, not a mock.
+  for (let n = 2; n <= INVENTORY_LIMITS.records; n++) {
+    const r = request(n), requestSHA256 = digest(r);
+    const opDir = path.dirname(intentPath(root, r)), jobDir = path.dirname(bindingPath(root, r));
+    const terminalDir = path.dirname(terminalPath(root, r));
+    for (const dir of [opDir, jobDir, terminalDir]) fs.mkdirSync(dir);
+    const common = {operationId: r.operationId, nativeJobId: r.nativeJobId, requestSHA256};
+    const intent = {...seedIntent, operationId: r.operationId, requestSHA256, directoryId: rootIdentity(opDir), request: r};
+    const jobRecord = {...seedJob, ...common, directoryId: rootIdentity(jobDir)};
+    const terminal = {...seedTerminal, ...common, directoryId: rootIdentity(terminalDir), jobDirectoryId: rootIdentity(jobDir)};
+    for (const [file, value] of [[intentPath(root, r), intent], [bindingPath(root, r), jobRecord], [terminalPath(root, r), terminal]])
+      fs.writeFileSync(file, JSON.stringify(value) + '\n');
+  }
+  const reader = createNativeExecutorJournal({root}), snapshot = reader.inventory();
+  assert.equal(snapshot.complete, true); assert.equal(snapshot.closedCount, INVENTORY_LIMITS.records);
+  const anchor = encode({schema: 'native-executor-anchor/1', rootId: snapshot.observedRootId,
+    inventorySHA256: snapshot.observedInventorySHA256});
+  const next = request(INVENTORY_LIMITS.records + 1);
+  let failure;
+  try {reader.reservePending(encode(next), worker, packet, anchor);} catch (error) {failure = error;}
+  assert(failure, 'capacity must refuse');
+  for (const file of [intentPath(root, next), bindingPath(root, next), terminalPath(root, next)])
+    assert.equal(fs.existsSync(path.dirname(file)), false, 'capacity refusal must not publish an extra operation/job');
+  assert.match(failure.message, /NATIVE_EXECUTOR_INVENTORY_LIMIT/);
+  const after = reader.inventory({expectedRootId: snapshot.observedRootId, expectedInventorySHA256: snapshot.observedInventorySHA256});
+  assert.equal(after.complete, true); assert.equal(after.historySealVerified, true);
+  assert.equal(after.closedCount, INVENTORY_LIMITS.records); assert.equal(after.startupHoldRequired, false); noAuthority(after);
 });

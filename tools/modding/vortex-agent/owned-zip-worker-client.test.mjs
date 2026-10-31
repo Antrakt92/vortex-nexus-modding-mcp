@@ -10,6 +10,9 @@ import {syncBuiltinESMExports} from 'node:module';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import job from './install-job-contract.cjs';
 import dispatch from './native-dispatch-contract.cjs';
+import strict from './strict-json.cjs';
+import {createNativeExecutorJournal} from './native-executor-journal.mjs';
+import {isUint8Array,isSharedArrayBuffer} from 'node:util/types';
 import {createOwnedZipWorker} from './owned-zip-worker-client.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -192,8 +195,10 @@ ownTest('archive bindings are detached and shared buffers cannot enter worker st
 });
 
 ownTest('cancellation is delivered while the large START frame is still buffered', async t => captureChild(async current => {
+  let startup;
+  try {
   const input = fixture(1, false, 512), worker = owner(t, input);
-  const startup = worker.start();
+  startup = worker.start();
   await worker.waitFor('ready', 15000);
   assert.equal(worker.status().startSent, true);
   const child = current();
@@ -215,6 +220,10 @@ ownTest('cancellation is delivered while the large START frame is still buffered
   assert.equal(worker.status().worker.zipStatus?.createdFiles ?? 0, 0);
   await worker.release();
   assert.equal(unsent, undefined, 'Cancellation was refused under START backpressure');
+  } finally {
+    current()?.stdin.uncork();
+    if (startup) void startup.catch(() => {});
+  }
 }, child => child.stdin.cork()));
 
 ownTest('controller EOF retains actual custody until deliberate retirement of this exact held test process', async t => captureChild(async current => {
@@ -441,4 +450,42 @@ ownTest('source growth during streaming reads remains capped at admitted size pl
   assert.equal(bytesRead, admitted+1);
   assert(maxRequest <= 64*1024);
   assert.equal(worker.status().startSent, false);
+}));
+
+// Actual private SDK functions with controlled kernel/pipe facades: ordering
+// evidence only. Opt-in tests below exercise real Python and NTFS separately.
+function prestartSourceFixture(){
+ const source=fs.readFileSync(path.join(HERE,'owned-zip-worker-client.mjs'),'utf8');
+ const start=source.indexOf('  function copyAnchor(value) {'),end=source.indexOf('  owner = Object.freeze({',start);assert.ok(start>0&&end>start);
+ const build=new Function('strict','isUint8Array','isSharedArrayBuffer','sha','path',`let occupied=null,startAttempted=false,startSent=false,cancelAttempted=false,releaseAttempted=false,childClosed=false,ready=null,inertLifetime=null,expectedSources=null,child=null,terminal=null,destination=null,packetSHA256=null,preparedPacket=null,preparedBytes=null,preparedReceipt=null,explicitPrepared=false,startPreparedAttempted=false,inertAbortAttempted=false,firstError=null;let drift=false,brokenInventory=false,dead=false,reservations=0;const writes=[],outbound=[],binding={operationId:'op_'+ '1'.repeat(32),nativeJobId:'exec_'+ '2'.repeat(32),requestSHA256:'3'.repeat(64),rendererGeneration:'renderer_'+ '4'.repeat(32)},requestSHA256=binding.requestSHA256,request={operationId:binding.operationId,nativeJobId:binding.nativeJobId,plan:{package:{payload:{'a.txt':'5'.repeat(64)},expectedUncompressedBytes:1}}},archive={},staging=false,owner={},HERE='fixed',PYTHON='fixed-python',WORK_BASE='fixed-work',START_MAX=1024*1024+16384;const exact=(v,k)=>v&&typeof v==='object'&&Object.keys(v).length===k.length&&k.every(n=>Object.hasOwn(v,n)),need=(v,c)=>{if(!v)throw Error('OWNED_ZIP_WORKER_'+c)},error=c=>Object.assign(Error('OWNED_ZIP_WORKER_'+c),{owner}),runtime=()=>{},sources=()=>drift?{changed:'yes'}:{},scopeIO={ancestry:()=>[]},wake=()=>{},fail=()=>{},data=()=>{};const stream={on:()=>{}},spawn=()=>({pid:123,stdin:stream,stdout:stream,stderr:stream,on:()=>{}}),childTerminal={observeChildTerminal:()=>({read:()=>({spawnObserved:true,exitObserved:dead,closeObserved:false,childErrorObserved:false,held:false,childResourcesClosed:false})})};const wait=async phase=>{if(phase==='ready')ready={workerLifetime:'worker_'+ '6'.repeat(32),creationTime:'134000000000000000'};return{phase}},write=(value,max,command)=>{writes.push({value:structuredClone(value),command,startSent,startPreparedAttempted})};const journal={reservePending:(bytes,lifetime,packet,anchorBytes)=>{reservations++;const a=JSON.parse(Buffer.from(anchorBytes));return{schema:'native-executor-pending-reservation/1',reservation:{state:'reserved',...binding,workerLifetime:lifetime,packetSHA256:packet},transition:{schema:'native-executor-pending-transition/1',rootId:a.rootId,previousInventorySHA256:a.inventorySHA256,inventorySHA256:'7'.repeat(64),operationId:binding.operationId,nativeJobId:binding.nativeJobId,requestSHA256,packetSHA256:packet,workerLifetime:lifetime}}},begin:()=>{throw Error('DUPLICATE_LEGACY_BEGIN')},read:()=>({state:'reserved',workerLifetime:ready.workerLifetime,packetSHA256}),inventory:()=>({complete:true,rootIdentityVerified:true,historySealVerified:!brokenInventory,startupHoldRequired:true,observedRootId:'0:123',observedInventorySHA256:'7'.repeat(64)})};${source.slice(start,end)}return{prepare:bytes=>prepareWorker(bytes,true),startPrepared:startPreparedWorker,drift:()=>{drift=true},breakInventory:()=>{brokenInventory=true},exit:()=>{dead=true},snapshot:()=>({writes:structuredClone(writes),reservations,startSent,startPreparedAttempted,firstError})};`);
+ return build(strict,isUint8Array,isSharedArrayBuffer,digest,path);
+}
+const fixtureAnchor=()=>Buffer.from(JSON.stringify({schema:'native-executor-anchor/1',rootId:'0:123',inventorySHA256:'a'.repeat(64)}));
+test('actual SDK prepare reserves once without START; only explicit startPrepared spends and writes',async()=>{
+ const f=prestartSourceFixture();await assert.rejects(f.startPrepared(),/START_PREPARED_REFUSED/);const receipt=await f.prepare(fixtureAnchor());assert.equal(f.snapshot().reservations,1);assert.equal(f.snapshot().startSent,false);assert.deepEqual(f.snapshot().writes,[]);
+ receipt.transition.inventorySHA256='f'.repeat(64);await f.startPrepared();assert.equal(f.snapshot().reservations,1);assert.equal(f.snapshot().writes.length,1);assert.equal(f.snapshot().writes[0].value.schema,'owned-zip-worker-start/1');assert.equal(f.snapshot().writes[0].startPreparedAttempted,true);assert.equal(f.snapshot().writes[0].startSent,true);await assert.rejects(f.startPrepared(),/START_PREPARED_REFUSED/);await assert.rejects(f.prepare(fixtureAnchor()),/START_REFUSED/);
+});
+test('actual SDK invalid anchor refuses before spawn, and pre-START source/census/exit drift never writes or retries',async()=>{
+ const invalid=prestartSourceFixture();await assert.rejects(invalid.prepare(Buffer.from('{}')),/INVALID_ANCHOR/);assert.deepEqual(invalid.snapshot().writes,[]);assert.equal(invalid.snapshot().reservations,0);
+ for(const method of ['drift','breakInventory','exit']){const f=prestartSourceFixture();await f.prepare(fixtureAnchor());f[method]();await assert.rejects(f.startPrepared(),/SOURCE_CHANGED|JOURNAL_CHANGED|CUSTODY_LOST/);assert.equal(f.snapshot().reservations,1);assert.deepEqual(f.snapshot().writes,[]);await assert.rejects(f.startPrepared(),/START_PREPARED_REFUSED/);}
+});
+
+function preparedFixtureAnchor(input){
+ process.env.NEXUS_WORKSPACE=path.join(input.root,'prepared-runtime');const root=path.join(process.env.NEXUS_WORKSPACE,'local-state/vortex-agent-build/native-install-executor');fs.mkdirSync(path.dirname(root),{recursive:true});fs.mkdirSync(root);const inventory=createNativeExecutorJournal({root}).inventory();assert.equal(inventory.complete,true);assert.equal(inventory.records.length,0);
+ return Buffer.from(JSON.stringify({schema:'native-executor-anchor/1',rootId:inventory.observedRootId,inventorySHA256:inventory.observedInventorySHA256}));
+}
+ownTest('actual explicit prepare waits for separate persisted-main ACK before any extraction START',async t=>{
+ const input=fixture(),anchor=preparedFixtureAnchor(input),worker=owner(t,input),receipt=await worker.prepare(anchor),work=path.resolve(HERE,'../../../local-state/owned-zip-worker-work',input.request.operationId);
+ assert.equal(receipt.schema,'owned-zip-worker-prepared/1');assert.equal(worker.status().startSent,false);assert.equal(worker.status().worker,null);assert.equal(fs.existsSync(work),false);held(worker.inspectIntent());
+ await assert.rejects(worker.prepare(anchor),/START_REFUSED/);let ack;const ackPromise=new Promise(resolve=>{ack=resolve}),start=(async()=>{await ackPromise;return worker.startPrepared()})();await new Promise(resolve=>setTimeout(resolve,50));assert.equal(worker.status().startSent,false);assert.equal(fs.existsSync(work),false);
+ fs.writeFileSync(path.join(input.root,'OWN-MAIN-ACK.json'),JSON.stringify(receipt.transition)+'\n',{flag:'wx'});ack();await start;await worker.waitFor('extracted',15000);assert.equal(worker.status().startSent,true);await assert.rejects(worker.startPrepared(),/START_PREPARED_REFUSED/);await worker.release();held(worker.inspectIntent());
+});
+ownTest('prepared explicit cancel aborts inert Python, preserves unknown reservation and creates no output root',async t=>{
+ const input=fixture(),anchor=preparedFixtureAnchor(input),worker=owner(t,input);await worker.prepare(anchor);await worker.cancel();assert.equal(worker.status().workerTerminal.childResourcesClosed,true);assert.equal(worker.status().workerTerminal.exitSucceeded,true);assert.equal(worker.status().startSent,false);assert.equal(fs.existsSync(path.resolve(HERE,'../../../local-state/owned-zip-worker-work',input.request.operationId)),false);await assert.rejects(worker.startPrepared(),/START_PREPARED_REFUSED/);await worker.release();held(worker.inspectIntent());
+});
+ownTest('actual prepared census drift consumes START attempt without writing and cannot inert-refund it',async t=>captureChild(async current=>{
+ const input=fixture(),anchor=preparedFixtureAnchor(input),worker=owner(t,input);await worker.prepare(anchor);const root=path.join(process.env.NEXUS_WORKSPACE,'local-state/vortex-agent-build/native-install-executor');fs.writeFileSync(path.join(root,'unexpected.txt'),'own deliberate drift',{flag:'wx'});
+ await assert.rejects(worker.startPrepared(),/JOURNAL_CHANGED/);assert.equal(worker.status().startSent,false);await assert.rejects(worker.startPrepared(),/START_PREPARED_REFUSED/);await assert.rejects(worker.retireInert(),/RETIRE_ACTIVE_REFUSED/);assert.equal(fs.existsSync(path.resolve(HERE,'../../../local-state/owned-zip-worker-work',input.request.operationId)),false);
+ // Exact retained test child only, already known never to have received START.
+ assert.equal(current().pid,worker.status().workerPid);assert.equal(current().kill('SIGTERM'),true);await worker.waitFor('closed',15000);held(worker.inspectIntent());
 }));

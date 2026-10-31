@@ -60,6 +60,22 @@ function evidenceSnapshot(bytes) {
     return Object.freeze(result);
   } catch {throw Error('NATIVE_EXECUTOR_INVALID_TERMINAL');}
 }
+function anchorSnapshot(bytes) {
+  try {
+    need(types.isUint8Array(bytes) && !types.isProxy(bytes), 'INVALID_ANCHOR');
+    const prototype = Object.getPrototypeOf(Uint8Array.prototype);
+    const size = Object.getOwnPropertyDescriptor(prototype, 'byteLength').get.call(bytes);
+    const backing = Object.getOwnPropertyDescriptor(prototype, 'buffer').get.call(bytes);
+    need(size > 0 && size <= 1024 && !types.isSharedArrayBuffer(backing), 'INVALID_ANCHOR');
+    const copy = new Uint8Array(size); Uint8Array.prototype.set.call(copy, bytes);
+    const value = strictJSON.parseStrictJSON(copy, {maxBytes: 1024, maxDepth: 2, maxTokens: 20});
+    need(exact(value, ['schema', 'rootId', 'inventorySHA256']) && value.schema === 'native-executor-anchor/1'
+      && rootId(value.rootId) && sha(value.inventorySHA256), 'INVALID_ANCHOR');
+    const result = {schema: value.schema, rootId: value.rootId, inventorySHA256: value.inventorySHA256};
+    need(Buffer.from(copy).equals(Buffer.from(JSON.stringify(result))), 'INVALID_ANCHOR');
+    return Object.freeze(result);
+  } catch {throw Error('NATIVE_EXECUTOR_INVALID_ANCHOR');}
+}
 
 function safe(fn) {
   try {return fn();}
@@ -92,7 +108,7 @@ export function createNativeExecutorJournal(options = {}) {
   const root = path.resolve(candidate), jobsRoot = path.join(root, 'jobs'), terminalsRoot = path.join(root, 'terminals');
   const intents = createNativeIntentJournal({root: path.join(root, 'operations')});
   const seenJobs = new Set();
-  let rootPins, jobsPins, terminalsPins;
+  let rootPins, jobsPins, terminalsPins, pendingReservationInProgress = false;
   function roots(create) {
     const current = io.ancestry(root, create);
     if (rootPins) {need(current, 'PATH_CHANGED'); io.sameAncestry(root, rootPins);}
@@ -265,7 +281,7 @@ export function createNativeExecutorJournal(options = {}) {
         canReplay: false, effectsAllowed: false, installationPermit: false, powerLossPersistenceVerified: false});
     });
   }
-  function inventory(options = {}) {
+  function inspectInventory(options = {}) {
     let expectedRootId, expectedInventorySHA256;
     safe(() => {
       need(options !== null && typeof options === 'object' && !types.isProxy(options), 'INVALID_OPTIONS');
@@ -283,14 +299,14 @@ export function createNativeExecutorJournal(options = {}) {
       const rootIdentityVerified = complete && expectedRootId !== undefined && expectedRootId === observedRootId;
       const historySealVerified = rootIdentityVerified && expectedInventorySHA256 !== undefined
         && expectedInventorySHA256 === observedInventorySHA256;
-      return Object.freeze({schema: 'native-executor-inventory/1', complete, observedRootId, rootIdentityVerified,
+      return {observation: Object.freeze({schema: 'native-executor-inventory/1', complete, observedRootId, rootIdentityVerified,
         observedInventorySHA256, historySealVerified,
         startupHoldRequired: !complete || !historySealVerified || closed !== rows.length,
         observedEmpty: complete && rows.length === 0,
         records: Object.freeze(rows), closedCount: closed, unresolvedCount: rows.length - closed, code,
         historicalOnly: true, independentCompletionVerified: false, currentStateVerified: false,
         discoveryPermit: false, canReplay: false, effectsAllowed: false, installationPermit: false,
-        powerLossPersistenceVerified: false});
+        powerLossPersistenceVerified: false}), census: null};
     };
     try {
       if (!roots(false)) return response(false, [], 'NATIVE_EXECUTOR_ROOT_MISSING');
@@ -424,11 +440,52 @@ export function createNativeExecutorJournal(options = {}) {
         need(generation(fs.lstatSync(dir, {bigint: true})) === snapshot.stamp, 'CHANGED');
       }
       io.sameAncestry(root, rootPins);
-      const observedInventorySHA256 = hash(Buffer.from(JSON.stringify({schema: 'native-executor-census/1',
-        rootId: observedRootId, indexes: top, records: census})));
-      return response(true, rows, expectedInventorySHA256 !== undefined && expectedInventorySHA256 !== observedInventorySHA256
+      const document = {schema: 'native-executor-census/1', rootId: observedRootId, indexes: top, records: census};
+      const observedInventorySHA256 = hash(Buffer.from(JSON.stringify(document)));
+      const result = response(true, rows, expectedInventorySHA256 !== undefined && expectedInventorySHA256 !== observedInventorySHA256
         ? 'NATIVE_EXECUTOR_INVENTORY_MISMATCH' : null, observedInventorySHA256);
+      result.census = document;
+      return result;
     } catch (error) {return response(false, [], codeOf(error));}
   }
-  return Object.freeze({begin, read, appendTerminal, inventory});
+  function inventory(options = {}) {return inspectInventory(options).observation;}
+  // The caller supplies the independently retained main anchor, never a seal
+  // discovered and automatically echoed from this journal. This verifies only
+  // the disk transition; main must still COMMIT/read back its successor anchor.
+  function reservePending(requestBytes, workerLifetime, packetSHA256, anchorBytes) {
+    return safe(() => {
+      const anchor = anchorSnapshot(anchorBytes), request = checked(requestBytes);
+      need(id(workerLifetime, 'worker') && sha(packetSHA256), 'INVALID_BINDING');
+      need(!pendingReservationInProgress, 'RESERVATION_BUSY');
+      pendingReservationInProgress = true;
+      try {
+        const before = inspectInventory({expectedRootId: anchor.rootId, expectedInventorySHA256: anchor.inventorySHA256});
+        need(before.observation.complete && before.observation.historySealVerified
+          && !before.observation.startupHoldRequired && before.census !== null, 'PREDECESSOR_NOT_SEALED');
+        need(before.census.records.length < INVENTORY_LIMITS.records, 'INVENTORY_LIMIT');
+        need(!before.census.records.some(row => row.operationId === request.operationId || row.nativeJobId === request.nativeJobId), 'RESERVATION_CONSUMED');
+        const reservation = begin(Buffer.from(JSON.stringify(request)), workerLifetime, packetSHA256);
+        const after = inspectInventory({expectedRootId: anchor.rootId});
+        need(after.observation.complete && after.census !== null, 'RESERVATION_TRANSITION_CHANGED');
+        const expectedIndexes = [...new Set([...before.census.indexes, 'operations', 'jobs'])].sort();
+        need(JSON.stringify(after.census.indexes) === JSON.stringify(expectedIndexes)
+          && after.census.records.length === before.census.records.length + 1, 'RESERVATION_TRANSITION_CHANGED');
+        for (const prior of before.census.records) {
+          const current = after.census.records.find(row => row.operationId === prior.operationId);
+          need(current && JSON.stringify(current) === JSON.stringify(prior), 'RESERVATION_TRANSITION_CHANGED');
+        }
+        const added = after.census.records.find(row => row.operationId === request.operationId);
+        need(added && added.nativeJobId === request.nativeJobId && added.requestSHA256 === reservation.requestSHA256
+          && added.packetSHA256 === packetSHA256 && added.workerLifetime === workerLifetime
+          && sha(added.intentRecordSHA256) && sha(added.jobRecordSHA256) && added.terminalRecordSHA256 === null,
+        'RESERVATION_TRANSITION_CHANGED');
+        return Object.freeze({schema: 'native-executor-pending-reservation/1', reservation,
+          transition: Object.freeze({schema: 'native-executor-pending-transition/1', rootId: anchor.rootId,
+            previousInventorySHA256: anchor.inventorySHA256, inventorySHA256: after.observation.observedInventorySHA256,
+            operationId: request.operationId, nativeJobId: request.nativeJobId, requestSHA256: reservation.requestSHA256,
+            packetSHA256, workerLifetime})});
+      } finally {pendingReservationInProgress = false;}
+    });
+  }
+  return Object.freeze({begin, read, appendTerminal, inventory, reservePending});
 }

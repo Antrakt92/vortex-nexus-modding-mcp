@@ -76,6 +76,9 @@ When delegation is authorized, give writers exclusive files and provide the
 selected skill, owning checkout, runtime identity, allowed effects and acceptance
 boundary. Have another agent resolve realistic scenarios using the final skill;
 review the outcome instead of treating an agent's approval as evidence.
+Exclusive write ownership includes ignored evidence and native helper scripts.
+Use separate writer directories or prefixes, freeze the exact helper before
+execution, and retain its source hash with the result.
 
 Keep current reports, source/compile/package proof, operation receipts and unique
 rollback inputs. Cleanup needs exact targets and verified keepers/reconstruction

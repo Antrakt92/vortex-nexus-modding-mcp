@@ -14,6 +14,7 @@ journal.appendTerminal(originalBinding, canonicalEvidenceBytes);
 journal.inventory();
 journal.inventory({expectedRootId});
 journal.inventory({expectedRootId, expectedInventorySHA256});
+journal.reservePending(requestBytes, workerLifetime, packetSHA256, mainAnchorBytes);
 ```
 
 `originalBinding` has exactly five own data fields: `operationId`, `nativeJobId`,
@@ -75,6 +76,11 @@ digests from the actual canonical request, validates cross-index bindings, and
 rechecks all initial file generations and directory identities/names. The caps
 are 1,024 operation identities and 32 MiB of aggregate bounded record reads.
 Overflow is incomplete/HOLD, never truncation reported as a complete census.
+The 1,024-operation cap also refuses new prepared reservations before writing.
+It is a hard operational limit, not a retention policy. Increasing the cap or
+deleting closed entries to retry is not a recovery path. Long-term compaction
+still needs the managed retention contract to preserve consumed identities and
+the independently retained main anchor.
 
 A missing root returns `complete:false`, `observedRootId:null` and
 `startupHoldRequired:true`. It is never created by a read. A present empty root
@@ -123,6 +129,74 @@ Results are sanitized IDs/digests/counts. `historicalOnly:true` accompanies
 `installationPermit:false`. A stable before/after census is a point observation,
 not an OS lock or a universal atomic filesystem snapshot. Nothing here is a
 current game-state, global-quiescence or restart-recovery permission.
+
+## Reservation before START
+
+`reservePending` accepts a separately supplied, canonical main anchor:
+
+```js
+const mainAnchorBytes = Buffer.from(JSON.stringify({
+  schema: 'native-executor-anchor/1',
+  rootId: trustedMainRootId,
+  inventorySHA256: trustedMainCensusSHA256
+}));
+```
+
+The input is at most 1 KiB. It must come from independently acknowledged main
+state. Constructing it from the latest journal observation in production would
+erase the history check. The journal cannot authenticate its provenance.
+
+The method requires a complete matching predecessor census with no unresolved
+operations, and capacity for another operation. It calls the existing `begin`
+once, then checks the complete successor census. Only the new operation and job
+may be added. Every prior canonical intent, job and terminal record digest must
+remain unchanged. Comparing public record summaries alone is insufficient;
+the internal comparison retains the complete census digests.
+
+The result contains the original reservation and a compact
+`native-executor-pending-transition/1` with the root, predecessor/successor census
+digests and exact operation/job/request/packet/worker binding. A partial write,
+changed old record or extra concurrent reservation refuses the transition and
+retains all resulting holds. It never deletes evidence or refunds consumed IDs.
+It neither sends START nor grants an installation permit.
+Even a normally joined cancellation before START currently leaves an unresolved
+reservation. Supporting a usable cancelled-operation completion will require a
+distinct, source-proved terminal outcome and main-anchor transition. It cannot
+reuse `committed_adopted_closed` or remove either consumed index. Until that
+contract exists, cancellation does not unblock history automatically.
+
+The actual main coordinator must persist and read back this authorized successor
+anchor before requesting START on the same prepared worker. Worker launch must
+then recheck that exact pending census. Lost prepare or COMMIT acknowledgement
+requires reconciliation; a successful-looking later read is not permission to
+repeat either write or installation. These scans are bounded point observations,
+not a lock against another privileged filesystem writer.
+
+## Main storage and first provisioning
+
+Main-state wiring remains pending. The intended storage is one fixed main-private
+KV in the actual final selected backend, excluded from renderer hydration and
+ordinary KV read/write/remove routes. Existing convenience persistence helpers
+can swallow errors; they cannot acknowledge this transition. The implementation
+needs a strict transaction and exact readback on the source-owned backend.
+
+First provisioning must explicitly require an absent anchor and exclusively
+create a new fixed journal root. Any existing unanchored root, failed publication
+or replacement after initialization stays held. It must not adopt an empty
+existing directory or silently recreate missing history. A crash between root
+creation and known anchor commit requires reconciliation. Restoring both trusted
+main state and the whole journal together is outside the independent-anchor
+assumption; this does not claim tamper-proof or power-loss recovery.
+
+The startup check must complete before renderer creation and cleanup/discovery.
+Its fixed HOLD error must not enter Vortex's `DataInvalid` database-repair retry.
+Normal completion also needs a checked pending-to-terminal census transition
+and acknowledged main-anchor update; reservation support alone does not provide
+that completion path.
+The registration release clears its backend and SQL owners. A later terminal
+anchor update must acquire a separate serialized anchor-only window while the
+logical coordinator slot still excludes new operations. Reusing the released
+owners or falling back to an ordinary KV write cannot acknowledge completion.
 
 ## Local checks
 

@@ -196,7 +196,7 @@
     },
     {
       "path": "docs/AGENT-WORKFLOW.md",
-      "sha256_lf": "be34686442463770382fe49be182d723cb89b6f58ef197f0038a889dde76abdc"
+      "sha256_lf": "28cae6dacdc7d6dc5dc6bdfa7e14cdba29a5bd139141b2db2effacde4681f088"
     },
     {
       "path": "docs/ARCHIVE-TEMP-CUSTODY.md",
@@ -312,7 +312,7 @@
     },
     {
       "path": "docs/NATIVE-EXECUTOR-TERMINAL.md",
-      "sha256_lf": "e475e7cd9c10c4437ba17f65433d22e29f292fa9f413bed25ed18f4f1eec98ee"
+      "sha256_lf": "bbb1edcdfc0b442a947be485332dc706786f83c0459e9cd62c9e16e8540db528"
     },
     {
       "path": "docs/NATIVE-EXTRACTOR-CLOSE-PATCH.md",
@@ -396,11 +396,11 @@
     },
     {
       "path": "docs/OWNED-ZIP-RELAY.md",
-      "sha256_lf": "74e4723d35f44a717595998fefaa919853a0081d3dd75627ea8d99d88f88e765"
+      "sha256_lf": "690b4842471bd2df81eaa40d6e02dbf6b2665c9a2662fd5534174b467434e123"
     },
     {
       "path": "docs/OWNED-ZIP-WORKER.md",
-      "sha256_lf": "f9ba6c5fefce6c4e67022b86ddd20c94a8979313fe6fa56ae6141b598faface0"
+      "sha256_lf": "e8dbdcc6bce0050c847b14ea5281c9db3721f671e6af9867a12d9ee3c9e22a4a"
     },
     {
       "path": "docs/PRISTINE-API-CACHE.md",
@@ -980,11 +980,11 @@
     },
     {
       "path": "tools/modding/vortex-agent/native-executor-journal.mjs",
-      "sha256_lf": "55d370bebd9c9b206cef9a4a9ff5f4cf1fa8538b874372fac0d4e6c1ed36b253"
+      "sha256_lf": "7849653a8e2036ed75dae9f45a70d8bfcd44ad895dc16f5d9f04a59115e00830"
     },
     {
       "path": "tools/modding/vortex-agent/native-executor-journal.test.mjs",
-      "sha256_lf": "fbd00238a06a3d96862328f7178687e3c4b93fb0d7603dbac73bcabb4caf8f9b"
+      "sha256_lf": "0633f0746c12dfcc951120eaa19e2af21571772973b131054fc02c354cea6f7e"
     },
     {
       "path": "tools/modding/vortex-agent/native-extractor-close-patch.test.mjs",
@@ -1940,27 +1940,27 @@
     },
     {
       "path": "tools/modding/vortex-agent/owned-zip-relay-client.mjs",
-      "sha256_lf": "0a18fde1dfbc6ec9a29225415e999c887d141b35cb499e15543a6a7f3fb444a3"
+      "sha256_lf": "5c2440a7224339944b4e4561f9551d778fcab250e00a62a1bc1d115b35985b34"
     },
     {
       "path": "tools/modding/vortex-agent/owned-zip-relay-runner.mjs",
-      "sha256_lf": "a5e70ffc7fc82c81d5185bf84113c8c08ca98edb40211beb3330f036d30d960c"
+      "sha256_lf": "5a1f4fd1913f4728a0f8c59efffbf289485348d80e4237692c93af5d14fc15b5"
     },
     {
       "path": "tools/modding/vortex-agent/owned-zip-relay.test.mjs",
-      "sha256_lf": "eaca09040c0d782d44ad9a99f25d2a3fe593b6ac564080a95d193e84224a2651"
+      "sha256_lf": "8d2f24015126f758d02045545430eab990fb46d5326a43126c8b500ea1ef58b5"
     },
     {
       "path": "tools/modding/vortex-agent/owned-zip-staging-worker.test.mjs",
-      "sha256_lf": "974dc063e6a6df8f2b5258da63545155b2923d863942d11bae780e597c0a0e8e"
+      "sha256_lf": "2df847a90dd2c92be28dab9f51b5bdea66e3a0793ff6c7cac3cafdb4a06c8c67"
     },
     {
       "path": "tools/modding/vortex-agent/owned-zip-worker-client.mjs",
-      "sha256_lf": "314bcfe9a9e557abf08270c0975b425ea111d6109310b72ed7e01b6d6cd57033"
+      "sha256_lf": "1b35076619708c9462f42a71e6ca8a5ed12eb69beec7102537d242171e13adeb"
     },
     {
       "path": "tools/modding/vortex-agent/owned-zip-worker-client.test.mjs",
-      "sha256_lf": "3720518ab73729ce72860278992b1059377d54345e8cc1e93fb4e5e25f3f4b70"
+      "sha256_lf": "878b2d23c60d864101ee498003e4086295663f180b547eab033a4325ffdfb72d"
     },
     {
       "path": "tools/modding/vortex-agent/owned-zip-worker.py",
