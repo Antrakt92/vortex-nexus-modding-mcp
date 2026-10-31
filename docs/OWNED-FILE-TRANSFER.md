@@ -5,6 +5,24 @@ library for copying a bounded payload into a newly created directory. It is not
 connected to Vortex, the bridge or an installation endpoint. Importing it and
 constructing `OwnedFileTransfer` do not open files or create directories.
 
+The guardian can also prepare a destination parent through its existing
+`_HandleCustody` owner. Preparation opens only existing NTFS ancestors and
+returns a source-created token; it creates no output directory. The observation
+contains a detached native parent identity and one destination leaf. It exposes
+no raw HANDLE.
+
+`ArchiveTempLease.begin_transfer_prepared(guard, token)` verifies that the token
+is still registered with its actual owner, belongs to the same handle pool, and
+retains its original open parent. It borrows that exact handle instead of
+reopening the destination path. The existing exclusive directory/file creation
+and ZIP source checks still apply. Closing the guardian while its borrower is
+active refuses; failures retain the borrower and partial output. The original
+`begin_transfer(parent, identity, leaf)` path remains available.
+
+`destination_observation()` reports the held destination directory's native
+identity after acquisition. It does not grant registration or cleanup permission
+and is unavailable after closing or poisoning the transfer.
+
 ## Acquisition and copying
 
 The caller supplies an existing source root, an existing destination parent,

@@ -198,12 +198,58 @@ class _HandlePool:
         self.owners = []
 
 
+class _PreparedDestination:
+    __slots__ = ('owner', 'entry', 'path', 'leaf', 'identity', 'phase')
+
+    def __init__(self, owner, entry, path, leaf, identity):
+        self.owner, self.entry, self.path, self.leaf = owner, entry, path, leaf
+        self.identity, self.phase = identity, 'prepared'
+
+
 class _HandleCustody:
     def _init_custody(self, pool=None):
         self._pool = pool or _HandlePool()
         self._handles = []
         self._pool.owners.append(self)
         self._lock, self._thread = self._pool.lock, self._pool.thread
+        self._prepared_destination = None
+        self._prepared_destination_attempted = False
+
+    def _prepare_destination(self, value, leaf):
+        """Open an existing parent once; no output directory is created here."""
+        with self._operation():
+            _need(not self._prepared_destination_attempted, 'DESTINATION_ALREADY_PREPARED')
+            self._prepared_destination_attempted = True
+            try:
+                value, leaf = _root(value), _component(leaf)
+                handle = self._root_handle(value)
+                identity = _snapshot(handle, True)[0]
+                entry = next((entry for entry in self._handles
+                              if entry.phase == 'open' and entry.cell.value == handle), None)
+                _need(entry is not None, 'DESTINATION_HANDLE_REFUSED')
+                self._prepared_destination = _PreparedDestination(self, entry, value, leaf, identity)
+                return self._prepared_destination
+            except BaseException:
+                self._poisoned = True
+                raise
+
+    def _check_prepared_destination(self, prepared, pool):
+        _need(type(prepared) is _PreparedDestination and self._prepared_destination is prepared
+              and prepared.owner is self and self._pool is pool and self in pool.owners
+              and not self._closed and not self._poisoned
+              and prepared.phase in ('prepared', 'borrowed')
+              and prepared.entry in self._handles and prepared.entry.phase == 'open',
+              'DESTINATION_OWNER_REFUSED')
+        handle = prepared.entry.cell.value
+        _need(handle not in (None, C.c_void_p(-1).value)
+              and _snapshot(handle, True)[0] == prepared.identity, 'DESTINATION_CHANGED')
+        return handle
+
+    def _observe_prepared_destination(self, prepared):
+        with self._operation():
+            self._check_prepared_destination(prepared, self._pool)
+            return {'parent': prepared.path, 'leaf': prepared.leaf,
+                    'parentIdentity': _label(prepared.identity)}
 
     def _remaining_handles(self):
         return MAX_HANDLES - sum(len(owner._handles) for owner in self._pool.owners)
@@ -338,6 +384,8 @@ class OwnedFileTransfer(_HandleCustody):
         self._init_custody()
         self._source_dirs, self._destination_dirs = {}, {}
         self._borrow_parent = None
+        self._borrow_destination = None
+        self._destination_pin = None
         self._zip_source_owner = None
         self._attempted = self._acquired = self._poisoned = self._closed = False
         self._files = self._total = 0
@@ -358,9 +406,17 @@ class OwnedFileTransfer(_HandleCustody):
                       and not self._borrow_parent._poisoned, 'BORROW_HELD')
                 source = self._borrow_parent._temp_handle
                 _need(_snapshot(source, True)[0] == self._source_pin, 'ROOT_IDENTITY_MISMATCH')
-            parent = self._existing_root(self._parent_path, self._parent_pin)
+            if self._borrow_destination is None:
+                parent = self._existing_root(self._parent_path, self._parent_pin)
+            else:
+                prepared = self._borrow_destination
+                parent = prepared.owner._check_prepared_destination(prepared, self._pool)
+                _need(prepared.phase == 'borrowed' and prepared.identity == self._parent_pin
+                      and prepared.path == self._parent_path and prepared.leaf == self._leaf,
+                      'DESTINATION_OWNER_REFUSED')
             _need(_snapshot(source, True)[0] != _snapshot(parent, True)[0], 'ROOT_OVERLAP')
-            destination, _ = self._open(parent, self._leaf, True, create=True)
+            destination, observed = self._open(parent, self._leaf, True, create=True)
+            self._destination_pin = observed[0]
             self._source_dirs[()] = source
             self._destination_dirs[()] = destination
             self._acquired = True
@@ -430,6 +486,15 @@ class OwnedFileTransfer(_HandleCustody):
                 error.lease = self
                 raise
             raise self._error(error) from None
+
+    def destination_observation(self):
+        with self._operation():
+            _need(self._acquired and self._destination_pin is not None, 'NOT_ACQUIRED')
+            _need(_snapshot(self._destination_dirs[()], True)[0] == self._destination_pin,
+                  'DESTINATION_CHANGED')
+            return {'parent': self._parent_path, 'leaf': self._leaf,
+                    'parentIdentity': _label(self._parent_pin),
+                    'directoryIdentity': _label(self._destination_pin)}
 
     def status(self):
         return {'acquired': self._acquired, 'poisoned': self._poisoned, 'closed': self._closed,
@@ -553,11 +618,24 @@ class ArchiveTempLease(_HandleCustody):
                 raise self._error(error) from None
 
     def begin_transfer(self, destination_parent, parent_identity, new_leaf):
+        return self._begin_transfer(destination_parent, parent_identity, new_leaf)
+
+    def begin_transfer_prepared(self, guard, prepared):
+        # The token is a source-created object registered with its actual owner;
+        # no raw handle or wire-provided identity can substitute for it.
+        return self._begin_transfer(None, None, None, guard, prepared)
+
+    def _begin_transfer(self, destination_parent, parent_identity, new_leaf, guard=None, prepared=None):
         with self._operation():
             _need(self._acquired and not self._borrow_attempted, 'BORROW_UNAVAILABLE')
             if self._extractor_attempted:
                 _need(self._extractor is not None and self._extractor._handoff_ready_locked(), 'EXTRACTOR_NOT_READY')
             try:
+                if guard is not None or prepared is not None:
+                    _need(isinstance(guard, _HandleCustody), 'DESTINATION_OWNER_REFUSED')
+                    guard._check_prepared_destination(prepared, self._pool)
+                    _need(prepared.phase == 'prepared', 'DESTINATION_ALREADY_BORROWED')
+                    destination_parent, parent_identity, new_leaf = prepared.path, _label(prepared.identity), prepared.leaf
                 _need(_snapshot(self._archive_handle, False) == self._archive_snapshot
                       and _hash(self._archive_handle, self._size) == self._sha
                       and _snapshot(self._archive_handle, False) == self._archive_snapshot
@@ -572,6 +650,10 @@ class ArchiveTempLease(_HandleCustody):
                 self._pool.owners.append(borrow)
                 borrow._lock, borrow._thread = self._lock, self._thread
                 borrow._borrow_parent = self
+                if prepared is not None:
+                    prepared.phase = 'borrowed'
+                    borrow._borrow_destination = prepared
+                    guard._borrow = borrow
                 if getattr(self._extractor, '_backend', None) == 'zip':
                     borrow._zip_source_owner = self._extractor
                 borrow._acquire()

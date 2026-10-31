@@ -1,6 +1,7 @@
 """Fixed internal own-ZIP guardian. Private NDJSON pipes, no install endpoint.
 
-No executable, script, argv, callback, Vortex/game path or backend override.
+No executable, script, argv, callback or backend override. Version 2 prepares
+one typed destination parent/leaf; managed Vortex authority is a separate gate.
 Custody stays in this process through extraction, copy and explicit release.
 Controller EOF holds/cancels; it never releases files or starts another job.
 Import is inert. Only the reviewed fixed launcher should execute this file.
@@ -96,6 +97,8 @@ class Transport:
         self.fault = None
         self.binding = None
         self.start_seen = False
+        self.prepare_seen = False
+        self.prepared_destination = None
         self.slot = None
         self.condition = threading.Condition()
         self.final_written = threading.Event()
@@ -127,10 +130,20 @@ class Transport:
                 return
 
     def validate_start(self, value):
-        need(exact(value, ('schema', 'workerLifetime', 'binding', 'archive', 'payload', 'total'))
-             and value['schema'] == 'owned-zip-worker-start/1'
+        staging = value.get('schema') == 'owned-zip-worker-start/2' if type(value) is dict else False
+        need(exact(value, ('schema', 'workerLifetime', 'binding', 'archive', 'payload', 'total', 'destination') if staging
+                   else ('schema', 'workerLifetime', 'binding', 'archive', 'payload', 'total'))
+             and value['schema'] == ('owned-zip-worker-start/2' if staging else 'owned-zip-worker-start/1')
              and value['workerLifetime'] == self.lifetime, 'START_REFUSED')
         check_binding(value['binding'])
+        need(staging == self.prepare_seen, 'DESTINATION_PREPARATION_REQUIRED')
+        if staging:
+            destination = value['destination']
+            need(exact(destination, ('parent', 'leaf', 'parentIdentity'))
+                 and value['binding'] == self.binding
+                 and self.base._root(destination['parent']) == self.base._root(self.prepared_destination['parent'])
+                 and destination['leaf'] == self.prepared_destination['leaf'], 'DESTINATION_BINDING_MISMATCH')
+            self.base._identity(destination['parentIdentity'])
         archive = value['archive']
         need(exact(archive, ('parent', 'parentIdentity', 'leaf', 'identity', 'bytes', 'sha256')), 'ARCHIVE_REFUSED')
         self.base._root(archive['parent'])
@@ -152,6 +165,19 @@ class Transport:
                 need(value['workerLifetime'] == self.lifetime, 'LIFETIME_MISMATCH')
                 self.commands.put_nowait(('abort', None, None))
                 self.start_seen = True  # Nothing else may become a start.
+                return
+            if type(value) is dict and value.get('schema') == 'owned-zip-worker-prepare-destination/1':
+                need(not self.prepare_seen and exact(value, ('schema', 'workerLifetime', 'binding', 'destination'))
+                     and value['workerLifetime'] == self.lifetime, 'DESTINATION_PREPARE_REFUSED')
+                check_binding(value['binding'])
+                destination = value['destination']
+                need(exact(destination, ('parent', 'leaf')), 'DESTINATION_PREPARE_REFUSED')
+                self.base._root(destination['parent'])
+                self.base._component(destination['leaf'])
+                self.prepare_seen = True
+                self.binding = dict(value['binding'])
+                self.prepared_destination = dict(destination)
+                self.commands.put_nowait(('prepare_destination', value, None))
                 return
             self.validate_start(value)
             self.binding = dict(value['binding'])
@@ -246,6 +272,13 @@ class Worker:
         self.copy_scope = []
         self.last_emit = 0
         self.op_identity = None
+        self.op_handle = None
+        self.destination_mode = False
+        self.prepared_destination = None
+        self.destination_observation = None
+        self.copy_proof = None
+        self.copy_records = []
+        self.start_seen = False
 
     def emit(self, force=False, final=False):
         if self.binding is None or (not force and time.monotonic()-self.last_emit < 0.1):
@@ -253,11 +286,47 @@ class Worker:
         self.sequence += 1
         need(self.sequence <= MAX_SAFE, 'SEQUENCE_LIMIT')
         self.last_emit = time.monotonic()
-        self.transport.send({'schema': 'owned-zip-worker-status/1', 'workerLifetime': self.transport.lifetime,
+        value = {'schema': 'owned-zip-worker-status/2' if self.destination_mode else 'owned-zip-worker-status/1', 'workerLifetime': self.transport.lifetime,
              'binding': dict(self.binding), 'packetSHA256': self.packet_sha, 'sequence': self.sequence,
              'phase': self.phase, 'zipStatus': self.owner.status() if self.owner else None,
-             'copiedFiles': self.copied, 'workRoot': str(self.work_root), 'errorCode': self.error_code,
-             'effectsAllowed': False, 'nativeInstallAccepted': False, 'persistenceVerified': False}, final)
+             'copiedFiles': self.copied, 'workRoot': str(self.work_root) if self.work_root else None, 'errorCode': self.error_code,
+             'effectsAllowed': False, 'nativeInstallAccepted': False, 'persistenceVerified': False}
+        if self.destination_mode:
+            value['destination'], value['copyProof'] = self.destination_observation, self.copy_proof
+        self.transport.send(value, final)
+
+    def prepare_destination(self, value):
+        need(self.binding is None and not self.start_seen, 'DESTINATION_PREPARE_REFUSED')
+        self.binding = dict(value['binding'])
+        self.destination_mode = True
+        need(not self.transport.fault, 'TRANSPORT_HELD')
+        self.prepared_destination = self.guard._prepare_destination(value['destination']['parent'], value['destination']['leaf'])
+        observation = self.guard._observe_prepared_destination(self.prepared_destination)
+        self.destination_observation = {**observation, 'directoryIdentity': None}
+        self.phase = 'destination_prepared'
+        self.transport.send({'schema': 'owned-zip-worker-destination/1', 'workerLifetime': self.transport.lifetime,
+            'binding': dict(self.binding), 'destination': observation, 'effectsAllowed': False, 'nativeInstallAccepted': False})
+
+    def publish_copy_proof(self):
+        value = {'schema': 'owned-zip-copy-proof/1', 'workerLifetime': self.transport.lifetime,
+            'binding': dict(self.binding), 'packetSHA256': self.packet_sha,
+            'destination': self.destination_observation, 'files': self.copy_records,
+            'copiedFiles': self.copied, 'totalBytes': sum(row['bytes'] for row in self.copy_records),
+            'effectsAllowed': False, 'nativeInstallAccepted': False, 'persistenceVerified': False}
+        raw = json.dumps(value, separators=(',', ':'), ensure_ascii=True, sort_keys=True).encode('utf-8')
+        need(0 < len(raw) <= 4*1024*1024, 'COPY_PROOF_LIMIT')
+        with self.guard._operation():
+            handle, initial = self.guard._open(self.op_handle, 'CopyProof.json', False, create=True, writable=True)
+            need(initial[1] == 0 and initial[2] == 1, 'COPY_PROOF_REFUSED')
+            for offset in range(0, len(raw), self.base.CHUNK_BYTES):
+                self.base._write(handle, raw[offset:offset+self.base.CHUNK_BYTES])
+            finished = self.base._snapshot(handle, False)
+            digest = hashlib.sha256(raw).hexdigest()
+            need(finished[1] == len(raw) and finished[2] == 1
+                 and self.base._hash(handle, len(raw)) == digest
+                 and self.base._snapshot(handle, False) == finished, 'COPY_PROOF_CHANGED')
+            self.copy_proof = {'identity': self.base._label(finished[0]), 'bytes': len(raw), 'sha256': digest,
+                'files': self.copied, 'totalBytes': value['totalBytes']}
 
     def hold(self, code):
         self.error_code = self.error_code or code
@@ -268,7 +337,12 @@ class Worker:
         self.emit(True)
 
     def start(self, value, packet_sha):
-        need(self.binding is None, 'START_ALREADY_SEEN')
+        need(not self.start_seen and (self.binding is None or self.destination_mode), 'START_ALREADY_SEEN')
+        if self.destination_mode:
+            need(value['binding'] == self.binding
+                 and value['destination'] == self.guard._observe_prepared_destination(self.prepared_destination),
+                 'DESTINATION_BINDING_MISMATCH')
+        self.start_seen = True
         self.binding, self.packet_sha = dict(value['binding']), packet_sha
         self.work_root = WORK_BASE/self.binding['operationId']
         if self.transport.fault:
@@ -288,6 +362,7 @@ class Worker:
                     raise
                 base_handle, _ = self.guard._open(base_handle, name, True, create=True)
         op_handle, observed = self.guard._open(base_handle, self.binding['operationId'], True, create=True)
+        self.op_handle = op_handle
         self.op_identity = self.base._label(observed[0])
         archive = value['archive']
         self.lease = self.base.ArchiveTempLease(self.binding, archive['parent'], archive['parentIdentity'],
@@ -314,7 +389,9 @@ class Worker:
         need(not self.handoff_attempted and not self.cancelled and not self.transport.cancel_seen.is_set()
              and not self.transport.fault and self.phase == 'extracted', 'HANDOFF_REFUSED')
         self.handoff_attempted = True
-        self.borrower = self.lease.begin_transfer(str(self.work_root), self.op_identity, 'Final')
+        self.borrower = self.lease.begin_transfer_prepared(self.guard, self.prepared_destination) if self.destination_mode else self.lease.begin_transfer(str(self.work_root), self.op_identity, 'Final')
+        if self.destination_mode:
+            self.destination_observation = self.borrower.destination_observation()
         # Sizes originate in VERIFIED decoder records, never another input map.
         self.copy_scope = [(key, record['size'], record['sha']) for key, record in sorted(self.owner._outputs.items())]
         self.phase = 'copying'
@@ -352,10 +429,12 @@ class Worker:
                 except queue.Empty:
                     command = None
                 if command == 'abort':
-                    need(self.binding is None, 'ABORT_AFTER_START_REFUSED')
+                    need(not self.start_seen, 'ABORT_AFTER_START_REFUSED')
                     self.guard.close()
                     os._exit(0)
-                if command == 'start':
+                if command == 'prepare_destination':
+                    self.prepare_destination(value)
+                elif command == 'start':
                     self.start(value, digest)
                 elif command == 'cancel':
                     self.cancel()
@@ -380,7 +459,10 @@ class Worker:
                     if self.copied < len(self.copy_scope):
                         key, size, digest = self.copy_scope[self.copied]
                         name = '/'.join(key)
-                        self.borrower.transfer(name, name, size, digest)
+                        proof = self.borrower.transfer(name, name, size, digest)
+                        if self.destination_mode:
+                            self.copy_records.append({'path': name, 'bytes': proof['bytes'], 'sha256': proof['sha256'],
+                                'sourceIdentity': proof['sourceIdentity'], 'destinationIdentity': proof['destinationIdentity']})
                         self.copied += 1
                         self.emit()
                     if self.transport.fault:
@@ -388,6 +470,8 @@ class Worker:
                     elif self.transport.cancel_seen.is_set():
                         self.cancel()
                     elif self.copied == len(self.copy_scope):
+                        if self.destination_mode:
+                            self.publish_copy_proof()
                         self.phase = 'copied'
                         self.emit(True)
                 else:

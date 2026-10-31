@@ -276,7 +276,7 @@
     },
     {
       "path": "docs/LOCAL-INSTALL-IMPLEMENTATION.md",
-      "sha256_lf": "3910f18366d96521717da81cff6d39f8888ed288f14dab0194230f902bfbb312"
+      "sha256_lf": "aaa56ecf2e8e305db796db350612faa74abe98d42e81401543d4fedc65e8c5f4"
     },
     {
       "path": "docs/MAINTENANCE.md",
@@ -388,7 +388,7 @@
     },
     {
       "path": "docs/OWNED-FILE-TRANSFER.md",
-      "sha256_lf": "ad7f77fb96723a1fe013d8374af24d40729ec68fa6805c142e327e89f850c461"
+      "sha256_lf": "730dadc3ac66413e1f60b489c7eeead408c7e7bff5cffd4a339130c1f0429c99"
     },
     {
       "path": "docs/OWNED-ZIP-EXTRACTOR.md",
@@ -396,7 +396,7 @@
     },
     {
       "path": "docs/OWNED-ZIP-WORKER.md",
-      "sha256_lf": "f4bad6cb9981998b1faa289a8fc9e5f32cd1af300e876320b5392a797b599842"
+      "sha256_lf": "f9ba6c5fefce6c4e67022b86ddd20c94a8979313fe6fa56ae6141b598faface0"
     },
     {
       "path": "docs/PRISTINE-API-CACHE.md",
@@ -1920,7 +1920,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/owned-file-transfer.py",
-      "sha256_lf": "e8fb285d99966e341c8462e4d87645e377eb597f072839420ebc8db896b6ce2d"
+      "sha256_lf": "92635b6980e0173ab328fa9ab4fafe21430775a608b851acb9b0f574260e6dff"
     },
     {
       "path": "tools/modding/vortex-agent/owned-file-transfer.test.py",
@@ -1935,16 +1935,20 @@
       "sha256_lf": "6f8d46bd08e4ce135e9f159dab2f9e0b43d6afcd4eacaebefaaebdd5f482db57"
     },
     {
+      "path": "tools/modding/vortex-agent/owned-zip-staging-worker.test.mjs",
+      "sha256_lf": "974dc063e6a6df8f2b5258da63545155b2923d863942d11bae780e597c0a0e8e"
+    },
+    {
       "path": "tools/modding/vortex-agent/owned-zip-worker-client.mjs",
-      "sha256_lf": "8cb2e58264307d93eef5a2a592e4279e73a9b09787745e568673e403b338eefb"
+      "sha256_lf": "314bcfe9a9e557abf08270c0975b425ea111d6109310b72ed7e01b6d6cd57033"
     },
     {
       "path": "tools/modding/vortex-agent/owned-zip-worker-client.test.mjs",
-      "sha256_lf": "48a59195c05caf81ba5235e7838812248b870e62a1fda0652518c66b0eca07bc"
+      "sha256_lf": "3720518ab73729ce72860278992b1059377d54345e8cc1e93fb4e5e25f3f4b70"
     },
     {
       "path": "tools/modding/vortex-agent/owned-zip-worker.py",
-      "sha256_lf": "6b34b9601c14100aca81e2861c1d26bca365c3386bf862d94f3a1c14c84646b5"
+      "sha256_lf": "24f8b30bce3833559bf828efbae4b9491979b04ed123ec34a4de86d03239f1dc"
     },
     {
       "path": "tools/modding/vortex-agent/package.test.mjs",
@@ -2021,6 +2025,10 @@
     {
       "path": "tools/modding/vortex-agent/prepare-tracked-nexus.mjs",
       "sha256_lf": "7c361c49dd9764fcd9c404e648bd76f80a08b06d29d66fc4434620d0102ead93"
+    },
+    {
+      "path": "tools/modding/vortex-agent/prepared-destination.test.py",
+      "sha256_lf": "6a5b3df5e52daf2391aaf8eef06290e2dcd5f7a4d3957f392002c9e41d26e4d1"
     },
     {
       "path": "tools/modding/vortex-agent/process-guard.test.mjs",
