@@ -1,0 +1,28 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/main/src/Application.ts",
+  "originalSourceSHA256": "25c00338c5cece8bad93822ac1ed548928284e2f1922f0406026d2fc01ce98ce",
+  "inputSHA256": "bdbf8bcd4d1ae41fa8d9615a18327115f081d3668d8e88ac5382dcc7f024f39d",
+  "outputSHA256": "7e450d36d70627e453ec6221dc795bb4b6285bf1c5b209a482871622a9eef95c",
+  "patchSHA256": "44fa31475a2b968dac3b3b2f4d22db9a965a2be210b5a88138aaaa44c0a1d210",
+  "prerequisitePatch": "ack-application-owner.patch",
+  "prerequisitePatchSHA256": "63b92bfd20848f61457e34209dd7c3f3231e859d72775564df21ce739a339638",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "installationPermit": false,
+  "powerLossPersistenceVerified": false,
+  "startupGateSupported": false,
+  "limitations": [
+    "Prepared read-only startup classification only; no genesis, provisioning, START, release or installer endpoint.",
+    "Unconfigured plus absent trusted main anchor allows ordinary startup without a history-absence claim.",
+    "Both trusted anchor and all journal history lost together cannot be distinguished from uninitialized state.",
+    "Source generation/hash comparisons are bounded point observations, not OS source leases; synchronous ESM closure and process-first-load assumptions remain explicit."
+  ],
+  "requiredCompanionPatch": "native-main-executor-startup.patch",
+  "requiredCompanionPatchSHA256": "590ad8de5741288ead4224589d3e540be9f02fee3bf6b12c8e1401dd1690d369",
+  "requiredCompanionOutputSHA256": "16102503e103e9d9b43871cbd762f21363be4d57b5cdf7eb51f7e04c2d3ae12e"
+}

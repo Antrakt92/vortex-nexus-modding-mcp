@@ -1,0 +1,22 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/main/build.mjs",
+  "originalSourceSHA256": "e8d85c7eb88cc6aeb3bc5a46e976b4e2fb213166fb2b4a14457d09d058ec39e1",
+  "inputSHA256": "e8d85c7eb88cc6aeb3bc5a46e976b4e2fb213166fb2b4a14457d09d058ec39e1",
+  "outputSHA256": "c1a64385de1c5da8ad95910cfad7dcba960d727213ad725ee911dc133fdd0e19",
+  "patchSHA256": "1d8d55b7e2e1886f1c1e7e9efbb5cefb22a8e75b7a519d75060e93bb10541a4d",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "installationPermit": false,
+  "powerLossPersistenceVerified": false,
+  "startupGateSupported": false,
+  "limitations": [
+    "Build-only optional runtime tuple: absent explicit NEXUS_RUNTIME_WORKSPACE embeds null, without environment or cwd discovery.",
+    "Exact fixed 15 source hashes are bounded point observations of ordinary file/path generations, not an OS lease or source review.",
+    "The build reads SDK bytes without executing/importing them; no installed host, startup reconciliation or executor permission is established."
+  ]
+}

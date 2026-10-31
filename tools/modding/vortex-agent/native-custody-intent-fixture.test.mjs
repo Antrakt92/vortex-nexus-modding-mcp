@@ -9,7 +9,7 @@ import {beginFixtureIntent, readFixtureIntent} from './native-custody-intent-fix
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TASK = path.resolve(HERE, '../../../local-state/native-custody-process-tests');
 const sources = ['native-intent-journal.mjs', 'immutable-records.mjs', 'strict-json.cjs',
-  'paths.cjs', 'native-dispatch-contract.cjs', 'install-job-contract.cjs'];
+  'paths.cjs', 'paths-core.cjs', 'native-dispatch-contract.cjs', 'install-job-contract.cjs'];
 const sha = value => crypto.createHash('sha256').update(value).digest('hex');
 const pinned = file => sha(fs.readFileSync(path.join(HERE, file)));
 function fixture() {

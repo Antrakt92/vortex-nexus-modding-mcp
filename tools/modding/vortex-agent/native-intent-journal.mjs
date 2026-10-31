@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import paths from './paths.cjs';
+import paths from './paths-core.cjs';
 import dispatch from './native-dispatch-contract.cjs';
 import {createImmutableRecordIO, identity, generation} from './immutable-records.mjs';
 

@@ -12,12 +12,18 @@ The child environment contains only SystemRoot and the configured runtime
 workspace; it does not inherit NODE_OPTIONS or NODE_PATH. SDK Electron refusal
 remains in force.
 
-The physical runtime closure contains fourteen fixed source files: the SDK and
+The physical runtime closure contains fifteen fixed source files: the SDK and
 its data/I/O modules, the Python components, the terminal observer, and both relay
 modules. Their hashes are checked separately from Vortex's application ASAR and
 the resident adapter ledger. These are source point observations, not an OS-wide
 code lease or a sandbox against privileged file modification. A packaged host
 still needs its own code/layout/loading qualification.
+
+The application-facing `createBoundOwnedZipRelay(requestBytes, archiveBindingBytes,
+runtimeBindingBytes)` fixes the physical SDK layout and workspace from the
+[compiled runtime binding](NATIVE-RUNTIME-BINDING.md). It checks that exact
+closure before spawn and at readiness. The unbound factory below remains for
+existing own fixtures; it is not the application coordinator's runtime selector.
 
 ## Operations and transport
 
@@ -91,6 +97,10 @@ loss stops further work and leaves uncertain custody held. It does not authorize
 automatic release, force termination, cleanup, replay or another worker. The
 tests have a separate, reviewed retirement path for their own deliberately held
 fixtures; that helper is not part of the production relay.
+The outer `releasing` phase keeps a worker's early `sdk.phase:'released'`
+notification separate from completed process closure. Only the runner's joined,
+validated release can publish outer `released`. The SDK's own phase vocabulary
+does not gain a `releasing` value.
 Before `startPrepared()` begins its one-shot attempt, cancellation may abort and
 join that known-inert Python child. Controller EOF still leaves Node held and
 the reservation unresolved.

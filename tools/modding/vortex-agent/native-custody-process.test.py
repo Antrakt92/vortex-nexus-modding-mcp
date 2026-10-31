@@ -30,7 +30,7 @@ SOURCE = HERE/'owned-file-transfer.py'
 INTENT_HELPER = HERE/'native-custody-intent-fixture.mjs'
 NODE = Path('C:/Program Files/nodejs/node.exe')
 INTENT_SOURCES = ('native-intent-journal.mjs', 'immutable-records.mjs', 'strict-json.cjs',
-                  'paths.cjs', 'native-dispatch-contract.cjs', 'install-job-contract.cjs')
+                  'paths.cjs', 'paths-core.cjs', 'native-dispatch-contract.cjs', 'install-job-contract.cjs')
 TASK = ROOT/'local-state/native-custody-process-tests'
 EXE = Path('C:/Program Files/Vortex/resources/app.asar.unpacked/node_modules/7z-bin/win32/7z.exe')
 EXE_SHA = 'fcd699098397e8981104c51afe32f4527cb6f02a5b64cbb6b2581f4749808e8c'

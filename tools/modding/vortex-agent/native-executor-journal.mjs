@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {types} from 'node:util';
-import paths from './paths.cjs';
+import paths from './paths-core.cjs';
 import dispatch from './native-dispatch-contract.cjs';
 import {createNativeIntentJournal} from './native-intent-journal.mjs';
 import {createImmutableRecordIO, identity, generation} from './immutable-records.mjs';

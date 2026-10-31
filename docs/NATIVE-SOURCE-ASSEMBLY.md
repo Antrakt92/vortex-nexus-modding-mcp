@@ -1,7 +1,7 @@
 # Assemble the reviewed Vortex source patches
 
-`native-source-series.mjs` applies the fixed sequence of 78 reviewed patches to
-24 original files from Vortex `v2.9.1`, commit
+`native-source-series.mjs` applies the fixed sequence of 81 reviewed patches to
+25 original files from Vortex `v2.9.1`, commit
 `c80326367cbe6d96621ad6cf4a5488ef49bac110`. It replaces manually composing separate
 patch chains before compilation. It does not change an installed application or
 make native installation available through MCP.
@@ -35,9 +35,10 @@ match the pinned series. Patch application requires exact offsets and context;
 it has no fuzzy matching or hash-refresh mode.
 
 The fixed graph combines the 33-patch mod-management/transfer packet with the
-45-patch persistence packet. The latter includes renderer target admission and
+48-patch persistence packet. The latter includes renderer target admission and
 acknowledged diffs, main/preload/shared IPC, backend reservations and managed SQL
-ownership. Both runtime packet directories have separate closed inventories;
+ownership, the main build's runtime binding and startup history classification.
+Both runtime packet directories have separate closed inventories;
 test-only adapters are excluded. A cross-file companion must already have been
 applied with its exact patch and intermediate output hashes. Cross-packet
 companions name one of the same two fixed packet IDs; they cannot add a source
@@ -102,7 +103,7 @@ node --test tools/modding/vortex-agent/native-source-series.test.mjs
 
 The first command covers portable input and packet checks. The second also
 exercises exact original-source assembly and output isolation. The fixture root
-must contain all 24 original files, not their patched replacements. Earlier
+must contain all 25 original files, not their patched replacements. Earlier
 partial fixtures are incomplete for this graph and are refused.
 Neither command proves compilation, host loading or a successful mod install.
 
@@ -481,3 +482,29 @@ backend/facade scope recorded in the anchor contract.
 
 Application runtime binding, first provisioning, startup reconciliation and the
 coordinator's pre-START ordering are not connected by these storage patches.
+
+## Runtime binding and startup history — 31 October 2026
+
+The 81-patch graph adds the main Rolldown build input and two application
+changes for the [fixed runtime and startup gate](NATIVE-RUNTIME-BINDING.md).
+All 25 original-to-final source chains passed exact assembly checks. The main
+TypeScript target and its seven prerequisites passed; the subsequent SDK-only
+release-phase repair reused that check with identical application source and
+compiler inputs. A fresh main build embedded the final fifteen-file SDK tuple,
+and all 52 retained upstream main tests passed.
+
+Seven main sources matched the actual TypeScript Program and fresh runtime map.
+The build script was verified separately as an executed build input, not counted
+as a TypeScript Program member. Eighteen unchanged renderer/preload/shared entries
+and their outputs retained their prior evidence. The lockfile and eight compiler
+configurations were unchanged. The emitted tuple also passed the actual copied
+SDK's canonical codec through Node's synchronous ESM loader.
+
+The source suite passed 462 checks without skips. The bound relay passed seven
+checks, including a real own-archive Node/Python prepare and joined inert cancel.
+The legacy relay passed 23 checks after a deterministic regression exposed and
+fixed premature outer `released` reporting before worker process/pipe closure.
+Historical failures and uncertain fixture journals were retained.
+
+These checks do not start or replace Vortex. Electron loading, native constructor
+acceptance, coordinator initialization and installation remain separate gates.

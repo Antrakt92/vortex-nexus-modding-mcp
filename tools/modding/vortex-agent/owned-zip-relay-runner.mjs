@@ -81,7 +81,7 @@ function publish(force = false) {
         return;
     try {
         const sdk = sdkStatus();
-        let phase = released ? 'released' : controllerEOF ? 'held' : sdk?.phase ?? 'starting';
+        let phase = released ? 'released' : controllerEOF ? 'held' : releasing ? 'releasing' : sdk?.phase ?? 'starting';
         if (['ready', 'not_started'].includes(phase))
             phase = cancelled ? 'cancelled' : failed ? 'held' : 'starting';
         if (failed && !['cancelled', 'released'].includes(phase))

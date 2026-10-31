@@ -298,8 +298,8 @@ test('closed mode and typed request API refuse without process or caller options
     assert.throws(() => createOwnedZipRelay(Buffer.from('{}'), Buffer.from('{}'), 'exec'), /MODE/);
     assert.throws(() => createOwnedZipRelay({}, Buffer.from('{}')), /REQUEST/);
     assert.throws(() => createOwnedZipRelay(Buffer.from('{}'), Buffer.from('{}')), /NATIVE_DISPATCH/);
-    assert.equal(RELAY_SOURCE_NAMES.length, 14);
-    assert.equal(new Set(RELAY_SOURCE_NAMES).size, 14);
+    assert.equal(RELAY_SOURCE_NAMES.length, 15);
+    assert.equal(new Set(RELAY_SOURCE_NAMES).size, 15);
 });
 // Execute the actual SDK status producer, with owned data-only captured variables.
 const sdkSource = fs.readFileSync(path.join(HERE, 'owned-zip-worker-client.mjs'), 'utf8');
@@ -907,3 +907,31 @@ ownTest('prepared controller EOF aborts only inert Python while relay and unknow
         flag: 'wx'
     });
 }));
+
+
+test('actual runner publishes releasing until BOTH terminal facts are joined, preserving failed holds', () => {
+    const source = fs.readFileSync(path.join(HERE, 'owned-zip-relay-runner.mjs'), 'utf8');
+    const body = source.slice(source.indexOf('function publish('), source.indexOf('\nfunction hold('));
+    const run = new Function('state', `let {sdk,released,releasing,cancelled=false,failed=null}=state;
+      let binding={own:true},controllerEOF=false,lastJSON=null,startSHA256='${'1'.repeat(64)}',lifetime='fixture',frames=[];
+      const sdkStatus=()=>sdk,emit=value=>frames.push(value),safe=()=>{throw Error('Unexpected publish catch')};
+      ${body};publish(true);return frames[0];`);
+    const sdk = {phase:'released',startSent:true,packetSHA256:'2'.repeat(64),childClosed:false,
+      workerTerminal:{childResourcesClosed:false,exitSucceeded:false}};
+    const pending = run({sdk,released:false,releasing:true});
+    assert.equal(pending.phase,'releasing');
+    assert.equal(pending.sdk.phase,'released');
+    assert.equal(pending.sdk.childClosed,false);
+    assert.equal(pending.sdk.workerTerminal.childResourcesClosed,false);
+    const complete = {...sdk,childClosed:true,workerTerminal:{childResourcesClosed:true,exitSucceeded:true}};
+    assert.equal(run({sdk:complete,released:true,releasing:true}).phase,'released');
+    for (const cancelled of [false,true]) {
+      const failed = run({sdk,released:false,releasing:true,cancelled,failed:'OWNED_TRANSFER_CREATE_REFUSED'});
+      assert.equal(failed.phase,'held');
+      assert.equal(failed.errorCode,'OWNED_TRANSFER_CREATE_REFUSED');
+      const final = run({sdk:complete,released:true,releasing:true,cancelled,failed:'OWNED_TRANSFER_CREATE_REFUSED'});
+      assert.equal(final.phase,'released');assert.equal(final.errorCode,failed.errorCode);
+    }
+    const inner=matrixStatus('scratch','extracted');inner.phase='releasing';
+    assert.throws(()=>validateRelaySDKStatus(inner,matrixBinding),/SDK_STATUS/);
+});

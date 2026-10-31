@@ -1,0 +1,115 @@
+--- a/src/main/src/store/mainPersistence.ts
++++ b/src/main/src/store/mainPersistence.ts
+@@ -1,4 +1,8 @@
+ import * as path from "node:path";
++import * as nativeStartupFS from "node:fs";
++import { createHash as nativeStartupHash } from "node:crypto";
++import { createRequire } from "node:module";
++import { types as nativeStartupTypes } from "node:util";
+ 
+ import { getErrorMessageOrDefault } from "@vortex/shared";
+ /**
+@@ -37,6 +41,103 @@
+ const nativeHistoryAnchorRead = LevelPersist.prototype.readNativeExecutorAnchor;
+ const nativeHistoryAnchorSnapshot = snapshotNativeExecutorAnchor;
+ const nativeHistoryAnchorKey = isNativeExecutorAnchorKey;
++
++declare const __NEXUS_NATIVE_RUNTIME_BINDING__: unknown;
++const nativeStartupRequire = createRequire(__filename);
++const nativeStartupRead = LevelPersist.prototype.readNativeExecutorAnchor;
++const nativeStartupNames = Object.freeze(['owned-zip-relay-client.mjs','owned-zip-relay-runner.mjs','child-terminal-observer.cjs','owned-zip-worker-client.mjs','owned-zip-worker.py','owned-file-transfer.py','owned-zip-extractor.py','native-executor-journal.mjs','native-intent-journal.mjs','immutable-records.mjs','paths.cjs','paths-core.cjs','native-dispatch-contract.cjs','install-job-contract.cjs','strict-json.cjs']);
++type NativeStartupPhase = 'checking' | 'held' | 'unconfigured' | 'uninitialized' | 'initialized';
++let nativeStartupAttempt: {backend: LevelPersist; phase: NativeStartupPhase} | undefined;
++type NativeStartupReason='BINDING'|'ANCHOR_READ'|'ROOT_OBSERVATION'|'SOURCE_CLOSURE'|'SDK_LOAD'|'HISTORY_SCAN'|'REENTRY';
++const nativeStartupError=(reason:NativeStartupReason='BINDING')=>Object.assign(new Error('NATIVE_EXECUTOR_STARTUP_HOLD'),{reasonCode:reason});
++function nativeStartupData(value: unknown, keys: readonly string[]): Record<string, unknown> {
++  if (value === null || typeof value !== 'object' || nativeStartupTypes.isProxy(value)) throw nativeStartupError();
++  const descriptors = Object.getOwnPropertyDescriptors(value);
++  if (Reflect.ownKeys(descriptors).length !== keys.length || !keys.every(k => descriptors[k] !== undefined && Object.hasOwn(descriptors[k], 'value'))) throw nativeStartupError();
++  return Object.fromEntries(keys.map(k => [k, descriptors[k]?.value]));
++}
++function nativeStartupBinding() {
++  const literal = typeof __NEXUS_NATIVE_RUNTIME_BINDING__ === 'undefined' ? null : __NEXUS_NATIVE_RUNTIME_BINDING__;
++  if (literal === null) return null;
++  const data = nativeStartupData(literal, ['schema','workspaceRoot','relayNodeSHA256','sourceSHA256']);
++  const root = data.workspaceRoot;
++  if (data.schema !== 'native-executor-runtime-binding/1' || typeof root !== 'string' || root.length > 32768
++    || root.trim() !== root || root.startsWith('//?/') || root.startsWith('//./')
++    || !/^(?:[A-Za-z]:\/|\/\/[^/]+\/[^/]+(?:\/|$))/.test(root) || /[\\\x00-\x1f]/.test(root)
++    || root.split('/').some(p => p === '.' || p === '..') || path.resolve(root).replaceAll('\\','/') !== root
++    || data.relayNodeSHA256 !== '5c976096e04e5c2c1f091938926234cc9fbebfe9787ddd149351b3b0ecc707b5') throw nativeStartupError();
++  const sources = nativeStartupData(data.sourceSHA256, nativeStartupNames);
++  if (!nativeStartupNames.every(n => typeof sources[n] === 'string' && /^[a-f0-9]{64}$/.test(sources[n] as string))) throw nativeStartupError();
++  if(Buffer.byteLength(JSON.stringify({schema:data.schema,workspaceRoot:root,relayNodeSHA256:data.relayNodeSHA256,sourceSHA256:sources}),'utf8')>8192)throw nativeStartupError();
++  return {workspaceRoot:root,sdk:path.join(root,'tools/modding/vortex-agent'),journal:path.join(root,'local-state/vortex-agent-build/native-install-executor'),sources};
++}
++const nativeStartupStamp = (s: import('node:fs').BigIntStats) => [s.dev,s.ino,s.size,s.mtimeNs,s.ctimeNs,s.nlink].join(':');
++function nativeStartupAncestry(target: string, missingAllowed = false) {
++  const chain: string[]=[];for(let p=path.resolve(target);;p=path.dirname(p)){chain.unshift(p);if(p===path.dirname(p))break;}
++  const pins = new Map<string,string>();let missing=false;
++  for(const p of chain){
++    if(missing)break;
++    try{const s=nativeStartupFS.lstatSync(p,{bigint:true});if(!s.isDirectory()||s.isSymbolicLink())throw nativeStartupError();pins.set(p,nativeStartupStamp(s));}
++    catch(error){if(missingAllowed && error !== null && typeof error === 'object' && !nativeStartupTypes.isProxy(error)
++      && Object.getOwnPropertyDescriptor(error,'code')?.value==='ENOENT'){missing=true;}else throw error;}
++  }
++  return {present:!missing,pins};
++}
++function nativeStartupSame(a:Map<string,string>, b:Map<string,string>) {
++  if(a.size!==b.size || [...a].some(([p,s])=>b.get(p)!==s))throw nativeStartupError();
++}
++function nativeStartupClosure(binding:NonNullable<ReturnType<typeof nativeStartupBinding>>) {
++  const dirs=nativeStartupAncestry(binding.sdk).pins, files=new Map<string,string>();let total=0;
++  for(const name of nativeStartupNames){
++    const file=path.join(binding.sdk,name),before=nativeStartupFS.lstatSync(file,{bigint:true});
++    if(!before.isFile()||before.isSymbolicLink()||before.size<=0n||before.size>524288n)throw nativeStartupError();
++    const size=Number(before.size);total+=size;if(total>8388608)throw nativeStartupError();
++    const stamp=nativeStartupStamp(before),fd=nativeStartupFS.openSync(file,'r');
++    try{if(nativeStartupStamp(nativeStartupFS.fstatSync(fd,{bigint:true}))!==stamp)throw nativeStartupError();
++      const digest=nativeStartupHash('sha256'),chunk=Buffer.alloc(65536);let used=0;
++      while(used<=size){const n=nativeStartupFS.readSync(fd,chunk,0,Math.min(chunk.length,size+1-used),used);if(n===0)break;used+=n;if(used>size)throw nativeStartupError();digest.update(chunk.subarray(0,n));}
++      if(used!==size||digest.digest('hex')!==binding.sources[name]||nativeStartupStamp(nativeStartupFS.fstatSync(fd,{bigint:true}))!==stamp||nativeStartupStamp(nativeStartupFS.lstatSync(file,{bigint:true}))!==stamp)throw nativeStartupError();
++      files.set(file,stamp);
++    }finally{nativeStartupFS.closeSync(fd);}
++  }
++  for(const[file,stamp]of files)if(nativeStartupStamp(nativeStartupFS.lstatSync(file,{bigint:true}))!==stamp)throw nativeStartupError();
++  nativeStartupSame(dirs,nativeStartupAncestry(binding.sdk).pins);return{dirs,files};
++}
++/** Read-only startup history classification, never a START or install permit. */
++export async function verifyNativeExecutorStartup(backend:LevelPersist, maintenance=false) {
++  const old=nativeStartupAttempt;
++  if(old!==undefined && !(maintenance===true && old.backend!==backend && ['unconfigured','uninitialized'].includes(old.phase))){old.phase='held';throw nativeStartupError('REENTRY');}
++  const attempt:{backend:LevelPersist;phase:NativeStartupPhase}={backend,phase:'checking'};nativeStartupAttempt=attempt;
++  const current=()=>{if(nativeStartupAttempt!==attempt||attempt.phase==='held')throw nativeStartupError();};
++  const finish=(phase:'unconfigured'|'uninitialized'|'initialized')=>{current();attempt.phase=phase;return Object.freeze({schema:'native-executor-startup/1',phase,nativeAdmission:false,installationPermit:false,effectsAllowed:false,powerLossPersistenceVerified:false});};
++  let reason:NativeStartupReason='BINDING';
++  try{
++    if(typeof maintenance!=='boolean')throw nativeStartupError();
++    const binding=nativeStartupBinding();
++    reason='ANCHOR_READ';const raw=await nativeStartupRead.call(backend);current();
++    const anchor=raw===null?null:nativeHistoryAnchorSnapshot(raw);current();
++    if(binding===null){if(anchor!==null)throw nativeStartupError();return finish('unconfigured');}
++    reason='ROOT_OBSERVATION';const root=nativeStartupAncestry(binding.journal,true);
++    reason='SOURCE_CLOSURE';const before=nativeStartupClosure(binding);current();
++    if(anchor===null){if(root.present)throw nativeStartupError();const after=nativeStartupAncestry(binding.journal,true);if(after.present)throw nativeStartupError();nativeStartupSame(root.pins,after.pins);const final=nativeStartupClosure(binding);nativeStartupSame(before.dirs,final.dirs);nativeStartupSame(before.files,final.files);return finish('uninitialized');}
++    if(!root.present||maintenance)throw nativeStartupError();
++    // Node24 CJS require(ESM) loads only this fixed synchronous closure. Never
++    // reuse an earlier CommonJS cache entry or retry through another loader.
++    reason='SDK_LOAD';for(const name of nativeStartupNames)if(Object.hasOwn(nativeStartupRequire.cache,path.join(binding.sdk,name)))throw nativeStartupError();
++    const module:unknown=nativeStartupRequire(path.join(binding.sdk,'native-executor-journal.mjs'));current();
++    if(module===null||typeof module!=='object'||nativeStartupTypes.isProxy(module))throw nativeStartupError();
++    const descriptor=Object.getOwnPropertyDescriptor(module,'createNativeExecutorJournal');
++    if(descriptor===undefined||!Object.hasOwn(descriptor,'value')||typeof descriptor.value!=='function'||nativeStartupTypes.isProxy(descriptor.value))throw nativeStartupError();
++    reason='SOURCE_CLOSURE';const loaded=nativeStartupClosure(binding);nativeStartupSame(before.dirs,loaded.dirs);nativeStartupSame(before.files,loaded.files);current();
++    reason='HISTORY_SCAN';const journal:unknown=descriptor.value({root:binding.journal});current();
++    if(journal===null||typeof journal!=='object'||nativeStartupTypes.isProxy(journal))throw nativeStartupError();
++    const inventory=Object.getOwnPropertyDescriptor(journal,'inventory');if(inventory===undefined||!Object.hasOwn(inventory,'value')||typeof inventory.value!=='function'||nativeStartupTypes.isProxy(inventory.value))throw nativeStartupError();
++    const observed:unknown=inventory.value({expectedRootId:anchor.rootId,expectedInventorySHA256:anchor.inventorySHA256});current();
++    if(observed===null||typeof observed!=='object'||nativeStartupTypes.isProxy(observed))throw nativeStartupError();
++    for(const[k,want]of [['schema','native-executor-inventory/1'],['complete',true],['historySealVerified',true],['startupHoldRequired',false],['observedRootId',anchor.rootId],['observedInventorySHA256',anchor.inventorySHA256]] as const){const d=Object.getOwnPropertyDescriptor(observed,k);if(d===undefined||!Object.hasOwn(d,'value')||d.value!==want)throw nativeStartupError();}
++    reason='SOURCE_CLOSURE';const final=nativeStartupClosure(binding);nativeStartupSame(before.dirs,final.dirs);nativeStartupSame(before.files,final.files);nativeStartupSame(root.pins,nativeStartupAncestry(binding.journal).pins);current();return finish('initialized');
++  }catch{const held=attempt.phase==='held';attempt.phase='held';throw nativeStartupError(held?'REENTRY':reason);}
++}
+ 
+ let mainPersistor: ReduxPersistorIPC | undefined;
+ let levelPersist: LevelPersist | undefined;

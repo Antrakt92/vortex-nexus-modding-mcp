@@ -10,7 +10,7 @@ import dispatch from './native-dispatch-contract.cjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TASK = path.resolve(HERE, '../../../local-state/native-custody-process-tests');
 const INTENT_SOURCES = ['native-intent-journal.mjs', 'immutable-records.mjs', 'strict-json.cjs',
-  'paths.cjs', 'native-dispatch-contract.cjs', 'install-job-contract.cjs'];
+  'paths.cjs', 'paths-core.cjs', 'native-dispatch-contract.cjs', 'install-job-contract.cjs'];
 const need = (ok, code) => {if (!ok) throw Error('CUSTODY_INTENT_FIXTURE_' + code);};
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 function ordinary(file) {
