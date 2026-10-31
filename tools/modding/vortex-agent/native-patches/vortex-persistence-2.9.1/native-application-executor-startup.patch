@@ -1,0 +1,20 @@
+--- a/src/main/src/Application.ts
++++ b/src/main/src/Application.ts
+@@ -44,6 +44,7 @@
+ import LevelPersist from "./store/LevelPersist";
+ import {
+   initMainPersistence,
++  verifyNativeExecutorStartup,
+   readPersistedValue,
+   writePersistedValue,
+   registerHive,
+@@ -1053,6 +1054,9 @@
+         }
+       }
+ 
++      // Check exact executor history before restore, healing, IPC, or renderer startup.
++      await verifyNativeExecutorStartup(finalPersistor, repair === true || this.mArgs.restore !== undefined || this.mArgs.merge !== undefined);
++
+       // 5. Restore or merge state backup if requested
+       if (this.mArgs.restore !== undefined) {
+         await this.importBackup(finalPersistor, this.mArgs.restore, true);

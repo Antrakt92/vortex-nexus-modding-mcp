@@ -70,11 +70,12 @@ Normal unrelated hives keep their existing persistence route.
 
 ## Remaining application work
 
-The application must bind the same runtime workspace as the installed adapter,
-check its journal before renderer cleanup/discovery, and acknowledge pending
-history before START. A source-owned build-time runtime binding must include the
-SDK source closure; inherited environment, cwd and renderer path claims cannot
-select a replacement journal.
+The prepared [runtime binding and startup gate](NATIVE-RUNTIME-BINDING.md) fix
+the SDK and journal workspace and classify history before backup import, healing,
+persistence IPC and the main window. They still require installed application
+acceptance. The coordinator must acknowledge pending history before START;
+inherited environment, cwd and renderer path claims cannot select a replacement
+journal.
 
 An unconfigured integration can remain unavailable while ordinary Vortex starts.
 An existing anchor with a missing runtime binding, missing journal, mismatched

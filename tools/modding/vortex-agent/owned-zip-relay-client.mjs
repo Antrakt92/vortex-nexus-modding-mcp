@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { isUint8Array, isSharedArrayBuffer, isProxy } from 'node:util/types';
 import strict from './strict-json.cjs';
 import dispatch from './native-dispatch-contract.cjs';
-import paths from './paths.cjs';
+import paths from './paths-core.cjs';
 import terminal from './child-terminal-observer.cjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const RELAY_NODE = 'C:/Program Files/nodejs/node.exe';
@@ -16,11 +16,11 @@ export const RELAY_NODE_SHA256 = '5c976096e04e5c2c1f091938926234cc9fbebfe9787ddd
 export const RELAY_SOURCE_NAMES = Object.freeze([
     'owned-zip-relay-client.mjs', 'owned-zip-relay-runner.mjs', 'child-terminal-observer.cjs',
     'owned-zip-worker-client.mjs', 'owned-zip-worker.py', 'owned-file-transfer.py', 'owned-zip-extractor.py', 'native-executor-journal.mjs',
-    'native-intent-journal.mjs', 'immutable-records.mjs', 'paths.cjs', 'native-dispatch-contract.cjs', 'install-job-contract.cjs', 'strict-json.cjs'
+    'native-intent-journal.mjs', 'immutable-records.mjs', 'paths.cjs', 'paths-core.cjs', 'native-dispatch-contract.cjs', 'install-job-contract.cjs', 'strict-json.cjs'
 ]);
 const MAX_START = 2 * 1024 * 1024 + 32768, MAX_STATUS = 65536, MAX_PROOF = 4 * 1024 * 1024 + 16384;
 const PHASES = new Set([
-    'starting', 'extracting', 'extracted', 'copying', 'copied', 'cancelled', 'held', 'released'
+    'starting', 'extracting', 'extracted', 'copying', 'copied', 'cancelled', 'held', 'releasing', 'released'
 ]);
 const need = (v, c) => {
     if (!v)
@@ -150,7 +150,7 @@ export function validateRelaySDKStatus(v, binding, mode = 'scratch') {
         'startAttempted', 'startSent', 'handoffAttempted', 'cancelAttempted', 'releaseAttempted', 'childClosed', 'stderrObserved'
     ])
         need(typeof v[k] === 'boolean', 'SDK_STATUS');
-    need(['not_started', 'ready', ...PHASES].includes(v.phase) && code(v.errorCode) && v.effectsAllowed === false && v.nativeInstallAccepted === false && v.powerLossPersistenceVerified === false, 'SDK_STATUS');
+    need(v.phase !== 'releasing' && ['not_started', 'ready', ...PHASES].includes(v.phase) && code(v.errorCode) && v.effectsAllowed === false && v.nativeInstallAccepted === false && v.powerLossPersistenceVerified === false, 'SDK_STATUS');
     need(v.childExitCode === null || Number.isSafeInteger(v.childExitCode) && v.childExitCode >= -2147483648 && v.childExitCode <= 4294967295, 'SDK_STATUS');
     need(v.childSignal === null || typeof v.childSignal === 'string' && /^SIG[A-Z0-9]{1,16}$/.test(v.childSignal), 'SDK_STATUS');
     validateRelayWorkerTerminal(v.workerTerminal, binding);
@@ -241,7 +241,43 @@ export function parseRelayOutput(bytes) {
     return value;
 }
 let occupied = null;
+export function snapshotNativeExecutorRuntimeBinding(bytes) {
+    const copy = bytesCopy(bytes, 8192);
+    const value = strict.parseStrictJSON(copy, { maxBytes: 8192, maxDepth: 3, maxTokens: 200 });
+    need(exact(value, ['schema', 'workspaceRoot', 'relayNodeSHA256', 'sourceSHA256'])
+        && value.schema === 'native-executor-runtime-binding/1', 'RUNTIME_BINDING');
+    need(typeof value.workspaceRoot === 'string' && !/^[\\/]{2}[?.][\\/]/.test(value.workspaceRoot), 'RUNTIME_BINDING');
+    const workspaceRoot = paths.absolute(value.workspaceRoot, 'NATIVE_RUNTIME_WORKSPACE').replaceAll('\\', '/');
+    need(value.workspaceRoot === workspaceRoot && value.workspaceRoot.trim() === value.workspaceRoot
+        && value.relayNodeSHA256 === RELAY_NODE_SHA256
+        && exact(value.sourceSHA256, RELAY_SOURCE_NAMES), 'RUNTIME_BINDING');
+    const sourceSHA256 = {};
+    for (const name of RELAY_SOURCE_NAMES) {
+        need(typeof value.sourceSHA256[name] === 'string' && /^[a-f0-9]{64}$/.test(value.sourceSHA256[name]), 'RUNTIME_BINDING');
+        sourceSHA256[name] = value.sourceSHA256[name];
+    }
+    const canonical = { schema: 'native-executor-runtime-binding/1', workspaceRoot,
+        relayNodeSHA256: RELAY_NODE_SHA256, sourceSHA256 };
+    need(copy.equals(Buffer.from(JSON.stringify(canonical), 'utf8')), 'RUNTIME_BINDING_CANONICAL');
+    return Object.freeze({ ...canonical, sourceSHA256: Object.freeze(sourceSHA256) });
+}
+
+export function createBoundOwnedZipRelay(requestBytes, archiveBindingBytes, runtimeBindingBytes) {
+    const runtime = snapshotNativeExecutorRuntimeBinding(runtimeBindingBytes);
+    const normalize = value => {
+        const resolved = path.resolve(value).replaceAll('\\', '/');
+        return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+    };
+    need(normalize(HERE) === normalize(path.join(runtime.workspaceRoot, 'tools/modding/vortex-agent')), 'RUNTIME_LAYOUT');
+    need(equal(readRelaySourceClosure(), runtime.sourceSHA256), 'RUNTIME_SOURCE');
+    return createRelay(requestBytes, archiveBindingBytes, 'staging', runtime);
+}
+
 export function createOwnedZipRelay(requestBytes, archiveBindingBytes, mode = 'scratch') {
+    return createRelay(requestBytes, archiveBindingBytes, mode, null);
+}
+
+function createRelay(requestBytes, archiveBindingBytes, mode, runtime) {
     need(mode === 'scratch' || mode === 'staging', 'MODE');
     const parsed = dispatch.parseDispatchRequest(bytesCopy(requestBytes, 1024 * 1024 + 4096)), requestJSON = JSON.stringify(parsed), requestSHA256 = dispatch.dispatchRequestDigest(Buffer.from(requestJSON));
     const archive = bytesCopy(archiveBindingBytes, 8192);
@@ -255,7 +291,8 @@ export function createOwnedZipRelay(requestBytes, archiveBindingBytes, mode = 's
     const binding = terminal.copyChildBinding({
         operationId: parsed.operationId, nativeJobId: parsed.nativeJobId, requestSHA256, rendererGeneration: parsed.rendererGeneration
     });
-    const workspace = paths.resolvePaths().workspace;
+    const workspace = runtime ? paths.absolute(runtime.workspaceRoot, 'NATIVE_RUNTIME_WORKSPACE') : paths.resolvePaths({ sourceDir: HERE,
+        compiledWorkspace: typeof __NEXUS_WORKSPACE__ === 'undefined' ? undefined : __NEXUS_WORKSPACE__ }).workspace;
     let child = null, observer = null, ready = null, sources = null, firstError = null, last = null, startAttempted = false, startSent = false, cancelAttempted = false, handoffAttempted = false, releaseAttempted = false, closed = false, controllerEnded = false, sequence = 0, startSHA256 = null, pending = Buffer.alloc(0), stderrBytes = 0, writing = false, outbound = [], protocolBroken = false;
     const seen = new Set(), waiters = new Set();
     let preparedReceipt = null, preparedDigest = null, preparedAnchor = null, prepareNonce = null, explicitPrepare = false, startPreparedAttempted = false;
@@ -455,7 +492,8 @@ export function createOwnedZipRelay(requestBytes, archiveBindingBytes, mode = 's
             preparedAnchor = anchor ? JSON.parse(anchor.toString('utf8')) : null;
             prepareNonce = anchored ? crypto.randomBytes(16).toString('hex') : null;
             verifyRelayNode();
-            sources = readRelaySourceClosure();
+            sources = runtime?.sourceSHA256 ?? readRelaySourceClosure();
+            need(equal(readRelaySourceClosure(), sources), 'SOURCE_CHANGED');
             child = spawn(RELAY_NODE, [path.join(HERE, 'owned-zip-relay-runner.mjs')], {
                 cwd: HERE, env: {
                     SystemRoot: process.env.SystemRoot, NEXUS_WORKSPACE: workspace

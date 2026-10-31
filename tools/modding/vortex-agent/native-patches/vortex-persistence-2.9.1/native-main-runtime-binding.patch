@@ -1,0 +1,98 @@
+--- a/src/main/build.mjs
++++ b/src/main/build.mjs
+@@ -1,10 +1,84 @@
+ import * as fs from "node:fs/promises";
++import * as nativeFS from "node:fs";
++import { createHash } from "node:crypto";
+ import { createRequire } from "node:module";
+ import * as path from "node:path";
+ 
+ import { rolldown } from "rolldown";
+ 
+ import { createConfig, mainOutputDirectory } from "../../rolldown.base.mjs";
++
++const NATIVE_RUNTIME_SOURCE_NAMES = Object.freeze([
++  "owned-zip-relay-client.mjs",
++  "owned-zip-relay-runner.mjs",
++  "child-terminal-observer.cjs",
++  "owned-zip-worker-client.mjs",
++  "owned-zip-worker.py",
++  "owned-file-transfer.py",
++  "owned-zip-extractor.py",
++  "native-executor-journal.mjs",
++  "native-intent-journal.mjs",
++  "immutable-records.mjs",
++  "paths.cjs",
++  "paths-core.cjs",
++  "native-dispatch-contract.cjs",
++  "install-job-contract.cjs",
++  "strict-json.cjs"
++]);
++function nativeRuntimeBinding() {
++  const raw = process.env.NEXUS_RUNTIME_WORKSPACE;
++  if (raw === undefined) return null;
++  const need = (value) => { if (!value) throw new Error("NATIVE_RUNTIME_BINDING_REFUSED"); };
++  need(typeof raw === "string" && raw.length > 0 && raw.length <= 32768 && raw === raw.trim()
++    && !/[\x00-\x1f]/.test(raw) && !/^[\\/]{2}[?.][\\/]/.test(raw) && path.isAbsolute(raw)
++    && (process.platform !== "win32" || /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+(?:[\\/]|$))/.test(raw))
++    && !raw.split(/[\\/]/).some(part => part === "." || part === ".."));
++  const workspaceRoot = path.resolve(raw);
++  const sdk = path.join(workspaceRoot, "tools", "modding", "vortex-agent");
++  const generation = stat => ["dev", "ino", "size", "mtimeNs", "ctimeNs", "nlink"].map(key => String(stat[key])).join(":");
++  const directories = new Map(), leaves = new Map();
++  const directory = target => {
++    const stat = nativeFS.lstatSync(target, { bigint: true });
++    need(stat.isDirectory() && !stat.isSymbolicLink());
++    const stamp = generation(stat);
++    if (directories.has(target)) need(directories.get(target) === stamp);
++    else directories.set(target, stamp);
++  };
++  for (let current = sdk, depth = 0;; current = path.dirname(current)) {
++    need(++depth <= 128);
++    directory(current);
++    if (current === path.dirname(current)) break;
++  }
++  let total = 0;
++  const sourceSHA256 = {};
++  for (const name of NATIVE_RUNTIME_SOURCE_NAMES) {
++    const file = path.join(sdk, name), before = nativeFS.lstatSync(file, { bigint: true });
++    need(before.isFile() && !before.isSymbolicLink() && before.size > 0n && before.size <= 524288n);
++    const size = Number(before.size), stamp = generation(before);total += size;need(total <= 8388608);
++    const fd = nativeFS.openSync(file, "r");
++    try {
++      need(generation(nativeFS.fstatSync(fd, { bigint: true })) === stamp);
++      const hash = createHash("sha256"), chunk = Buffer.alloc(65536);let position = 0;
++      while (position <= size) {
++        const count = nativeFS.readSync(fd, chunk, 0, Math.min(chunk.length, size + 1 - position), position);
++        if (count === 0) break;
++        position += count;need(position <= size);hash.update(chunk.subarray(0, count));
++      }
++      need(position === size && generation(nativeFS.fstatSync(fd, { bigint: true })) === stamp
++        && generation(nativeFS.lstatSync(file, { bigint: true })) === stamp);
++      sourceSHA256[name] = hash.digest("hex");leaves.set(file, stamp);
++    } finally { nativeFS.closeSync(fd); }
++  }
++  for (const [file, stamp] of leaves) {
++    const stat = nativeFS.lstatSync(file, { bigint: true });
++    need(stat.isFile() && !stat.isSymbolicLink() && generation(stat) === stamp);
++  }
++  for (const current of directories.keys()) directory(current);
++  const binding = { schema: "native-executor-runtime-binding/1", workspaceRoot: workspaceRoot.replaceAll("\\", "/"),
++    relayNodeSHA256: "5c976096e04e5c2c1f091938926234cc9fbebfe9787ddd149351b3b0ecc707b5", sourceSHA256 };
++  need(Buffer.byteLength(JSON.stringify(binding), "utf8") <= 8192);
++  return binding;
++}
+ 
+ const INPUT = path.resolve(import.meta.dirname, "src", "main.ts");
+ const OUTPUT = path.join(mainOutputDirectory, "main.cjs");
+@@ -15,6 +89,10 @@
+ 
+   return true;
+ });
++
++config.transform = { ...config.transform, define: { ...config.transform?.define,
++  __NEXUS_NATIVE_RUNTIME_BINDING__: JSON.stringify(nativeRuntimeBinding()),
++} };
+ 
+ const bundle = await rolldown(config);
+ await bundle.write(config.output);

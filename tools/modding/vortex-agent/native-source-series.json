@@ -57,7 +57,7 @@
     {
       "path": "src/main/src/Application.ts",
       "originalSHA256": "25c00338c5cece8bad93822ac1ed548928284e2f1922f0406026d2fc01ce98ce",
-      "finalSHA256": "bdbf8bcd4d1ae41fa8d9615a18327115f081d3668d8e88ac5382dcc7f024f39d"
+      "finalSHA256": "7e450d36d70627e453ec6221dc795bb4b6285bf1c5b209a482871622a9eef95c"
     },
     {
       "path": "src/main/src/store/DuckDBSingleton.ts",
@@ -82,7 +82,7 @@
     {
       "path": "src/main/src/store/mainPersistence.ts",
       "originalSHA256": "7d3e28cb829914fb092774eca3fc357645fa7ef508177d1a0e3b32eed58f05fe",
-      "finalSHA256": "a11eb2b2c645116020c1797a5c2f2584a3eecf739b5aa94223176d5b1b190f4a"
+      "finalSHA256": "16102503e103e9d9b43871cbd762f21363be4d57b5cdf7eb51f7e04c2d3ae12e"
     },
     {
       "path": "src/main/src/store/persistenceIPC.ts",
@@ -123,6 +123,11 @@
       "path": "src/renderer/src/ExtensionManager.ts",
       "originalSHA256": "5d0de2194cf413938e61a398494196af07677dc6d0d014216ba3b25b5a211b95",
       "finalSHA256": "551ddd8fbbcc1ee1e74a87a33b3b561bf7bf9dca815756f3f96ff440e0b83b3c"
+    },
+    {
+      "path": "src/main/build.mjs",
+      "originalSHA256": "e8d85c7eb88cc6aeb3bc5a46e976b4e2fb213166fb2b4a14457d09d058ec39e1",
+      "finalSHA256": "c1a64385de1c5da8ad95910cfad7dcba960d727213ad725ee911dc133fdd0e19"
     }
   ],
   "patches": [
@@ -1372,6 +1377,54 @@
       "requiredCompanionPatch": "native-main-executor-anchor.patch",
       "requiredCompanionPatchSHA256": "8c9ff78c329d7cead964215ac6c623340cd9528fba73e0f9ae83ce32906101d8",
       "requiredCompanionOutputSHA256": "d7a0e8f23e0d949be5ef7c7d44aa8d7f8c2df7f352fe1816c9da75414281e56b",
+      "requiredCompanionPacket": null
+    },
+    {
+      "name": "native-main-runtime-binding",
+      "packet": "persistence",
+      "path": "src/main/build.mjs",
+      "manifestSHA256": "3c1606c2169ca15c01928a60b2dea93b65df038a0fe45538c3bf695b0d9fa08f",
+      "patchSHA256": "1d8d55b7e2e1886f1c1e7e9efbb5cefb22a8e75b7a519d75060e93bb10541a4d",
+      "inputSHA256": "e8d85c7eb88cc6aeb3bc5a46e976b4e2fb213166fb2b4a14457d09d058ec39e1",
+      "outputSHA256": "c1a64385de1c5da8ad95910cfad7dcba960d727213ad725ee911dc133fdd0e19",
+      "prerequisitePatch": null,
+      "prerequisitePatchSHA256": null,
+      "requiredManagerPatchSHA256": null,
+      "requiredCompanionPatch": null,
+      "requiredCompanionPatchSHA256": null,
+      "requiredCompanionOutputSHA256": null,
+      "requiredCompanionPacket": null
+    },
+    {
+      "name": "native-main-executor-startup",
+      "packet": "persistence",
+      "path": "src/main/src/store/mainPersistence.ts",
+      "manifestSHA256": "6b8b0237dc38defa734824423fb37efe98da0e0db3bff24de8b988fd93b3e739",
+      "patchSHA256": "590ad8de5741288ead4224589d3e540be9f02fee3bf6b12c8e1401dd1690d369",
+      "inputSHA256": "a11eb2b2c645116020c1797a5c2f2584a3eecf739b5aa94223176d5b1b190f4a",
+      "outputSHA256": "16102503e103e9d9b43871cbd762f21363be4d57b5cdf7eb51f7e04c2d3ae12e",
+      "prerequisitePatch": "native-main-anchor-binding.patch",
+      "prerequisitePatchSHA256": "3cad5662e53dac7cd43304cfe6569b8834468c19789d4c8aaad045fa08c2c810",
+      "requiredManagerPatchSHA256": null,
+      "requiredCompanionPatch": "native-main-runtime-binding.patch",
+      "requiredCompanionPatchSHA256": "1d8d55b7e2e1886f1c1e7e9efbb5cefb22a8e75b7a519d75060e93bb10541a4d",
+      "requiredCompanionOutputSHA256": "c1a64385de1c5da8ad95910cfad7dcba960d727213ad725ee911dc133fdd0e19",
+      "requiredCompanionPacket": null
+    },
+    {
+      "name": "native-application-executor-startup",
+      "packet": "persistence",
+      "path": "src/main/src/Application.ts",
+      "manifestSHA256": "67df48046ce5f02494dd6aeaac0131598d3c7f81e4b8b7203fb867912c678ae0",
+      "patchSHA256": "44fa31475a2b968dac3b3b2f4d22db9a965a2be210b5a88138aaaa44c0a1d210",
+      "inputSHA256": "bdbf8bcd4d1ae41fa8d9615a18327115f081d3668d8e88ac5382dcc7f024f39d",
+      "outputSHA256": "7e450d36d70627e453ec6221dc795bb4b6285bf1c5b209a482871622a9eef95c",
+      "prerequisitePatch": "ack-application-owner.patch",
+      "prerequisitePatchSHA256": "63b92bfd20848f61457e34209dd7c3f3231e859d72775564df21ce739a339638",
+      "requiredManagerPatchSHA256": null,
+      "requiredCompanionPatch": "native-main-executor-startup.patch",
+      "requiredCompanionPatchSHA256": "590ad8de5741288ead4224589d3e540be9f02fee3bf6b12c8e1401dd1690d369",
+      "requiredCompanionOutputSHA256": "16102503e103e9d9b43871cbd762f21363be4d57b5cdf7eb51f7e04c2d3ae12e",
       "requiredCompanionPacket": null
     }
   ]
