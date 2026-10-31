@@ -1,0 +1,76 @@
+--- a/src/main/src/store/LevelPersist.ts
++++ b/src/main/src/store/LevelPersist.ts
+@@ -140,4 +140,7 @@
+   transaction: "not_started" | "begin_pending" | "open" | "commit_pending" | "committed" | "rollback_pending" | "rolled_back" | "unknown";
+   commitAttempted: boolean;
++  trackedRequest?: NativeTrackedModRegistrationRequest;
++  trackedResult?: Readonly<{ operationId: string; nativeJobId: string; requestSHA256: string;
++    recordSHA256: string; fullRecordSHA256: string; recordJSON: string }>;
+ }
+ 
+@@ -213,4 +216,7 @@
+   #mNativeSQLAttempted = false;
+   #mNativeRegistration: NativeRegistrationAttempt | undefined;
++  #mNativeConsumedOperations = new Set<string>();
++  #mNativeConsumedJobs = new Set<string>();
++  #mNativeConsumedRequests = new Set<string>();
+   #mNativeRegistrationChecking = false;
+   #mNativeSQL: { owner: object; backendOwner: object; registry: QueryRegistry; singleton: DuckDBSingleton } | undefined;
+@@ -436,4 +442,10 @@
+       const tracked = mode === "tracked" ? snapshotNativeTrackedModRegistration(bytes) : undefined;
+       const request = tracked ?? snapshotNativeNewModRegistration(bytes);
++      if (tracked !== undefined) {
++        if (this.#mNativeConsumedOperations.has(tracked.operationId) || this.#mNativeConsumedJobs.has(tracked.nativeJobId)
++            || this.#mNativeConsumedRequests.has(tracked.requestSHA256) || this.#mNativeConsumedOperations.size >= 4096) throw new Error("NATIVE_REGISTRATION_CONSUMED");
++        this.#mNativeConsumedOperations.add(tracked.operationId); this.#mNativeConsumedJobs.add(tracked.nativeJobId);
++        this.#mNativeConsumedRequests.add(tracked.requestSHA256); attempt.trackedRequest = tracked;
++      }
+       const record = { id: request.modId, state: "installed", type: "", installationPath: request.installationPath,
+         ...(tracked === undefined ? {} : { archiveId: tracked.archive.id }) };
+@@ -503,9 +515,11 @@
+       if (tracked !== undefined) {
+         const recordJSON = JSON.stringify({ ...record, attributes: { __nmtNativeRegistration: marker } });
+-        return Object.freeze({ schema: "native-tracked-mod-registration-observed/2", operationId: request.operationId,
++        const observed = Object.freeze({ schema: "native-tracked-mod-registration-observed/2", operationId: request.operationId,
+           nativeJobId: request.nativeJobId, requestSHA256: request.requestSHA256, recordSHA256, recordJSON,
+           fullRecordSHA256: nativeRegistrationHash("sha256").update(recordJSON).digest("hex"),
+           commitObserved: true, readbackVerified: true, trackedAssociationVerified: true,
+           trackedInstallComplete: false, effectsAllowed: false, installationPermit: false, powerLossPersistenceVerified: false });
++        attempt.trackedResult = observed;
++        return observed;
+       }
+       return Object.freeze({ schema: "native-new-mod-registration-observed/1", operationId: request.operationId, nativeJobId: request.nativeJobId,
+@@ -526,4 +540,27 @@
+       throw primary;
+     } finally { this.#mNativeActive--; }
++  }
++
++  /** Successful tracked-only release. Unknown/failed attempts have no finalizer. */
++  public prepareNativeTrackedRegistrationRelease(backendOwner: object, sqlOwner: object, registry: QueryRegistry): () => void {
++    LevelPersist.prototype.checkNativeNewModRegistration.call(this, backendOwner, sqlOwner, registry);
++    const attempt = this.#mNativeRegistration, hold = this.#mNativeWriteHold, sql = this.#mNativeSQL;
++    if (attempt === undefined || hold === undefined || sql === undefined || attempt.phase !== "committed"
++        || attempt.transaction !== "committed" || attempt.trackedRequest === undefined || attempt.trackedResult === undefined) throw new Error("NATIVE_REGISTRATION_RELEASE_REFUSED");
++    const finishSQL = nativeReleasePrepareSQL.call(sql.singleton, sqlOwner);
++    LevelPersist.prototype.checkNativeNewModRegistration.call(this, backendOwner, sqlOwner, registry);
++    let consumed = false;
++    return () => {
++      if (consumed || this.#mNativeRegistration !== attempt || this.#mNativeWriteHold !== hold || this.#mNativeSQL !== sql
++          || hold.owner !== backendOwner || hold.phase !== "reserved" || attempt.phase !== "committed" || attempt.transaction !== "committed"
++          || this.#mNativeActive !== 0 || this.#mNativeTransactionPending !== 0 || this.#mInTransaction
++          || this.#mNativeWriteFailed || this.#mNativeRawExposed || this.#mNativeCloseAttempted) throw new Error("NATIVE_REGISTRATION_RELEASE_REFUSED");
++      finishSQL();
++      consumed = true;
++      this.#mNativeRegistration = undefined;
++      this.#mNativeSQL = undefined;
++      this.#mNativeSQLAttempted = false;
++      this.#mNativeWriteHold = undefined;
++    };
+   }
+ 
+@@ -874,4 +911,5 @@
+ }
+ 
++const nativeReleasePrepareSQL = DuckDBSingleton.prototype.prepareNativeSQLRelease;
+ const nativeRegistrationConflictQuery = LevelPersist.prototype.hasNewModRegistrationConflict;
+ const nativeRegistrationSQLCheck = DuckDBSingleton.prototype.checkNativeSQLConnections;

@@ -96,7 +96,7 @@ test('fixed packet is checked, but an unpinned original can never assemble', () 
 });
 
 test('pinned series closes all fixed nodes, exact source chains and cross-file manager dependencies', () => {
-  assert.equal(series.patches.length, 68); assert.equal(series.files.length, 24);
+  assert.equal(series.patches.length, 75); assert.equal(series.files.length, 24);
   assert.equal(series.schema, 'native-source-series/2');
   assert.deepEqual([...series.files.map(row => row.path)].sort(), [...NATIVE_SOURCE_PATHS].sort());
   const done = new Map(), current = new Map(series.files.map(row => [row.path, row.originalSHA256]));
@@ -109,7 +109,7 @@ test('pinned series closes all fixed nodes, exact source chains and cross-file m
     if (row.prerequisitePatch) assert.equal(done.get(row.prerequisitePatch.slice(0, -6))?.patchSHA256, row.prerequisitePatchSHA256);
     if (row.requiredCompanionPatch) {
       const companion = done.get(row.requiredCompanionPatch.slice(0,-6));
-      assert.equal(companion?.packet, row.packet);
+      assert.equal(companion?.packet, row.requiredCompanionPacket ?? row.packet);
       assert.equal(companion?.patchSHA256, row.requiredCompanionPatchSHA256);
       assert.equal(companion?.outputSHA256, row.requiredCompanionOutputSHA256);
     }
@@ -162,6 +162,20 @@ test('altered source context, redirected manifest and rewritten series cannot re
     const assemble = await fixture.load();
     assert.throws(() => assemble(dummy()), error => error.message === 'NATIVE_SOURCE_SERIES_'+(mode === 'series' ? 'SERIES' : 'PACKET'));
   }
+});
+
+test('oversized fixed manifest is refused before opening or allocating its contents', async t => {
+  const fixture = clonePacket(t), assemble = await fixture.load();
+  const manifest = path.join(fixture.root, 'native-source-series.json');
+  fs.writeFileSync(manifest, Buffer.alloc(96*1024+1, 32));
+  const open = fs.openSync; let opened = false;
+  fs.openSync = (file, ...args) => {
+    if (file === manifest) opened = true;
+    return open(file, ...args);
+  };
+  try {assert.throws(() => assemble(dummy()), /^Error: NATIVE_SOURCE_SERIES_PACKET$/);}
+  finally {fs.openSync = open;}
+  assert.equal(opened, false);
 });
 
 test('a previously read packet changing before read verification is refused', async t => {
@@ -339,5 +353,16 @@ integration('later, wrong-hash and final-instead-of-intermediate companions fail
       });
     });
     const assemble=await copy.load();assert.throws(()=>assemble(originals()),/^Error: NATIVE_SOURCE_SERIES_GRAPH$/);
+  }
+});
+
+integration('companion packet binding refuses wrong fixed packet and unknown roots despite test-only resealing', async t => {
+  for (const packet of ['lifecycle', '../vortex-tests-2.9.1', 'unknown']) {
+    const copy = clonePacket(t);
+    resealFixture(copy, graph => changeManifest(copy, graph, 'target-reservation', (manifest, row) => {
+      manifest.requiredCompanionPacket = row.requiredCompanionPacket = packet;
+    }));
+    const assemble = await copy.load();
+    assert.throws(() => assemble(originals()), /^Error: NATIVE_SOURCE_SERIES_GRAPH$/);
   }
 });

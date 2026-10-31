@@ -1,0 +1,102 @@
+--- a/src/main/src/store/ReduxPersistorIPC.ts
++++ b/src/main/src/store/ReduxPersistorIPC.ts
+@@ -70,4 +70,5 @@
+  * Receives diff operations from renderer and persists them to LevelDB.
+  */
++const nativeReleasePrepareBackend = LevelPersist.prototype.prepareNativeTrackedRegistrationRelease;
+ const nativeRegistrationWrite = LevelPersist.prototype.registerNativeNewMod;
+ const nativeTrackedRegistrationWrite = LevelPersist.prototype.registerNativeTrackedMod;
+@@ -90,4 +91,10 @@
+ }
+ 
++interface NativeMainRegistrationAttempt {
++  phase: "claimed" | "writing" | "committed" | "held";
++  binding?: { operationId: string; nativeJobId: string; requestSHA256: string };
++  observed?: Readonly<{ operationId: string; nativeJobId: string; requestSHA256: string;
++    recordSHA256: string; fullRecordSHA256: string; recordJSON: string }>;
++}
+ class ReduxPersistorIPC {
+   private mPersistors: { [hive: string]: IPersistor } = {};
+@@ -97,5 +104,9 @@
+   // A drained queue cannot certify an earlier failed write. Never reset in-process.
+   private mPersistenceWriteFailureObserved = false;
+-  private mNativeRegistration: { phase: "claimed" | "writing" | "committed" | "held" } | undefined;
++  private mNativeRegistration: NativeMainRegistrationAttempt | undefined;
++  #mNativeConsumedOperations = new Set<string>();
++  #mNativeConsumedJobs = new Set<string>();
++  #mNativeConsumedRequests = new Set<string>();
++  #mNativeReleaseInProgress = false;
+   #mLevelPersist: LevelPersist | undefined;
+   #mInvalidator: QueryInvalidator | undefined;
+@@ -489,9 +500,16 @@
+     const reservation = this.mNativeModPersistenceReservation;
+     if (reservation === undefined || reservation.owner !== owner || reservation.phase !== "reserved" || this.mNativeRegistration !== undefined) return Promise.reject(new Error("NATIVE_REGISTRATION_REFUSED"));
+-    const attempt = { phase: "claimed" as "claimed" | "writing" | "committed" | "held" };
++    const attempt: NativeMainRegistrationAttempt = { phase: "claimed" };
+     this.mNativeRegistration = attempt;
+     try {
+       const request = mode === "tracked" ? nativeTrackedRegistrationSnapshot(bytes) : nativeRegistrationSnapshot(bytes);
+       if (request.gameId !== reservation.gameId || request.modId !== reservation.modId || request.installationPath !== reservation.modId) throw new Error("NATIVE_REGISTRATION_TARGET");
++      if (mode === "tracked") {
++        if (this.#mNativeConsumedOperations.has(request.operationId) || this.#mNativeConsumedJobs.has(request.nativeJobId)
++            || this.#mNativeConsumedRequests.has(request.requestSHA256) || this.#mNativeConsumedOperations.size >= 4096) throw new Error("NATIVE_REGISTRATION_CONSUMED");
++        this.#mNativeConsumedOperations.add(request.operationId); this.#mNativeConsumedJobs.add(request.nativeJobId);
++        this.#mNativeConsumedRequests.add(request.requestSHA256);
++        attempt.binding = { operationId: request.operationId, nativeJobId: request.nativeJobId, requestSHA256: request.requestSHA256 };
++      }
+       const detached = Buffer.from(JSON.stringify(request));
+       this.checkNativeModPersistenceBackend(reservation);
+@@ -504,4 +522,8 @@
+         this.checkNativeModPersistenceBackend(reservation);
+         if (attempt.phase !== "writing" || this.mNativeRegistration !== attempt) throw new Error("NATIVE_REGISTRATION_HELD");
++        if (mode === "tracked") {
++          if (result.schema !== "native-tracked-mod-registration-observed/2") throw new Error("NATIVE_REGISTRATION_RELEASE_REFUSED");
++          attempt.observed = result;
++        }
+         attempt.phase = "committed";
+         return result;
+@@ -519,4 +541,44 @@
+       this.mPersistenceWriteFailureObserved = true;
+       return Promise.reject(primary);
++    }
++  }
++
++  /** Fixed internal successful release; remote renderer adoption is a coordinator gate. */
++  public releaseNativeTrackedMod(owner: object) {
++    const reservation = this.mNativeModPersistenceReservation, attempt = this.mNativeRegistration;
++    if (reservation === undefined || reservation.owner !== owner || attempt === undefined
++        || attempt.phase !== "committed" || attempt.binding === undefined || attempt.observed === undefined) throw new Error("NATIVE_REGISTRATION_RELEASE_REFUSED");
++    if (this.#mNativeReleaseInProgress) {
++      attempt.phase = "held"; reservation.phase = "held"; this.mPersistenceWriteFailureObserved = true;
++      throw new Error("NATIVE_REGISTRATION_RELEASE_REENTRY");
++    }
++    this.#mNativeReleaseInProgress = true;
++    try {
++    this.checkNativeNewModRegistration(owner);
++    if (reservation.backendOwner === undefined || reservation.sqlOwner === undefined || reservation.registry === undefined) throw new Error("NATIVE_REGISTRATION_RELEASE_REFUSED");
++    const finishBackend = nativeReleasePrepareBackend.call(reservation.levelPersist, reservation.backendOwner, reservation.sqlOwner, reservation.registry);
++    const receipt = Object.freeze({ schema: "native-registration-release-observed/1", operationId: attempt.binding.operationId,
++      nativeJobId: attempt.binding.nativeJobId, requestSHA256: attempt.binding.requestSHA256,
++      recordSHA256: attempt.observed.recordSHA256, fullRecordSHA256: attempt.observed.fullRecordSHA256,
++      released: true, consumedIDsRetained: true, durableConsumedIDsVerified: false,
++      effectsAllowed: false, installationPermit: false, trackedInstallComplete: false });
++    this.checkNativeNewModRegistration(owner);
++    if (this.mNativeModPersistenceReservation !== reservation || this.mNativeRegistration !== attempt
++        || attempt.phase !== "committed") throw new Error("NATIVE_REGISTRATION_RELEASE_REFUSED");
++    for (const [field, value] of [["mNativeRegistration", attempt], ["mNativeModPersistenceReservation", reservation]] as const) {
++      const descriptor = Object.getOwnPropertyDescriptor(this, field);
++      if (descriptor === undefined || !("value" in descriptor) || descriptor.value !== value || descriptor.writable !== true) throw new Error("NATIVE_REGISTRATION_RELEASE_REFUSED");
++    }
++    // Recursive source-created guards run before QueryRegistry's first clear.
++    // On successful unwind only source-owned field clears remain, with no callback.
++    finishBackend();
++    this.mNativeRegistration = undefined;
++    this.mNativeModPersistenceReservation = undefined;
++    this.#mNativeReleaseInProgress = false;
++    return receipt;
++    } catch (primary) {
++      attempt.phase = "held"; reservation.phase = "held"; this.mPersistenceWriteFailureObserved = true;
++      this.#mNativeReleaseInProgress = false;
++      throw primary;
+     }
+   }

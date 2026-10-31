@@ -1,6 +1,6 @@
 # Assemble the reviewed Vortex source patches
 
-`native-source-series.mjs` applies the fixed sequence of 68 reviewed patches to
+`native-source-series.mjs` applies the fixed sequence of 75 reviewed patches to
 24 original files from Vortex `v2.9.1`, commit
 `c80326367cbe6d96621ad6cf4a5488ef49bac110`. It replaces manually composing separate
 patch chains before compilation. It does not change an installed application or
@@ -34,12 +34,15 @@ final source hashes, patch/manifest hashes and cross-file prerequisites must
 match the pinned series. Patch application requires exact offsets and context;
 it has no fuzzy matching or hash-refresh mode.
 
-The fixed graph combines the 32-patch mod-management/transfer packet with the
-36-patch persistence packet. The latter includes renderer target admission and
+The fixed graph combines the 33-patch mod-management/transfer packet with the
+42-patch persistence packet. The latter includes renderer target admission and
 acknowledged diffs, main/preload/shared IPC, backend reservations and managed SQL
 ownership. Both runtime packet directories have separate closed inventories;
 test-only adapters are excluded. A cross-file companion must already have been
-applied with its exact patch and intermediate output hashes. Later patches may
+applied with its exact patch and intermediate output hashes. Cross-packet
+companions name one of the same two fixed packet IDs; they cannot add a source
+root. The series manifest is bounded to 96 KiB before opening its contents.
+Later patches may
 then advance that companion source to its pinned final output.
 
 The result contains a frozen source map and deeply frozen receipt. Reading a
@@ -410,3 +413,47 @@ This adds internal registration/adoption primitives. It does not establish
 archive custody, a source-bound coordinator, crash recovery, hold release, two
 sequential installs or installation through MCP. See the
 [current contract](NATIVE-ADOPTION-BOUNDARY.md#tracked-registration-and-renderer-adoption).
+
+## Successful registration release — 31 October 2026
+
+The 75-patch recipe adds a successful tracked-registration release across query,
+SQL pool, backend and main owners, then renderer persistence, root and manager.
+Runtime inventories contain 33 lifecycle and 42 persistence patch pairs. Seven
+runtime files change from the qualified 68-patch recipe; no new source file is
+introduced into the application graph.
+
+The combined affected suite passed 325 cases without skips, including 32 new
+release/cycle cases. Two joined cases pass actual main results into the actual
+Redux adoption path. The same component instances register and release two
+different mods; the first record survives, committed records are not echoed,
+and buffered settings are written once through the reopened main persistor.
+Discarding a main release observation does not implicitly open renderer gates.
+These cases model transport and database storage, not physical IPC or Vortex.
+
+A separate native fixture executed the four composed main classes against a
+real own LevelDB backend. Two registrations and releases used the same component
+instances and connection; ten download metadata rows became 18 and then 26, and
+fresh reopen preserved all 26. A real COMMIT followed by an injected lost reply
+left 13 rows on reopen and refused release/replay. Backend SQL was real; pool
+bootstrap and the five query-setup calls used controlled facades. This does not
+qualify full native pool construction, physical renderer transport, a published
+payload or power-loss durability.
+
+Independent review found and repaired delayed-finalizer scheduling and
+nonwritable-manager-field failures. Regressions require every gate to stay closed
+when an armed timer expires, pending work appears without an armed timer, or any
+of the three manager fields cannot be cleared. Main reentry and nonwritable-field
+failures are also covered. No failed owner is reset to admit another operation.
+
+Main TypeScript, direct build and 52 upstream tests passed. Final renderer
+TypeScript and webpack passed. Seven main and fifteen renderer sources matched
+fresh Program and runtime-map inputs; three unchanged preload/shared Program
+inputs retain their earlier qualification. All 24 graph outputs, eight configs,
+lockfile, test-intake pins and preload outputs matched. Earlier candidate inputs
+and checks were retained separately. Electron's npm SDK and path marker remained
+absent throughout qualification.
+
+This qualifies internal successful release, not the full installation workflow.
+The source-bound coordinator, physical staging/worker binding, durable terminal
+reconciliation and installed application acceptance remain required. See the
+[release contract](NATIVE-ADOPTION-BOUNDARY.md#successful-registration-release).

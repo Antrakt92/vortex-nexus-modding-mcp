@@ -1,0 +1,26 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/main/src/store/QueryRegistry.ts",
+  "originalSourceSHA256": "f7c78fd586349761f077ac178ecee3745dd027911021dc6a3978bfcd7ca31839",
+  "inputSHA256": "6c304abb07fe9074d26866f3635c9f203b70b77b6fbb6463d4437d37301019a5",
+  "outputSHA256": "7edf748170eff539c95f66009f1356a8e88b1ce614042d939e5ebe2833849bc7",
+  "patchSHA256": "a03113119fc360a0029f3c097d5733c0d580dec91d987363217752119d2dbed8",
+  "prerequisitePatch": "native-query-source-admission.patch",
+  "prerequisitePatchSHA256": "35090f46fe6410f6597788edf58adaffccd31cd3cdbedc5adbbc195c73c37816",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "installationPermit": false,
+  "powerLossPersistenceVerified": false,
+  "releaseSupported": false,
+  "trackedInstallComplete": false,
+  "durableConsumedIDsVerified": false,
+  "limitations": [
+    "Internal successful v2 registration release only; no remote adoption assertion or installed coordinator.",
+    "Consumed ID defense is process-lifetime only; existing durable operation/job journal remains required across restart.",
+    "Finalizers are fixed source-created one-shot closures; all guards precede the first owner clear."
+  ]
+}

@@ -1,0 +1,33 @@
+--- a/src/main/src/store/DuckDBSingleton.ts
++++ b/src/main/src/store/DuckDBSingleton.ts
+@@ -89,4 +89,24 @@
+     } catch { hold.phase = "held"; throw new Error("NATIVE_SQL_POOL_HELD"); }
+   }
++  public prepareNativeSQLRelease(owner: object): () => void {
++    this.checkNativeSQLConnections(owner);
++    const hold = this.#nativeHold;
++    if (hold === undefined || hold.queryOwner === undefined || hold.query === undefined) throw new Error("NATIVE_SQL_RELEASE_REFUSED");
++    const finishQuery = nativeReleasePrepareQuery.call(hold.registry, hold.queryOwner, hold.query);
++    this.checkNativeSQLConnections(owner);
++    let consumed = false;
++    return () => {
++      if (consumed || this.#nativeHold !== hold || hold.owner !== owner || hold.phase !== "reserved"
++          || DuckDBSingleton.#sInstance !== this || hold.generation !== this.#nativeGeneration
++          || !this.#mInitialized || this.#mDuckDB === undefined || this.#mInitPromise !== undefined
++          || this.#nativeActive !== 0 || this.#nativeFailed || this.#nativeClosed || this.#nativeDetached
++          || this.#nativeInitStarts !== 1 || !this.#nativeBootstrapClosed) throw new Error("NATIVE_SQL_RELEASE_REFUSED");
++      finishQuery();
++      // No validation, allocation or callback after the first inner owner clear.
++      consumed = true;
++      this.#nativeHold = undefined;
++    };
++  }
++
+   public getNativeSQLConnectionStatus() {
+     return Object.freeze({ phase: this.#nativeHold?.phase ?? "not_reserved", activeIntents: this.#nativeActive,
+@@ -309,3 +329,5 @@
+ }
+ 
++const nativeReleasePrepareQuery = QueryRegistry.prototype.prepareNativeQueryRelease;
++
+ export default DuckDBSingleton;

@@ -1,0 +1,24 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/renderer/src/store/persistDiffMiddleware.ts",
+  "originalSourceSHA256": "d4dbc85a48739c30239bda2b6b091ef9631b5e9df6b3affcd935a4a3a5cf0262",
+  "inputSHA256": "56862197cee81144c886bdce89e1fb9fe3c1b4ff8b5e2d879205531967621788",
+  "outputSHA256": "32639c4e836a0ceac7e75ab9b12a69cd73fb283f3a3937512d815b151abfad35",
+  "patchSHA256": "a70d3918843f7c99130393a991df872f6e8dc94f90d195d512242bc30cb5c7c4",
+  "prerequisitePatch": "renderer-persistence-adoption.patch",
+  "prerequisitePatchSHA256": "d5b46a4219cc4d322701c161002748341ceb320c28dc0a0944e85d4b7e32b1d0",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "installationPermit": false,
+  "powerLossPersistenceVerified": false,
+  "releaseSupported": true,
+  "limitations": [
+    "Internal source-bound successful local renderer registration release only; future coordinator must obtain exact main release ACK first. No caller boolean proves main state.",
+    "No durable replay/recovery authority; bounded lifetime consumed operation/job/request IDs refuse reuse and capacity without eviction.",
+    "Unknown/partial preparation stays held; no failed-operation reset or arbitrary privileged JavaScript isolation."
+  ]
+}
