@@ -1,0 +1,27 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/main/src/store/mainPersistence.ts",
+  "originalSourceSHA256": "7d3e28cb829914fb092774eca3fc357645fa7ef508177d1a0e3b32eed58f05fe",
+  "inputSHA256": "90e5a0c97eb1d02360de088a9ebe897021b825bf2cb0a6888bdac8f94c01b904",
+  "outputSHA256": "a11eb2b2c645116020c1797a5c2f2584a3eecf739b5aa94223176d5b1b190f4a",
+  "patchSHA256": "3cad5662e53dac7cd43304cfe6569b8834468c19789d4c8aaad045fa08c2c810",
+  "prerequisitePatch": "native-main-readiness.patch",
+  "prerequisitePatchSHA256": "eb482bec5663042300dfdb3b6897e11dfee28a30306974ba42295aa7ebafe53d",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "installationPermit": false,
+  "powerLossPersistenceVerified": false,
+  "startupGateSupported": false,
+  "limitations": [
+    "Fixed source-private anchor storage binding only; no transition authorization, genesis, startup discovery gate or START permission.",
+    "Ordinary hydration/intake cannot select the reserved anchor namespace; actual Level storage remains the final KV boundary.",
+    "Acknowledgement is process/transaction readback evidence, not a power-loss durability guarantee."
+  ],
+  "requiredCompanionPatch": "native-main-executor-anchor.patch",
+  "requiredCompanionPatchSHA256": "8c9ff78c329d7cead964215ac6c623340cd9528fba73e0f9ae83ce32906101d8",
+  "requiredCompanionOutputSHA256": "d7a0e8f23e0d949be5ef7c7d44aa8d7f8c2df7f352fe1816c9da75414281e56b"
+}

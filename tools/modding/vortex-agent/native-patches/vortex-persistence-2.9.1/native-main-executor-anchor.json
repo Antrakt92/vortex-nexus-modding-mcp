@@ -1,0 +1,27 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/main/src/store/ReduxPersistorIPC.ts",
+  "originalSourceSHA256": "2a86c8e57e643172e8babf3474bd2e697a1cf8b3f3e3f3ea1f44934781a737e3",
+  "inputSHA256": "ad26a49faa523fc0830b625b00b0974cb9562802b10c4a1b4d1b9239d8e26dbf",
+  "outputSHA256": "d7a0e8f23e0d949be5ef7c7d44aa8d7f8c2df7f352fe1816c9da75414281e56b",
+  "patchSHA256": "8c9ff78c329d7cead964215ac6c623340cd9528fba73e0f9ae83ce32906101d8",
+  "prerequisitePatch": "native-main-registration-release.patch",
+  "prerequisitePatchSHA256": "de61d2f5cdb8c3ffe603bf86b27a6981ab87ad1034aaf404ae332011a5e5120a",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "installationPermit": false,
+  "powerLossPersistenceVerified": false,
+  "startupGateSupported": false,
+  "limitations": [
+    "Fixed source-private anchor storage binding only; no transition authorization, genesis, startup discovery gate or START permission.",
+    "Ordinary hydration/intake cannot select the reserved anchor namespace; actual Level storage remains the final KV boundary.",
+    "Acknowledgement is process/transaction readback evidence, not a power-loss durability guarantee."
+  ],
+  "requiredCompanionPatch": "native-executor-anchor-storage.patch",
+  "requiredCompanionPatchSHA256": "2dda802a76e811070e5f2987cfdfc49689d2c8db50c640e21a0a562525cd8751",
+  "requiredCompanionOutputSHA256": "ce2c560f068f1d9867b902ce9975c47cb39b458497da90573e4a39c83b5691fb"
+}

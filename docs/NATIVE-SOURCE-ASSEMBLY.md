@@ -1,6 +1,6 @@
 # Assemble the reviewed Vortex source patches
 
-`native-source-series.mjs` applies the fixed sequence of 75 reviewed patches to
+`native-source-series.mjs` applies the fixed sequence of 78 reviewed patches to
 24 original files from Vortex `v2.9.1`, commit
 `c80326367cbe6d96621ad6cf4a5488ef49bac110`. It replaces manually composing separate
 patch chains before compilation. It does not change an installed application or
@@ -35,7 +35,7 @@ match the pinned series. Patch application requires exact offsets and context;
 it has no fuzzy matching or hash-refresh mode.
 
 The fixed graph combines the 33-patch mod-management/transfer packet with the
-42-patch persistence packet. The latter includes renderer target admission and
+45-patch persistence packet. The latter includes renderer target admission and
 acknowledged diffs, main/preload/shared IPC, backend reservations and managed SQL
 ownership. Both runtime packet directories have separate closed inventories;
 test-only adapters are excluded. A cross-file companion must already have been
@@ -457,3 +457,27 @@ This qualifies internal successful release, not the full installation workflow.
 The source-bound coordinator, physical staging/worker binding, durable terminal
 reconciliation and installed application acceptance remain required. See the
 [release contract](NATIVE-ADOPTION-BOUNDARY.md#successful-registration-release).
+
+## Main executor anchor — 31 October 2026
+
+The 78-patch graph adds three main-source changes for
+[private executor-history storage](NATIVE-EXECUTOR-ANCHOR.md). A fixed KV is
+excluded from ordinary hydration and mutation. An actual retained main/backend/
+SQL reservation performs its strict CAS transaction and readback; it retains
+the reservation for subsequent work. Failed or unknown writes stay held.
+
+Canonical input checks now compare original bytes for the anchor and both
+registration descriptor versions. The native driver was observed to strip a
+leading BOM from VARCHAR results, so the anchor query transports bounded HEX
+and validates reconstructed bytes instead. Ordinary NULL-key corruption retains
+its prior visibility/error behavior rather than being hidden by the key filter.
+
+The final main TypeScript target, Rolldown build and 52 upstream tests passed.
+Seven main Program/map entries matched the final sources; eighteen unchanged
+renderer/preload/shared Program entries and their outputs retained prior evidence.
+All 24 graph outputs, eight configs, lockfile, intake and official main build
+inputs matched. Six owned native scenario groups passed with the explicit
+backend/facade scope recorded in the anchor contract.
+
+Application runtime binding, first provisioning, startup reconciliation and the
+coordinator's pre-START ordering are not connected by these storage patches.

@@ -1,0 +1,473 @@
+--- a/src/main/src/store/LevelPersist.ts
++++ b/src/main/src/store/LevelPersist.ts
+@@ -86,7 +86,7 @@
+         || !hash("requestSHA256") || !hash("planId") || !hash("payloadSHA256") || !id("gameId") || !id("modId")
+         || data.installationPath !== data.modId || /[. ]$/.test(String(data.modId)) || data.archiveId !== null) throw new Error("NATIVE_REGISTRATION_REQUEST");
+     const canonical = JSON.stringify(Object.fromEntries(keys.map(key => [key, data[key]])));
+-    if (text !== canonical) throw new Error("NATIVE_REGISTRATION_CANONICAL");
++    if (!Buffer.from(copy).equals(Buffer.from(canonical, "utf8"))) throw new Error("NATIVE_REGISTRATION_CANONICAL");
+     return Object.freeze(value) as NativeNewModRegistrationRequest;
+   } catch { throw new Error("NATIVE_REGISTRATION_REQUEST"); }
+ }
+@@ -129,9 +129,63 @@
+     const detached = Object.fromEntries(keys.map(key => [key, key === "archive"
+       ? Object.fromEntries(archiveKeys.map(name => [name, archive[name as keyof typeof archive]]))
+       : value[key as keyof typeof value]]));
+-    if (text !== JSON.stringify(detached)) throw new Error();
++    if (!Buffer.from(copy).equals(Buffer.from(JSON.stringify(detached), "utf8"))) throw new Error();
+     Object.freeze(archive.game); Object.freeze(archive); return Object.freeze(value);
+   } catch { throw new Error("NATIVE_TRACKED_REGISTRATION_REQUEST"); }
++}
++
++export interface NativeExecutorAnchor {
++  schema: "native-executor-anchor/1";
++  rootId: string;
++  inventorySHA256: string;
++}
++const NATIVE_EXECUTOR_ANCHOR_KEY = "nativeExecutorAnchorV1";
++export function isNativeExecutorAnchorKey(serializedKey: string): boolean {
++  return typeof serializedKey === "string" && (serializedKey === NATIVE_EXECUTOR_ANCHOR_KEY
++    || serializedKey.startsWith(NATIVE_EXECUTOR_ANCHOR_KEY + SEPARATOR));
++}
++export function snapshotNativeExecutorAnchor(bytes: Uint8Array): Readonly<NativeExecutorAnchor> {
++  try {
++    if (!nativeRegistrationTypes.isUint8Array(bytes) || nativeRegistrationTypes.isProxy(bytes)) throw new Error();
++    const typed = Object.getPrototypeOf(Uint8Array.prototype);
++    const size = Object.getOwnPropertyDescriptor(typed, "byteLength")?.get?.call(bytes);
++    const buffer = Object.getOwnPropertyDescriptor(typed, "buffer")?.get?.call(bytes);
++    if (typeof size !== "number" || size < 1 || size > 1024 || nativeRegistrationTypes.isSharedArrayBuffer(buffer)) throw new Error();
++    const copy = new Uint8Array(size); Uint8Array.prototype.set.call(copy, bytes);
++    const text = new NativeRegistrationDecoder("utf-8", { fatal: true }).decode(copy);
++    const value: unknown = JSON.parse(text);
++    if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error();
++    const data = value as Record<string, unknown>;
++    if (Object.keys(data).length !== 3 || !Object.hasOwn(data, "schema") || !Object.hasOwn(data, "rootId") || !Object.hasOwn(data, "inventorySHA256")
++      || data.schema !== "native-executor-anchor/1" || typeof data.rootId !== "string" || data.rootId.length > 100 || !/^[0-9]+:[0-9]+$/.test(data.rootId)
++      || typeof data.inventorySHA256 !== "string" || !/^[a-f0-9]{64}$/.test(data.inventorySHA256)) throw new Error();
++    const canonical: NativeExecutorAnchor = { schema: "native-executor-anchor/1", rootId: data.rootId, inventorySHA256: data.inventorySHA256 };
++    if (!Buffer.from(copy).equals(Buffer.from(JSON.stringify(canonical), "utf8"))) throw new Error();
++    return Object.freeze(canonical);
++  } catch { throw new Error("NATIVE_EXECUTOR_ANCHOR_HOLD"); }
++}
++function nativeExecutorKey(parts: readonly string[]): string {
++  if (!Array.isArray(parts) || nativeRegistrationTypes.isProxy(parts)) throw new Error("NATIVE_EXECUTOR_ANCHOR_HOLD");
++  const copy: string[] = [];
++  for (let index = 0; index < parts.length; index++) {
++    const descriptor = Object.getOwnPropertyDescriptor(parts, String(index));
++    if (descriptor === undefined || !Object.hasOwn(descriptor, "value") || typeof descriptor.value !== "string") throw new Error("NATIVE_EXECUTOR_ANCHOR_HOLD");
++    copy.push(descriptor.value);
++  }
++  const serialized = copy.join(SEPARATOR);
++  if (isNativeExecutorAnchorKey(serialized)) throw new Error("NATIVE_EXECUTOR_ANCHOR_HOLD");
++  return serialized;
++}
++function nativeExecutorMethod(value: object, key: string): Function | undefined {
++  let current: object | null = value;
++  for (let depth = 0; current !== null && depth < 8; depth++) {
++    if (nativeRegistrationTypes.isProxy(current)) return undefined;
++    const descriptor = Object.getOwnPropertyDescriptor(current, key);
++    if (descriptor !== undefined) return Object.hasOwn(descriptor, "value") && typeof descriptor.value === "function"
++      && !nativeRegistrationTypes.isProxy(descriptor.value) ? descriptor.value : undefined;
++    current = Object.getPrototypeOf(current) as object | null;
++  }
++  return undefined;
+ }
+ 
+ interface NativeRegistrationAttempt {
+@@ -219,11 +273,18 @@
+   #mNativeConsumedJobs = new Set<string>();
+   #mNativeConsumedRequests = new Set<string>();
+   #mNativeRegistrationChecking = false;
++  #mNativeAnchor: NativeRegistrationAttempt | undefined;
++  #mNativeAnchorReading = false;
++  #mNativeAnchorChecking = false;
++  #mAnchorRun: Function | undefined;
++  #mAnchorRead: Function | undefined;
+   #mNativeSQL: { owner: object; backendOwner: object; registry: QueryRegistry; singleton: DuckDBSingleton } | undefined;
+ 
+   constructor(connection: DuckDBConnection, alias: string) {
+     this.#mConnection = connection;
+     this.#mAlias = alias;
++    this.#mAnchorRun = nativeExecutorMethod(connection, "run");
++    this.#mAnchorRead = nativeExecutorMethod(connection, "runAndReadAll");
+   }
+ 
+   public get alias(): string {
+@@ -242,6 +303,153 @@
+ 
+   public get inTransaction(): boolean {
+     return this.#mInTransaction;
++  }
++
++  #anchorHold(): Error { return new Error("NATIVE_EXECUTOR_ANCHOR_HOLD"); }
++  #anchorConnectionValid(): boolean {
++    return this.#mAnchorRun !== undefined && this.#mAnchorRead !== undefined
++      && nativeExecutorMethod(this.#mConnection, "run") === this.#mAnchorRun
++      && nativeExecutorMethod(this.#mConnection, "runAndReadAll") === this.#mAnchorRead;
++  }
++  #anchorReadInvalid(): boolean {
++    return !this.#mNativeAnchorReading || this.#mNativeAnchor !== undefined || this.#mNativeRegistration !== undefined
++      || this.#mNativeActive !== 1 || this.#mNativeIneligible() || this.#mNativeRawExposed
++      || this.#mNativeWriteHold?.phase === "held" || !this.#anchorConnectionValid();
++  }
++  #checkAnchorRead(): void {
++    if (this.#anchorReadInvalid()) throw this.#anchorHold();
++    const sql = this.#mNativeSQL;
++    if (sql !== undefined) this.#checkNativeSQLIdentity(sql.owner, sql.backendOwner, sql.registry);
++    if (this.#anchorReadInvalid()) throw this.#anchorHold();
++  }
++  #checkOwnedAnchor(attempt: NativeRegistrationAttempt): void {
++    const hold = this.#mNativeWriteHold;
++    if (this.#mNativeAnchorChecking) {
++      attempt.phase = "held";
++      if (hold !== undefined) hold.phase = "held";
++      throw this.#anchorHold();
++    }
++    this.#mNativeAnchorChecking = true;
++    try {
++      const pending = ["begin_pending", "commit_pending"].includes(attempt.transaction) ? 1 : 0;
++      const open = ["open", "commit_pending"].includes(attempt.transaction);
++      if (this.#mNativeAnchor !== attempt || this.#mNativeRegistration !== undefined || hold === undefined
++        || hold.owner !== attempt.backendOwner || hold.phase !== "reserved" || attempt.phase === "held"
++        || this.#mNativeActive !== 1 || this.#mNativeTransactionPending !== pending || this.#mInTransaction !== open
++        || this.#mNativeWriteFailed || this.#mNativeRawExposed || this.#mNativeCloseAttempted || !this.#anchorConnectionValid()) throw this.#anchorHold();
++      this.#checkNativeSQLIdentity(attempt.sqlOwner, attempt.backendOwner, attempt.registry);
++      if (this.#mNativeAnchor !== attempt || hold.phase !== "reserved" || this.#nativeRegistrationHeld(attempt)
++        || this.#mNativeActive !== 1 || !this.#anchorConnectionValid()) throw this.#anchorHold();
++    } catch (error) {
++      attempt.phase = "held";
++      if (hold !== undefined) hold.phase = "held";
++      throw error;
++    } finally { this.#mNativeAnchorChecking = false; }
++  }
++  async #readAnchorValue(attempt?: NativeRegistrationAttempt): Promise<Uint8Array | null> {
++    if (attempt === undefined) this.#checkAnchorRead(); else this.#checkOwnedAnchor(attempt);
++    const read = this.#mAnchorRead;
++    if (read === undefined) throw this.#anchorHold();
++    // Do not materialize an unbounded corrupt value or descendant key in JS.
++    const reader = await read.call(this.#mConnection,
++      `SELECT key = $1 AS exact_key,
++         CASE WHEN octet_length(encode(value)) <= 1024 THEN hex(encode(value)) ELSE NULL END AS value_hex
++       FROM ${this.#mAlias}.kv WHERE key = $1 OR starts_with(key, $1 || '###') LIMIT 2`, [NATIVE_EXECUTOR_ANCHOR_KEY]) as DuckDBResultReader;
++    if (attempt === undefined) this.#checkAnchorRead(); else this.#checkOwnedAnchor(attempt);
++    const getRows=nativeExecutorMethod(reader,"getRows");
++    if (getRows === undefined) throw this.#anchorHold();
++    const rows: unknown = getRows.call(reader);
++    if (attempt === undefined) this.#checkAnchorRead(); else this.#checkOwnedAnchor(attempt);
++    if (!Array.isArray(rows) || nativeRegistrationTypes.isProxy(rows) || rows.length > 1) throw this.#anchorHold();
++    if (rows.length === 0) return null;
++    const first=Object.getOwnPropertyDescriptor(rows,"0");
++    const row: unknown = first !== undefined && Object.hasOwn(first,"value") ? first.value : undefined;
++    if (!Array.isArray(row) || nativeRegistrationTypes.isProxy(row) || row.length !== 2) throw this.#anchorHold();
++    const exact=Object.getOwnPropertyDescriptor(row,"0"),value=Object.getOwnPropertyDescriptor(row,"1");
++    if (exact === undefined || !Object.hasOwn(exact,"value") || exact.value !== true
++      || value === undefined || !Object.hasOwn(value,"value") || typeof value.value !== "string"
++      || value.value.length > 2048 || value.value.length % 2 !== 0 || !/^[0-9A-F]+$/.test(value.value)) throw this.#anchorHold();
++    // ASCII HEX preserves original UTF-8 bytes across the driver's VARCHAR
++    // decoder, which otherwise strips a leading BOM before this codec sees it.
++    const bytes = Buffer.from(value.value, "hex");
++    snapshotNativeExecutorAnchor(bytes);
++    return bytes;
++  }
++  #anchorDrained(): void {
++    if (this.#mNativeActive === 0 && this.#mNativeDrain !== undefined) {
++      const resolve = this.#mNativeDrain; this.#mNativeDrain = undefined; resolve();
++    }
++  }
++  public async readNativeExecutorAnchor(): Promise<Uint8Array | null> {
++    if (this === null || typeof this !== "object" || nativeRegistrationTypes.isProxy(this) || !(#mConnection in this)) throw new Error("NATIVE_EXECUTOR_ANCHOR_HOLD");
++    if (this.#mNativeAnchorReading || this.#mNativeAnchor !== undefined || this.#mNativeActive !== 0
++      || this.#mNativeRegistration !== undefined || this.#mNativeIneligible() || this.#mNativeRawExposed
++      || this.#mNativeWriteHold?.phase === "held" || this.#mNativeWriteHold?.phase === "pending") throw this.#anchorHold();
++    this.#mNativeAnchorReading = true; this.#mNativeActive++;
++    try { return await this.#readAnchorValue(); }
++    catch {
++      this.#mNativeWriteFailed = true;
++      if (this.#mNativeWriteHold !== undefined) this.#mNativeWriteHold.phase = "held";
++      throw this.#anchorHold();
++    } finally { this.#mNativeAnchorReading = false; this.#mNativeActive--; this.#anchorDrained(); }
++  }
++  public async writeNativeExecutorAnchor(backendOwner: object, sqlOwner: object, registry: QueryRegistry, expectedBytes: Uint8Array | null, nextBytes: Uint8Array) {
++    if (this === null || typeof this !== "object" || nativeRegistrationTypes.isProxy(this) || !(#mConnection in this)) throw new Error("NATIVE_EXECUTOR_ANCHOR_HOLD");
++    const hold = this.#mNativeWriteHold, sql = this.#mNativeSQL;
++    if (this.#mNativeAnchor !== undefined) {
++      this.#mNativeAnchor.phase = "held"; if (hold !== undefined) hold.phase = "held"; throw this.#anchorHold();
++    }
++    if (hold === undefined || hold.owner !== backendOwner || hold.phase !== "reserved" || sql === undefined
++      || sql.owner !== sqlOwner || sql.backendOwner !== backendOwner || sql.registry !== registry || this.#mNativeRegistration !== undefined
++      || this.#mNativeAnchorReading || this.#mNativeActive !== 0) throw this.#anchorHold();
++    const attempt: NativeRegistrationAttempt = {backendOwner,sqlOwner,registry,phase:"claimed",transaction:"not_started",commitAttempted:false};
++    this.#mNativeAnchor = attempt; this.#mNativeActive++;
++    try {
++      this.#checkOwnedAnchor(attempt);
++      const expected = expectedBytes === null ? null : Buffer.from(JSON.stringify(snapshotNativeExecutorAnchor(expectedBytes)), "utf8");
++      const next = snapshotNativeExecutorAnchor(nextBytes), bytes = Buffer.from(JSON.stringify(next), "utf8");
++      this.#checkOwnedAnchor(attempt);
++      const run = this.#mAnchorRun;
++      if (run === undefined) throw this.#anchorHold();
++      attempt.transaction = "begin_pending"; this.#mNativeTransactionPending++;
++      try { await run.call(this.#mConnection, "BEGIN TRANSACTION"); }
++      catch (error) { attempt.transaction = "unknown"; throw error; }
++      finally { this.#mNativeTransactionPending--; }
++      this.#mInTransaction = true; attempt.transaction = "open";
++      this.#checkOwnedAnchor(attempt);
++      const previous = await this.#readAnchorValue(attempt);
++      this.#checkOwnedAnchor(attempt);
++      if (previous === null ? expected !== null : expected === null || !Buffer.from(previous).equals(expected)) throw this.#anchorHold();
++      attempt.phase = "writing";
++      await run.call(this.#mConnection, `INSERT INTO ${this.#mAlias}.kv VALUES ($1, $2)`, [NATIVE_EXECUTOR_ANCHOR_KEY, bytes.toString("utf8")]);
++      this.#checkOwnedAnchor(attempt);
++      attempt.commitAttempted = true; attempt.transaction = "commit_pending"; this.#mNativeTransactionPending++;
++      try { await run.call(this.#mConnection, "COMMIT"); }
++      catch (error) { attempt.transaction = "unknown"; throw error; }
++      finally { this.#mNativeTransactionPending--; }
++      this.#mInTransaction = false; attempt.transaction = "committed";
++      this.#checkOwnedAnchor(attempt);
++      const readback = await this.#readAnchorValue(attempt);
++      this.#checkOwnedAnchor(attempt);
++      if (readback === null || !Buffer.from(readback).equals(bytes)) throw this.#anchorHold();
++      const result = Object.freeze({schema:"native-executor-anchor-write/1",previousSHA256:expected === null ? null : nativeRegistrationHash("sha256").update(expected).digest("hex"),
++        anchorSHA256:nativeRegistrationHash("sha256").update(bytes).digest("hex"),rootId:next.rootId,inventorySHA256:next.inventorySHA256,
++        commitObserved:true,readbackVerified:true,effectsAllowed:false,installationPermit:false,powerLossPersistenceVerified:false});
++      this.#checkOwnedAnchor(attempt); attempt.phase = "committed"; this.#mNativeAnchor = undefined;
++      return result;
++    } catch (primary) {
++      attempt.phase = "held"; this.#mNativeWriteFailed = true; hold.phase = "held";
++      if (attempt.transaction === "open" && !attempt.commitAttempted) {
++        attempt.transaction = "rollback_pending"; this.#mNativeTransactionPending++;
++        try { const run=this.#mAnchorRun;if(run===undefined || !this.#anchorConnectionValid())throw this.#anchorHold();await run.call(this.#mConnection,"ROLLBACK");if(!this.#anchorConnectionValid())throw this.#anchorHold();attempt.transaction="rolled_back";this.#mInTransaction=false; }
++        catch { attempt.transaction = "unknown"; }
++        finally { this.#mNativeTransactionPending--; }
++      }
++      throw primary;
++    } finally { this.#mNativeActive--; this.#anchorDrained(); }
++  }
++  #ordinaryAnchorIdle(): void {
++    if (this.#mNativeAnchor !== undefined) throw this.#anchorHold();
+   }
+ 
+   /** Internal lifetime hold of this connection's writers, never a SQL permit. */
+@@ -268,6 +476,7 @@
+   }
+ 
+   public checkNativeBackendWriteOwner(owner: object): void {
++    if (this.#mNativeAnchor !== undefined) throw new Error("NATIVE_EXECUTOR_ANCHOR_BUSY");
+     const hold = this.#mNativeWriteHold;
+     if (hold === undefined || owner !== hold.owner || hold.phase !== "reserved") {
+       throw new Error("NATIVE_BACKEND_WRITE_REFUSED");
+@@ -341,6 +550,7 @@
+ 
+   /** Observe this operation's ownership; completion still requires its exact returned promise. */
+   public checkNativeNewModRegistration(backendOwner: object, sqlOwner: object, registry: QueryRegistry): void {
++    if (this.#mNativeAnchor !== undefined) throw new Error("NATIVE_EXECUTOR_ANCHOR_BUSY");
+     const attempt = this.#mNativeRegistration;
+     if (attempt === undefined || attempt.backendOwner !== backendOwner || attempt.sqlOwner !== sqlOwner || attempt.registry !== registry) throw new Error("NATIVE_REGISTRATION_REFUSED");
+     this.#checkOwnedRegistration(attempt, attempt.phase === "committed");
+@@ -433,7 +643,7 @@
+   async #registerNativeMod(backendOwner: object, sqlOwner: object, registry: QueryRegistry, bytes: Uint8Array, mode: "minimal" | "tracked") {
+     const hold = this.#mNativeWriteHold, sql = this.#mNativeSQL;
+     if (hold === undefined || hold.owner !== backendOwner || hold.phase !== "reserved" || sql === undefined
+-        || sql.owner !== sqlOwner || sql.backendOwner !== backendOwner || sql.registry !== registry || this.#mNativeRegistration !== undefined) throw new Error("NATIVE_REGISTRATION_REFUSED");
++        || sql.owner !== sqlOwner || sql.backendOwner !== backendOwner || sql.registry !== registry || this.#mNativeRegistration !== undefined || this.#mNativeAnchor !== undefined) throw new Error("NATIVE_REGISTRATION_REFUSED");
+     const attempt: NativeRegistrationAttempt = { backendOwner, sqlOwner, registry, phase: "claimed", transaction: "not_started", commitAttempted: false };
+     this.#mNativeRegistration = attempt;
+     this.#mNativeActive++;
+@@ -566,6 +776,7 @@
+ 
+   public getNativeBackendWriteStatus() {
+     return Object.freeze({ phase: this.#mNativeWriteHold?.phase ?? "not_reserved",
++      nativeExecutorAnchorPhase: this.#mNativeAnchor?.phase ?? "not_attempted", nativeExecutorAnchorTransaction: this.#mNativeAnchor?.transaction ?? "not_started",
+       nativeRegistrationPhase: this.#mNativeRegistration?.phase ?? "not_attempted", nativeRegistrationTransaction: this.#mNativeRegistration?.transaction ?? "not_started",
+       activeIntents: this.#mNativeActive, transactionPending: this.#mNativeTransactionPending,
+       inTransaction: this.#mInTransaction, writeFailureObserved: this.#mNativeWriteFailed,
+@@ -583,6 +794,10 @@
+     kind: "write" | "begin" | "terminal" | "close", operation: () => Promise<T>,
+   ): Promise<T> {
+     const hold = this.#mNativeWriteHold;
++    if (this.#mNativeAnchor !== undefined) {
++      this.#mNativeAnchor.phase = "held"; if (hold !== undefined) hold.phase = "held";
++      throw this.#anchorHold();
++    }
+     if (this.#mNativeRegistration !== undefined) {
+       if (hold !== undefined) hold.phase = "held";
+       throw new Error("NATIVE_REGISTRATION_OWNS_CONNECTION");
+@@ -670,14 +885,16 @@
+   }
+ 
+   public async getItem(key: string[]): Promise<string> {
++    this.#ordinaryAnchorIdle();
++    const serializedKey = nativeExecutorKey(key);
+     const reader = await this.#mConnection.runAndReadAll(
+       `SELECT value FROM ${this.#mAlias}.kv WHERE key = $1`,
+-      [key.join(SEPARATOR)],
++      [serializedKey],
+     );
+     const rows = reader.getRows();
+     const firstRow = rows[0];
+     if (firstRow === undefined) {
+-      const err = new Error(`Key not found: ${key.join(SEPARATOR)}`);
++      const err = new Error(`Key not found: ${serializedKey}`);
+       err.name = "NotFoundError";
+       throw err;
+     }
+@@ -689,6 +906,7 @@
+    * A false result is only this read's observation, not an atomic absence permit.
+    */
+   public async hasNewModRegistrationConflict(gameId: string, modId: string): Promise<boolean> {
++    this.#ordinaryAnchorIdle();
+     const safeId = (value: string) => typeof value === "string" && value.length > 0
+       && value.length <= 200 && /^[A-Za-z0-9]/.test(value) && !/[^A-Za-z0-9._-]/.test(value)
+       && !["__proto__", "constructor", "prototype"].includes(value.toLowerCase());
+@@ -719,9 +937,10 @@
+   }
+ 
+   public async getAllKeys(): Promise<string[][]> {
+-    const reader = await this.#mConnection.runAndReadAll(`SELECT key FROM ${this.#mAlias}.kv`);
++    this.#ordinaryAnchorIdle();
++    const reader = await this.#mConnection.runAndReadAll(`SELECT key FROM ${this.#mAlias}.kv WHERE key IS NULL OR (key <> $1 AND NOT starts_with(key,$2))`, [NATIVE_EXECUTOR_ANCHOR_KEY,NATIVE_EXECUTOR_ANCHOR_KEY+SEPARATOR]);
+     const rows = reader.getRows();
+-    return rows.map((row) => (row[0] as string).split(SEPARATOR));
++    return rows.filter(row=>!isNativeExecutorAnchorKey(row[0] as string)).map((row) => (row[0] as string).split(SEPARATOR));
+   }
+ 
+   /**
+@@ -729,30 +948,34 @@
+    * Extracts the first path segment (hive) from each key entirely in SQL.
+    */
+   public async getPersistedHives(): Promise<string[]> {
++    this.#ordinaryAnchorIdle();
+     const reader = await this.#mConnection.runAndReadAll(
+       `SELECT DISTINCT
+          CASE WHEN INSTR(key, '${SEPARATOR}') > 0
+            THEN SUBSTR(key, 1, INSTR(key, '${SEPARATOR}') - 1)
+            ELSE key
+          END AS hive
+-       FROM ${this.#mAlias}.kv`,
++       FROM ${this.#mAlias}.kv WHERE key IS NULL OR (key <> $1 AND NOT starts_with(key,$2))`,
++      [NATIVE_EXECUTOR_ANCHOR_KEY,NATIVE_EXECUTOR_ANCHOR_KEY+SEPARATOR],
+     );
+     const rows = reader.getRows();
+-    return rows.map((row) => row[0] as string);
++    return rows.filter(row=>!isNativeExecutorAnchorKey(row[0] as string)).map((row) => row[0] as string);
+   }
+ 
+   public async getAllKVs(prefix?: string): Promise<Array<{ key: string[]; value: string }>> {
++    this.#ordinaryAnchorIdle();
++    if (prefix !== undefined && (typeof prefix !== "string" || isNativeExecutorAnchorKey(prefix))) throw this.#anchorHold();
+     let reader: DuckDBResultReader;
+     if (prefix === undefined) {
+-      reader = await this.#mConnection.runAndReadAll(`SELECT key, value FROM ${this.#mAlias}.kv`);
++      reader = await this.#mConnection.runAndReadAll(`SELECT key, value FROM ${this.#mAlias}.kv WHERE key IS NULL OR (key <> $1 AND NOT starts_with(key,$2))`, [NATIVE_EXECUTOR_ANCHOR_KEY,NATIVE_EXECUTOR_ANCHOR_KEY+SEPARATOR]);
+     } else {
+       reader = await this.#mConnection.runAndReadAll(
+-        `SELECT key, value FROM ${this.#mAlias}.kv WHERE starts_with(key, $1)`,
+-        [`${prefix}${SEPARATOR}`],
++        `SELECT key, value FROM ${this.#mAlias}.kv WHERE starts_with(key, $1) AND key <> $2 AND NOT starts_with(key,$3)`,
++        [`${prefix}${SEPARATOR}`,NATIVE_EXECUTOR_ANCHOR_KEY,NATIVE_EXECUTOR_ANCHOR_KEY+SEPARATOR],
+       );
+     }
+     const rows = reader.getRows();
+-    return rows.map((row) => ({
++    return rows.filter(row=>!isNativeExecutorAnchorKey(row[0] as string)).map((row) => ({
+       key: (row[0] as string).split(SEPARATOR),
+       value: row[1] as string,
+     }));
+@@ -760,6 +983,8 @@
+ 
+   public async setItem(statePath: string[], newState: string | null): Promise<void> {
+     return this.nativeBackendIntent("write", async () => {
++      const key = nativeExecutorKey(statePath);
++      if (newState !== null && typeof newState !== "string") throw this.#anchorHold();
+       // No internal BEGIN/COMMIT here. The previous implementation issued
+       // three statements (SELECT-then-UPDATE-or-INSERT) and self-wrapped in a
+       // transaction to keep them atomic against concurrent writers to the
+@@ -774,7 +999,7 @@
+       // and Application.importBackup).
+       await this.timedWrite("setItem", 1, () =>
+         this.#mConnection.run(`INSERT INTO ${this.#mAlias}.kv VALUES ($1, $2)`, [
+-          statePath.join(SEPARATOR),
++          key,
+           newState,
+         ]),
+       );
+@@ -792,7 +1017,7 @@
+   // cannot contain `###` except as a separator.
+   public async removeItem(statePath: string[]): Promise<void> {
+     return this.nativeBackendIntent("write", async () => {
+-      const key = statePath.join(SEPARATOR);
++      const key = nativeExecutorKey(statePath);
+       await this.timedWrite("removeItem", 1, () =>
+         this.#mConnection.run(
+           `DELETE FROM ${this.#mAlias}.kv WHERE key = $1 OR starts_with(key, $2)`,
+@@ -810,17 +1035,27 @@
+    */
+   public async bulkSetItem(items: ReadonlyArray<{ key: string[]; value: string }>): Promise<void> {
+     return this.nativeBackendIntent("write", async () => {
+-      if (items.length === 0) {
++      if (!Array.isArray(items) || nativeRegistrationTypes.isProxy(items)) throw this.#anchorHold();
++      const captured: Array<{key:string;value:string}> = [];
++      for (let index=0;index<items.length;index++) {
++        const element=Object.getOwnPropertyDescriptor(items,String(index));
++        const item: unknown=element !== undefined && Object.hasOwn(element,"value") ? element.value : undefined;
++        if (item === null || typeof item !== "object" || nativeRegistrationTypes.isProxy(item)) throw this.#anchorHold();
++        const key=Object.getOwnPropertyDescriptor(item,"key"), value=Object.getOwnPropertyDescriptor(item,"value");
++        if (key === undefined || !Object.hasOwn(key,"value") || value === undefined || !Object.hasOwn(value,"value") || typeof value.value !== "string") throw this.#anchorHold();
++        captured.push({key:nativeExecutorKey(key.value),value:value.value});
++      }
++      if (captured.length === 0) {
+         return;
+       }
+       // Build "VALUES ($1, $2), ($3, $4), ..." with positional params.
+       const placeholders: string[] = [];
+       const params: string[] = [];
+-      for (const [i, item] of items.entries()) {
++      for (const [i, item] of captured.entries()) {
+         placeholders.push(`($${2 * i + 1}, $${2 * i + 2})`);
+-        params.push(item.key.join(SEPARATOR), item.value);
+-      }
+-      await this.timedWrite("bulkSetItem", items.length, () =>
++        params.push(item.key, item.value);
++      }
++      await this.timedWrite("bulkSetItem", captured.length, () =>
+         this.#mConnection.run(
+           `INSERT INTO ${this.#mAlias}.kv VALUES ${placeholders.join(", ")}`,
+           params,
+@@ -838,19 +1073,26 @@
+    */
+   public async bulkRemoveItem(keys: ReadonlyArray<string[]>): Promise<void> {
+     return this.nativeBackendIntent("write", async () => {
+-      if (keys.length === 0) {
++      if (!Array.isArray(keys) || nativeRegistrationTypes.isProxy(keys)) throw this.#anchorHold();
++      const captured:string[]=[];
++      for (let index=0;index<keys.length;index++) {
++        const entry=Object.getOwnPropertyDescriptor(keys,String(index));
++        if (entry === undefined || !Object.hasOwn(entry,"value")) throw this.#anchorHold();
++        captured.push(nativeExecutorKey(entry.value));
++      }
++      if (captured.length === 0) {
+         return;
+       }
+       const clauses: string[] = [];
+       const params: string[] = [];
+-      for (const [i, keyParts] of keys.entries()) {
++      for (const [i, keyParts] of captured.entries()) {
+         const exact = 2 * i + 1;
+         const prefix = 2 * i + 2;
+         clauses.push(`key = $${exact} OR starts_with(key, $${prefix})`);
+-        const key = keyParts.join(SEPARATOR);
++        const key = keyParts;
+         params.push(key, `${key}${SEPARATOR}`);
+       }
+-      await this.timedWrite("bulkRemoveItem", keys.length, () =>
++      await this.timedWrite("bulkRemoveItem", captured.length, () =>
+         this.#mConnection.run(`DELETE FROM ${this.#mAlias}.kv WHERE ${clauses.join(" OR ")}`, params),
+       );
+     });
+@@ -898,6 +1140,7 @@
+    * Returns array of {database, table, type} tuples.
+    */
+   public async getDirtyTables(): Promise<Array<{ database: string; table: string; type: string }>> {
++    this.#ordinaryAnchorIdle();
+     const reader = await this.#mConnection.runAndReadAll(
+       "SELECT * FROM level_pivot_dirty_tables()",
+     );

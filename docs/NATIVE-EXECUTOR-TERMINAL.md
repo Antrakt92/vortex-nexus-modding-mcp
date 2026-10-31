@@ -174,11 +174,12 @@ not a lock against another privileged filesystem writer.
 
 ## Main storage and first provisioning
 
-Main-state wiring remains pending. The intended storage is one fixed main-private
-KV in the actual final selected backend, excluded from renderer hydration and
-ordinary KV read/write/remove routes. Existing convenience persistence helpers
-can swallow errors; they cannot acknowledge this transition. The implementation
-needs a strict transaction and exact readback on the source-owned backend.
+Main-state transition coordination remains pending. The prepared
+[main-private storage](NATIVE-EXECUTOR-ANCHOR.md) provides one fixed KV in the
+actual final selected backend, excluded from renderer hydration and ordinary KV
+read/write/remove routes. Its owned transaction and exact readback replace the
+convenience helpers for this boundary; those helpers can swallow errors.
+Application startup, provisioning and coordinator ordering are not connected yet.
 
 First provisioning must explicitly require an absent anchor and exclusively
 create a new fixed journal root. Any existing unanchored root, failed publication
