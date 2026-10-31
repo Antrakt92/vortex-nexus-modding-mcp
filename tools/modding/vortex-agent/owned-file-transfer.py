@@ -191,6 +191,20 @@ def _hash(handle, size):
     return result.hexdigest()
 
 
+def _hash_pair(handle, size):
+    """One held-handle pass; MD5 is association evidence, never authentication."""
+    _seek(handle)
+    sha256, md5, remaining = hashlib.sha256(), hashlib.md5(), size
+    while remaining:
+        data = _read(handle, min(remaining, CHUNK_BYTES))
+        _need(data, 'SIZE_MISMATCH')
+        sha256.update(data)
+        md5.update(data)
+        remaining -= len(data)
+    _need(not _read(handle, 1), 'SIZE_MISMATCH')
+    return sha256.hexdigest(), md5.hexdigest()
+
+
 class _HandlePool:
     def __init__(self):
         self.lock = threading.Lock()
@@ -515,7 +529,7 @@ class ArchiveTempLease(_HandleCustody):
     """
     def __init__(self, binding, archive_parent, archive_parent_identity, archive_leaf,
                  archive_identity, expected_size, expected_sha256,
-                 temp_parent, temp_parent_identity, temp_leaf):
+                 temp_parent, temp_parent_identity, temp_leaf, *, expected_md5=None):
         _need(os.name == 'nt', 'UNSUPPORTED_PLATFORM')
         _need(_abi(), 'UNSUPPORTED_ABI')
         fields = {'operationId': r'op_[a-f0-9]{32}', 'nativeJobId': r'exec_[a-f0-9]{32}',
@@ -535,7 +549,9 @@ class ArchiveTempLease(_HandleCustody):
         _need(not inside(archive_path, temp_path) and not inside(temp_path, archive_path), 'ROOT_OVERLAP')
         _need(type(expected_size) is int and 0 <= expected_size <= 64 * 1024 * 1024
               and type(expected_sha256) is str and re.fullmatch(r'[a-f0-9]{64}', expected_sha256), 'INVALID_PROOF')
-        self._size, self._sha = expected_size, expected_sha256
+        _need(expected_md5 is None or (type(expected_md5) is str
+              and re.fullmatch(r'[a-f0-9]{32}', expected_md5)), 'INVALID_PROOF')
+        self._size, self._sha, self._md5 = expected_size, expected_sha256, expected_md5
         self._init_custody()
         self._attempted = self._acquired = self._poisoned = self._closed = False
         self._archive_handle = self._temp_handle = None
@@ -601,9 +617,13 @@ class ArchiveTempLease(_HandleCustody):
                 parent = self._existing_root(self._archive_parent, self._archive_parent_pin)
                 archive, observed = self._open(parent, self._archive_leaf, False)
                 self._archive_handle = archive
-                _need(observed[0] == self._archive_pin and observed[1] == self._size
-                      and _hash(archive, self._size) == self._sha
-                      and _snapshot(archive, False) == observed, 'ARCHIVE_MISMATCH')
+                _need(observed[0] == self._archive_pin and observed[1] == self._size, 'ARCHIVE_MISMATCH')
+                if self._md5 is None:
+                    matches = _hash(archive, self._size) == self._sha
+                else:
+                    sha256, md5 = _hash_pair(archive, self._size)
+                    matches = sha256 == self._sha and md5 == self._md5
+                _need(matches and _snapshot(archive, False) == observed, 'ARCHIVE_MISMATCH')
                 self._archive_snapshot = observed
                 temp_parent = self._existing_root(self._temp_parent, self._temp_parent_pin)
                 temp, observed_temp = self._open(temp_parent, self._temp_leaf, True, create=True)

@@ -14,7 +14,7 @@ const diff=[{type:'set',path:['ordinary'],value:1}];
 
 export async function createMainAnchorFixture(t,options={}) {
   const f=await createAnchorFixture(t,{...options,unreserved:true});
-  const Main=execute(prepared(mainStages),'ReduxPersistorIPC',{
+  const Main=execute(prepared([...mainStages,...(options.extraMainStages??[])]),'ReduxPersistorIPC',{
     LevelPersist:f.types.LevelPersist,
     snapshotNativeNewModRegistration:f.types.snapshotNativeNewModRegistration,
     snapshotNativeTrackedModRegistration:f.types.snapshotNativeTrackedModRegistration,

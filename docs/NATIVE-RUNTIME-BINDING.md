@@ -54,7 +54,9 @@ an operating-system source lease or protection against privileged modification.
 Source tests and a main build do not prove installed Electron loading or a
 successful native mod installation.
 
-The actual coordinator still needs exclusive initialization, a verified pending
+The [main-owned initialization bridge](NATIVE-EXECUTOR-GENESIS.md) provisions and
+persists the first empty census under genuine ownership. The actual coordinator
+still needs a verified pending
 anchor before Python START, registration and renderer adoption, joined worker
 closure, and a terminal anchor update. Known pre-START cancellation also needs
 its own proved terminal transition. Local ZIP import remains a separate missing

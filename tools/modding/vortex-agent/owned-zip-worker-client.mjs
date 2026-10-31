@@ -129,6 +129,23 @@ function createWorker(requestBytes, archiveBindingBytes, staging) {
     && name.split('/').length <= 32 && name.split('/').every(nativeComponent)), 'UNSUPPORTED_PAYLOAD');
   const requestSHA256 = dispatch.dispatchRequestDigest(Buffer.from(JSON.stringify(request)));
   const archive = archiveValue(archiveBindingBytes, request);
+  let archiveParentPins = null;
+  function checkArchiveContext() {
+    const canonical = value => path.win32.resolve(value).replaceAll('\\','/').toLowerCase();
+    need(canonical(archive.parent) === canonical(request.plan.context.downloadPath), 'ARCHIVE_CONTEXT_MISMATCH');
+    const current = scopeIO.ancestry(archive.parent);
+    need(current, 'ARCHIVE_CONTEXT_MISMATCH');
+    if (archiveParentPins !== null) scopeIO.sameAncestry(archive.parent, archiveParentPins);
+    const before = fs.lstatSync(archive.parent, {bigint:true});
+    // Node dev:ino and native volumeSerialNumber:fileId are separate domains.
+    // The full native identity remains untouched for the Python held-handle check.
+    need(before.isDirectory() && !before.isSymbolicLink()
+      && `${before.dev}:${before.ino}` === request.plan.context.filesystemIds.downloadPath, 'ARCHIVE_CONTEXT_MISMATCH');
+    scopeIO.sameAncestry(archive.parent, current);
+    need(generation(fs.lstatSync(archive.parent, {bigint:true})) === generation(before), 'ARCHIVE_CONTEXT_MISMATCH');
+    if (archiveParentPins === null) archiveParentPins = current;
+  }
+  if (staging) checkArchiveContext();
   const binding = Object.freeze({operationId: request.operationId, nativeJobId: request.nativeJobId,
     requestSHA256, rendererGeneration: request.rendererGeneration});
   const bindingEqual = value => exact(value, Object.keys(binding)) && Object.keys(binding).every(k => value[k] === binding[k]);
@@ -352,6 +369,7 @@ function createWorker(requestBytes, archiveBindingBytes, staging) {
       try {
         const anchor = anchored ? copyAnchor(anchorBytes) : null;
         runtime(); expectedSources = sources();
+        if (staging) checkArchiveContext();
         child = spawn(PYTHON, ['-I', '-S', '-B', path.join(HERE, 'owned-zip-worker.py')], {
           cwd: HERE, env: {SystemRoot: process.env.SystemRoot}, windowsHide: true, stdio: ['pipe','pipe','pipe'],
         });
@@ -387,7 +405,8 @@ function createWorker(requestBytes, archiveBindingBytes, staging) {
           await abortPreparedInert(); throw error('CANCELLED_BEFORE_START');
         }
         const packet = {schema: staging ? 'owned-zip-worker-start/2' : 'owned-zip-worker-start/1', workerLifetime: ready.workerLifetime,
-          binding, archive, payload: request.plan.package.payload, total: request.plan.package.expectedUncompressedBytes,
+          binding, archive: staging ? {...archive, md5:request.plan.package.md5} : archive,
+          payload: request.plan.package.payload, total: request.plan.package.expectedUncompressedBytes,
           ...(staging ? {destination} : {})};
         const bytes = Buffer.from(JSON.stringify(packet)); need(bytes.length+1 <= START_MAX, 'START_LIMIT');
         packetSHA256 = sha(bytes);
@@ -443,6 +462,7 @@ function createWorker(requestBytes, archiveBindingBytes, staging) {
           && inventory.observedRootId === t.rootId && inventory.observedInventorySHA256 === t.inventorySHA256,'JOURNAL_CHANGED');
         scopeIO.ancestry(WORK_BASE);
       }
+      if (staging) checkArchiveContext();
       need(!cancelAttempted && !releaseAttempted && !firstError && sha(Buffer.from(JSON.stringify(preparedPacket))) === packetSHA256,'START_PREPARED_REFUSED');
       const lastObservation = terminal?.read();
       need(lastObservation?.spawnObserved && !lastObservation.exitObserved && !lastObservation.closeObserved && !lastObservation.childErrorObserved && !lastObservation.held && !lastObservation.childResourcesClosed,'CUSTODY_LOST');

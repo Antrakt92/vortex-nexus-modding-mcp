@@ -145,13 +145,15 @@ class Transport:
                  and destination['leaf'] == self.prepared_destination['leaf'], 'DESTINATION_BINDING_MISMATCH')
             self.base._identity(destination['parentIdentity'])
         archive = value['archive']
-        need(exact(archive, ('parent', 'parentIdentity', 'leaf', 'identity', 'bytes', 'sha256')), 'ARCHIVE_REFUSED')
+        need(exact(archive, ('parent', 'parentIdentity', 'leaf', 'identity', 'bytes', 'sha256', 'md5') if staging
+                   else ('parent', 'parentIdentity', 'leaf', 'identity', 'bytes', 'sha256')), 'ARCHIVE_REFUSED')
         self.base._root(archive['parent'])
         self.base._component(archive['leaf'])
         self.base._identity(archive['parentIdentity'])
         self.base._identity(archive['identity'])
         need(type(archive['bytes']) is int and 0 < archive['bytes'] <= 64*1024*1024
-             and type(archive['sha256']) is str and re.fullmatch(r'[a-f0-9]{64}', archive['sha256']), 'ARCHIVE_REFUSED')
+             and type(archive['sha256']) is str and re.fullmatch(r'[a-f0-9]{64}', archive['sha256'])
+             and (not staging or (type(archive['md5']) is str and re.fullmatch(r'[a-f0-9]{32}', archive['md5']))), 'ARCHIVE_REFUSED')
         need(type(value['payload']) is dict and 0 < len(value['payload']) <= 4096
              and type(value['total']) is int and 0 <= value['total'] <= 256*1024*1024, 'PAYLOAD_REFUSED')
         for name, digest in value['payload'].items():
@@ -367,7 +369,8 @@ class Worker:
         archive = value['archive']
         self.lease = self.base.ArchiveTempLease(self.binding, archive['parent'], archive['parentIdentity'],
              archive['leaf'], archive['identity'], archive['bytes'], archive['sha256'],
-             str(self.work_root), self.op_identity, 'Extract')
+             str(self.work_root), self.op_identity, 'Extract',
+             expected_md5=archive['md5'] if self.destination_mode else None)
         self.lease._pool.owners.remove(self.lease)
         self.lease._pool = self.guard._pool
         self.guard._pool.owners.append(self.lease)

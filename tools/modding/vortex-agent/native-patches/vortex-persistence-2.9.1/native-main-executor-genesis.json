@@ -1,0 +1,28 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/main/src/store/mainPersistence.ts",
+  "originalSourceSHA256": "7d3e28cb829914fb092774eca3fc357645fa7ef508177d1a0e3b32eed58f05fe",
+  "inputSHA256": "16102503e103e9d9b43871cbd762f21363be4d57b5cdf7eb51f7e04c2d3ae12e",
+  "outputSHA256": "cdeb90fba95101071dd1ade1cf9cd051707e652efc452599931bbcfc8225b353",
+  "patchSHA256": "56879d2888d0b2d7956825cfbac4451c4c4986c4969077a689c48c1c527defba",
+  "prerequisitePatch": "native-main-executor-startup.patch",
+  "prerequisitePatchSHA256": "590ad8de5741288ead4224589d3e540be9f02fee3bf6b12c8e1401dd1690d369",
+  "requiredCompanionPatch": "native-main-executor-hold.patch",
+  "requiredCompanionPatchSHA256": "de555f56499c59bb63a529c4ac60631a98f2bbcc03b86a5df5173c8dcc7b5968",
+  "requiredCompanionOutputSHA256": "e0e03cf5c7a47d32b61bc53ffe1290a46e8078beccfe8bb0109e91423db8f635",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "installationPermit": false,
+  "powerLossPersistenceVerified": false,
+  "startupGateSupported": false,
+  "limitations": [
+    "Main-owned genesis observation only; no START, pending transition, relay frame or installer endpoint.",
+    "A separately validated existing ordinary journal parent is required; unknown or preexisting roots are never adopted.",
+    "Opaque returned identity is retained in memory only; no restart or remote authority is inferred.",
+    "Source closures remain point observations and preserve process-first-load assumptions."
+  ]
+}

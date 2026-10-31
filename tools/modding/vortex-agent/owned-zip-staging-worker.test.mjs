@@ -34,6 +34,45 @@ b=p.read_bytes()
 print(json.dumps({'archive':{'parent':str(p.parent),'parentIdentity':identity(p.parent),'leaf':p.name,'identity':identity(p),'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest()},'payload':payload,'total':total,'md5':hashlib.md5(b).hexdigest(),'stagingIdentity':identity(r/'synthetic-staging')}))
 `;
 
+function archiveGuardFixture() {
+  const roots={gamePath:'C:/own-guard-game',stagingPath:'C:/own-guard-stage',downloadPath:'C:/own-guard-downloads'};
+  const plan={schema:'install-job-plan/1',family:'tracked-new-disabled',contractId:job.CONTRACT_ID,
+    context:{gameId:'cyberpunk2077',profileId:'archive-guard',...roots,filesystemIds:{gamePath:'1:1',stagingPath:'1:2',downloadPath:'1:3'}},
+    package:{downloadId:'own-archive',fileName:'own.zip',expectedModId:'own',expectedType:'',bytes:32,sha256:'a'.repeat(64),md5:'b'.repeat(32),expectedUncompressedBytes:1,payload:{'a.txt':'c'.repeat(64)}},
+    evidence:{buildSHA256:'d'.repeat(64),sourceSHA256:'e'.repeat(64),nativeAdmissionSHA256:'f'.repeat(64)},options:{enabled:false,deploy:false}};
+  const request={schema:'native-dispatch-request/1',contractId:dispatch.CONTRACT_ID,operationId:'op_'+nonce(),nativeJobId:'exec_'+nonce(),
+    planId:job.installPlanId(plan),managerScope:'manager-archive-guard-1',rendererGeneration:'renderer_'+nonce(),admissionSHA256:'f'.repeat(64),plan};
+  const archive={parent:roots.downloadPath,parentIdentity:{schema:'win-file-id128/1',volumeSerialNumber:'1',fileId:'3'},
+    leaf:'own.zip',identity:{schema:'win-file-id128/1',volumeSerialNumber:'1',fileId:'4'},bytes:32,sha256:'a'.repeat(64)};
+  return{request,archive};
+}
+test('staging archive parent and independent Node identity bind before spawn without coercing native identity',()=>{
+  const names=['mkdirSync','writeFileSync','openSync','linkSync','lstatSync','readFileSync'];
+  const originals=new Map(names.map(n=>[n,fs[n]])),spawn=childProcess.spawn;let effects=0,reads=0;
+  const refuse=()=>{effects++;throw Error('Unexpected archive guard IO');};
+  for(const name of names)fs[name]=refuse;
+  // Controlled read-only Node stat domain, deliberately different from native64.
+  fs.lstatSync=()=>{reads++;return{dev:1n,ino:3n,size:0n,mtimeNs:1n,ctimeNs:1n,nlink:1n,isDirectory:()=>true,isSymbolicLink:()=>false};};
+  childProcess.spawn=refuse;syncBuiltinESMExports();
+  try{
+    const wrongPath=archiveGuardFixture();wrongPath.archive.parent='C:/another-downloads';
+    assert.throws(()=>sdk.createOwnedStagingZipWorker(encode(wrongPath.request),encode(wrongPath.archive)),/ARCHIVE_CONTEXT_MISMATCH/);assert.equal(reads,0);
+    for(const nodeId of ['1:5','2:3']){
+      const input=archiveGuardFixture();input.request.plan.context.filesystemIds.downloadPath=nodeId;input.request.planId=job.installPlanId(input.request.plan);
+      assert.equal(sdk.createOwnedZipWorker(encode(input.request),encode(input.archive)).status().startAttempted,false,'Scratch legacy remains admitted but inert');
+      assert.throws(()=>sdk.createOwnedStagingZipWorker(encode(input.request),encode(input.archive)),/ARCHIVE_CONTEXT_MISMATCH/);
+      assert.equal(effects,0);
+    }
+    const canonical=archiveGuardFixture();canonical.archive.parent='c:\\OWN-GUARD-DOWNLOADS';
+    canonical.archive.parentIdentity.volumeSerialNumber='6967734032932866884';canonical.archive.parentIdentity.fileId=(2n**100n+3n).toString();
+    assert.equal(sdk.createOwnedStagingZipWorker(encode(canonical.request),encode(canonical.archive)).status().startAttempted,false);
+    assert.equal(canonical.archive.parentIdentity.volumeSerialNumber,'6967734032932866884');assert.equal(canonical.archive.parentIdentity.fileId,(2n**100n+3n).toString());
+    const external=archiveGuardFixture();external.archive.md5=external.request.plan.package.md5;
+    assert.throws(()=>sdk.createOwnedStagingZipWorker(encode(external.request),encode(external.archive)),/INVALID_ARCHIVE/);
+    assert.equal(effects,0);
+  }finally{for(const [name,fn]of originals)fs[name]=fn;childProcess.spawn=spawn;syncBuiltinESMExports();}
+});
+
 function fixture() {
   fs.mkdirSync(path.join(TASK, 'tests'), {recursive: true});
   const root = path.join(TASK, 'tests', 'run-'+nonce());
@@ -177,6 +216,40 @@ ownTest('v2-incompatible mod and archive IDs refuse before any SDK child spawn o
     assert.deepEqual(fs.readdirSync(input.request.plan.context.stagingPath), []);
   }
 }));
+
+ownTest('actual native64 and Node identities stay separate while wrong path or Node context remains inert',async()=>capture(async children=>{
+  for(const change of [input=>{input.value.archive.parent=path.join(input.root,'other-archives');},
+    input=>{input.request.plan.context.filesystemIds.downloadPath='1:3';input.request.planId=job.installPlanId(input.request.plan);}]){
+    const input=fixture(),before=sha(fs.readFileSync(path.join(input.value.archive.parent,input.value.archive.leaf)));
+    change(input);input.archive=encode(input.value.archive);
+    assert.throws(()=>factory(input),/ARCHIVE_CONTEXT_MISMATCH/);assert.equal(children.length,0);
+    assert.equal(fs.existsSync(input.target),false);
+    assert.equal(sha(fs.readFileSync(path.join(input.request.plan.context.downloadPath,input.value.archive.leaf))),before);
+  }
+  const actual=fixture(),node=fs.lstatSync(actual.request.plan.context.downloadPath,{bigint:true});
+  assert.equal(`${node.dev}:${node.ino}`,actual.request.plan.context.filesystemIds.downloadPath);
+  assert.notEqual(actual.value.archive.parentIdentity.volumeSerialNumber,String(node.dev),'This real NTFS volume reproduces the distinct full-native64/Node-dev domains');
+  assert.equal(factory(actual).status().startAttempted,false);assert.equal(children.length,0);
+}));
+
+ownTest('correct SHA with wrong plan MD5 or full native parent identity holds before Extract or target creation',async t=>{
+ for(const kind of ['md5','native-parent']){
+  const input=fixture(),file=path.join(input.value.archive.parent,input.value.archive.leaf),before=sha(fs.readFileSync(file));
+  const actualMD5=input.request.plan.package.md5;
+  if(kind==='md5'){input.request.plan.package.md5=(actualMD5[0]==='0'?'1':'0')+actualMD5.slice(1);input.request.planId=job.installPlanId(input.request.plan);assert.notEqual(input.request.plan.package.md5,actualMD5);}
+  else{input.value.archive.parentIdentity.volumeSerialNumber=input.value.archive.parentIdentity.volumeSerialNumber==='1'?'2':'1';input.archive=encode(input.value.archive);}
+  assert.equal(input.value.archive.sha256,before);
+  const worker=owner(t,input);await worker.start();await worker.waitFor('held',15000);
+  const state=worker.status();assert.equal(state.phase,'held');assert.equal(state.startSent,true);
+  assert.equal(fs.existsSync(input.target),false);assert.equal(typeof state.worker.workRoot,'string');
+  assert.equal(fs.existsSync(state.worker.workRoot),true);assert.equal(fs.existsSync(path.join(state.worker.workRoot,'Extract')),false);
+  if(kind==='md5'){let opened,blocked=false;try{opened=fs.openSync(file,'r+');}catch{blocked=true;}finally{if(opened!==undefined)fs.closeSync(opened);}
+    assert.equal(blocked,true,'The failed MD5 archive lease retains custody until explicit cancellation/release');}
+  assert.equal(sha(fs.readFileSync(file)),before);stillHeld(worker);await assert.rejects(async()=>worker.copyProof());
+  await worker.cancel();await worker.release();stillHeld(worker);
+  assert.equal(fs.existsSync(state.worker.workRoot),true);assert.equal(fs.existsSync(input.target),false);
+ }
+});
 
 ownTest('wrong Node context identity refuses before a final destination can be created', async t => {
   const input = fixture(); input.request.plan.context.filesystemIds.stagingPath = '1:1';
