@@ -1,0 +1,202 @@
+--- a/src/renderer/src/store/persistDiffMiddleware.ts
++++ b/src/renderer/src/store/persistDiffMiddleware.ts
+@@ -6,6 +6,9 @@
+  * Instead, the renderer owns the store and sends only the changed portions to main
+  * for persistence to LevelDB.
+  */
++
++import { createHash as nativeAdoptionHash } from "node:crypto";
++import { types as nativeAdoptionTypes } from "node:util";
+ 
+ import { getErrorMessageOrDefault } from "@vortex/shared";
+ import type { DiffOperation, PersistenceBatch } from "@vortex/shared/ipc";
+@@ -179,6 +182,121 @@
+   return packet;
+ }
+ 
++
++// Private source-bound coordinator transition only: data is not remote commit authority.
++interface NativeAdoptionData { gameId: string; modId: string; archiveId: string; recordJSON: string;
++  record: Record<string, any>; projectionSHA256: string; archiveSHA256: string; }
++interface NativeAdoptionTicket { rootOwner: object; store: object; getState: unknown; flushOwner: object;
++  controller: NativePersistenceHoldController; data: NativeAdoptionData;
++  phase: "prepared" | "dispatching" | "consumed" | "completed" | "held"; }
++const nativeAdoptions = new WeakMap<object, NativeAdoptionTicket>();
++const nativeAdoptionDigest = (value: string) => nativeAdoptionHash("sha256").update(value).digest("hex");
++const nativeAdoptionError = () => new Error("NATIVE_RENDERER_ADOPTION_HELD");
++const nativeAdoptionConsumed = (ticket: NativeAdoptionTicket): boolean => ticket.phase === "consumed";
++function nativeAdoptionOwn(value: any, key: string): any {
++  if (value === null || typeof value !== "object" || nativeAdoptionTypes.isProxy(value)) throw nativeAdoptionError();
++  const d = Object.getOwnPropertyDescriptor(value, key);
++  if (d === undefined || !("value" in d) || !d.enumerable) throw nativeAdoptionError();
++  return d.value;
++}
++function nativeAdoptionCopy(value: any, depth = 0, budget = { nodes: 0 }): any {
++  if (++budget.nodes > 256 || depth > 8) throw nativeAdoptionError();
++  if (value === null || typeof value === "boolean") return value;
++  if (typeof value === "string") { if (value.length > 16384) throw nativeAdoptionError(); return value; }
++  if (typeof value === "number" && Number.isFinite(value)) return value;
++  if (typeof value !== "object" || nativeAdoptionTypes.isProxy(value)) throw nativeAdoptionError();
++  const proto = Object.getPrototypeOf(value);
++  if (proto !== null && nativeAdoptionTypes.isProxy(proto)) throw nativeAdoptionError();
++  const array = Array.isArray(value), keys = Reflect.ownKeys(value);
++  if (!array && proto !== null) {
++    if (Object.getPrototypeOf(proto) !== null) throw nativeAdoptionError();
++    const c = Object.getOwnPropertyDescriptor(proto, "constructor");
++    if (c === undefined || !("value" in c) || typeof c.value !== "function" || nativeAdoptionTypes.isProxy(c.value)
++        || Function.prototype.toString.call(c.value) !== "function Object() { [native code] }"
++        || Object.getOwnPropertyDescriptor(c.value, "prototype")?.value !== proto) throw nativeAdoptionError();
++  }
++  const result: any = array ? [] : Object.create(null);
++  if (keys.length > 64) throw nativeAdoptionError();
++  for (const key of keys) {
++    if (array && key === "length") continue;
++    if (typeof key !== "string" || ["__proto__", "constructor", "prototype"].includes(key)) throw nativeAdoptionError();
++    result[key] = nativeAdoptionCopy(nativeAdoptionOwn(value, key), depth + 1, budget);
++  }
++  if (array && (keys.length !== value.length + 1 || Object.keys(result).some((k, i) => k !== String(i)))) throw nativeAdoptionError();
++  return result;
++}
++function nativeAdoptionKeys(value: any, keys: string[]): void {
++  if (JSON.stringify(Object.keys(value)) !== JSON.stringify(keys)) throw nativeAdoptionError();
++}
++function nativeAdoptionParse(bytes: string): NativeAdoptionData {
++  if (typeof bytes !== "string" || bytes.length > 32768 || Buffer.byteLength(bytes) > 32768) throw nativeAdoptionError();
++  const o = JSON.parse(bytes);
++  if (JSON.stringify(o) !== bytes) throw nativeAdoptionError();
++  nativeAdoptionKeys(o, ["schema", "operationId", "nativeJobId", "requestSHA256", "recordSHA256", "recordJSON", "fullRecordSHA256",
++    "commitObserved", "readbackVerified", "trackedAssociationVerified", "trackedInstallComplete", "effectsAllowed", "installationPermit", "powerLossPersistenceVerified"]);
++  if (o.schema !== "native-tracked-mod-registration-observed/2" || !/^op_[a-f0-9]{32}$/.test(o.operationId)
++      || !/^exec_[a-f0-9]{32}$/.test(o.nativeJobId) || !/^[a-f0-9]{64}$/.test(o.requestSHA256)
++      || o.commitObserved !== true || o.readbackVerified !== true || o.trackedAssociationVerified !== true
++      || o.trackedInstallComplete !== false || o.effectsAllowed !== false || o.installationPermit !== false || o.powerLossPersistenceVerified !== false
++      || typeof o.recordJSON !== "string" || o.recordJSON.length > 16384 || nativeAdoptionDigest(o.recordJSON) !== o.fullRecordSHA256) throw nativeAdoptionError();
++  const record = JSON.parse(o.recordJSON); if (JSON.stringify(record) !== o.recordJSON) throw nativeAdoptionError();
++  nativeAdoptionKeys(record, ["id", "state", "type", "installationPath", "archiveId", "attributes"]);
++  const id = (s: unknown) => typeof s === "string" && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(s) && !["__proto__", "constructor", "prototype"].includes(s);
++  if (!id(record.id) || !id(record.archiveId) || record.installationPath !== record.id || record.state !== "installed" || record.type !== ""
++      || /[. ]$/.test(record.id) || /^(con|prn|aux|nul|conin\$|conout\$|com[1-9]|lpt[1-9])(?:\.|$)/i.test(record.id)
++      || /^(__vortex|__merged)/i.test(record.id)) throw nativeAdoptionError();
++  const base = { id: record.id, state: record.state, type: record.type, installationPath: record.installationPath, archiveId: record.archiveId };
++  if (nativeAdoptionDigest(JSON.stringify(base)) !== o.recordSHA256) throw nativeAdoptionError();
++  nativeAdoptionKeys(record.attributes, ["__nmtNativeRegistration"]);
++  const m = record.attributes.__nmtNativeRegistration;
++  nativeAdoptionKeys(m, ["schema", "operationId", "nativeJobId", "requestSHA256", "planId", "payloadSHA256", "recordSHA256", "archiveId", "archiveSHA256", "downloadProjectionSHA256"]);
++  if (m.schema !== "native-tracked-mod-registration/2" || m.operationId !== o.operationId || m.nativeJobId !== o.nativeJobId
++      || m.requestSHA256 !== o.requestSHA256 || m.recordSHA256 !== o.recordSHA256 || m.archiveId !== record.archiveId
++      || ![m.planId, m.payloadSHA256, m.archiveSHA256, m.downloadProjectionSHA256].every(v => typeof v === "string" && /^[a-f0-9]{64}$/.test(v))) throw nativeAdoptionError();
++  return { gameId: "", modId: record.id, archiveId: record.archiveId, recordJSON: o.recordJSON,
++    record: nativeAdoptionCopy(record), projectionSHA256: m.downloadProjectionSHA256, archiveSHA256: m.archiveSHA256 };
++}
++export function checkNativeAdoptionRecord(value: unknown, expected: string): void {
++  if (JSON.stringify(nativeAdoptionCopy(value)) !== expected) throw nativeAdoptionError();
++}
++export function checkNativeAdoptionDownload(row: unknown, data: NativeAdoptionData, installed: boolean): void {
++  if (row === null || typeof row !== "object" || nativeAdoptionTypes.isProxy(row)) throw nativeAdoptionError();
++  if (Object.hasOwn(row, "id") && nativeAdoptionOwn(row, "id") !== data.archiveId) throw nativeAdoptionError();
++  const game = nativeAdoptionCopy(nativeAdoptionOwn(row, "game"));
++  if (!Array.isArray(game) || game.length !== 1 || game[0] !== data.gameId) throw nativeAdoptionError();
++  const projection = { id: data.archiveId, state: nativeAdoptionOwn(row, "state"), game,
++    localPath: nativeAdoptionOwn(row, "localPath"), size: nativeAdoptionOwn(row, "size"), fileMD5: nativeAdoptionOwn(row, "fileMD5"), archiveSHA256: data.archiveSHA256 };
++  if (projection.state !== "finished" || typeof projection.localPath !== "string" || projection.localPath.length > 255
++      || typeof projection.size !== "number" || !Number.isSafeInteger(projection.size) || projection.size < 1 || projection.size > 1099511627776
++      || typeof projection.fileMD5 !== "string" || !/^[a-f0-9]{32}$/.test(projection.fileMD5)) throw nativeAdoptionError();
++  if (nativeAdoptionDigest(JSON.stringify(projection)) !== data.projectionSHA256) throw nativeAdoptionError();
++  if (installed) {
++    const value = nativeAdoptionCopy(nativeAdoptionOwn(row, "installed"));
++    if (JSON.stringify(value) !== JSON.stringify({ gameId: data.gameId, modId: data.modId })) throw nativeAdoptionError();
++  } else if (Object.hasOwn(row as object, "installed")) throw nativeAdoptionError();
++}
++export function failNativePersistenceFlushAdoption(owner: object): void {
++  activeNativePersistenceHold?.failAdoption(owner);
++}
++export function createNativePersistenceAdoption(flushOwner: object, rootOwner: object, store: object, bytes: string): object {
++  if (activeNativePersistenceHold === undefined) throw nativeAdoptionError();
++  return activeNativePersistenceHold.adoption(flushOwner, rootOwner, store, bytes);
++}
++export function consumeNativePersistenceAdoption(action: object, rootOwner: object, store: object, gameId: string, modId: string): NativeAdoptionData | undefined {
++  const ticket = nativeAdoptions.get(action); if (ticket === undefined) return undefined;
++  if (ticket.phase !== "dispatching" || ticket.rootOwner !== rootOwner || ticket.store !== store || ticket.data.modId !== modId) {
++    failNativePersistenceAdoption(action); throw nativeAdoptionError();
++  }
++  ticket.data.gameId = gameId; ticket.phase = "consumed"; return ticket.data;
++}
++export function finishNativePersistenceAdoption(action: object): void {
++  const ticket = nativeAdoptions.get(action);
++  if (ticket === undefined || ticket.phase !== "completed") { failNativePersistenceAdoption(action); throw nativeAdoptionError(); }
++}
++export function failNativePersistenceAdoption(action: object): void {
++  const ticket = nativeAdoptions.get(action); if (ticket !== undefined) { ticket.phase = "held"; ticket.controller.failAdoption(ticket.flushOwner); }
++}
++
+ type PersistApi = {
+   sendDiff: (hive: PersistedHive, operations: DiffOperation[]) => void;
+   // Synchronous send used only on quit (beforeunload). It blocks until main has
+@@ -199,6 +317,8 @@
+   check: (owner: object) => void;
+   release: (owner: object) => void;
+   invalidate: () => void;
++  adoption: (owner: object, rootOwner: object, store: object, bytes: string) => object;
++  failAdoption: (owner: object) => void;
+ }
+ let activeNativePersistenceHold: NativePersistenceHoldController | undefined;
+ let nativePersistenceFactoryHeld = false;
+@@ -239,6 +359,7 @@
+   let nativeStore: MiddlewareAPI<Dispatch<AnyAction>, IState> | undefined;
+   let nativeDispatchDepth = 0;
+   let nativeControlDepth = 0;
++  const nativeAdoptionAttempted = new WeakSet<object>();
+   let nativeHold: { owner: object; phase: "pending" | "ready" | "held" | "released";
+     generation: number; store: MiddlewareAPI<Dispatch<AnyAction>, IState>; getState: unknown;
+     keys: number; units: number; hives: number; bytes: number; sizes: Map<string, Map<string, number>>; reject: (error: unknown) => void } | undefined;
+@@ -468,6 +589,24 @@
+       } finally { --nativeControlDepth; }
+     },
+     check(owner) { validateNativeHold(owner); },
++    failAdoption(owner) { if (nativeHold?.owner === owner) failNativeHold(nativeAdoptionError()); },
++    adoption(owner, rootOwner, store, bytes) {
++      const held = validateNativeHold(owner);
++      if (nativeAdoptionAttempted.has(owner)) { failNativeHold(nativeAdoptionError()); throw nativeAdoptionError(); }
++      nativeAdoptionAttempted.add(owner);
++      ++nativeControlDepth;
++      try {
++        if (nativeAdoptionTypes.isProxy(store)) throw nativeAdoptionError();
++        const descriptor = Object.getOwnPropertyDescriptor(store, "getState");
++        if (nativeAdoptionTypes.isProxy(store) || descriptor === undefined || !("value" in descriptor) || descriptor.value !== held.getState) throw nativeAdoptionError();
++        if (Reflect.apply(descriptor.value, store, []) !== previousState || nativeHoldFailed()) throw nativeAdoptionError();
++        const data = nativeAdoptionParse(bytes), action = Object.freeze({ type: "__native_owned_mod_adoption" });
++        if (nativeHoldFailed() || nativeControlDepth !== 1) throw nativeAdoptionError();
++        nativeAdoptions.set(action, { rootOwner, store, getState: held.getState, flushOwner: owner, controller: nativeController, data, phase: "prepared" });
++        return action;
++      } catch (error) { failNativeHold(error); throw error; }
++      finally { --nativeControlDepth; }
++    },
+     release(owner) {
+       const held = validateNativeHold(owner);
+       ++nativeControlDepth;
+@@ -558,6 +697,25 @@
+       nativeStore = store;
+       return (next: Dispatch<AnyAction>) =>
+     (action: AnyAction) => {
++      const adoption = nativeAdoptions.get(action);
++      if (adoption !== undefined) {
++        try {
++          validateNativeHold(adoption.flushOwner);
++          if (adoption.controller !== nativeController || adoption.phase !== "prepared" || previousState === null
++              || adoption.getState !== Object.getOwnPropertyDescriptor(store, "getState")?.value) throw nativeAdoptionError();
++          ++nativeDispatchDepth;
++          try {
++            adoption.phase = "dispatching";
++            const result = next(action);
++            if (!nativeAdoptionConsumed(adoption) || nativeHoldFailed() || nativeDispatchDepth !== 1) throw nativeAdoptionError();
++            const after = store.getState();
++            if (nativeHoldFailed() || nativeDispatchDepth !== 1) throw nativeAdoptionError();
++            previousState = after;
++            adoption.phase = "completed";
++            return result;
++          } finally { --nativeDispatchDepth; }
++        } catch (error) { failNativePersistenceAdoption(action); throw error; }
++      }
+       ++nativeDispatchDepth;
+       if (nativeHoldActive() && nativeDispatchDepth !== 1) failNativeHold(new Error("NATIVE_PERSISTENCE_HOLD_REENTRY"));
+       try {

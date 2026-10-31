@@ -1,0 +1,25 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/main/src/store/LevelPersist.ts",
+  "originalSourceSHA256": "742929670876a79c7332a13d16381cf2098ee55f57f838e3e35668853d1455a1",
+  "inputSHA256": "bf7d7295dcb15c146ffaaea33223eab964cc36c4c1fe9e34cb7b52fc1941a853",
+  "outputSHA256": "f6c7ce6f3a9f8bc8481925d4ffbba05ffd2d1ff89b81df27a417f7fb5fd6c0d5",
+  "patchSHA256": "56b23c552c435d6850bf128ac0ac92786a28dd083568c141940482520eee3bc8",
+  "prerequisitePatch": "native-owned-mod-registration.patch",
+  "prerequisitePatchSHA256": "17a96234582b17dabafab567a8a5386a0ae28b29aa9d9e7e987db3dcbf593687",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "installationPermit": false,
+  "powerLossPersistenceVerified": false,
+  "releaseSupported": false,
+  "trackedInstallComplete": false,
+  "archiveProofBindingVerified": false,
+  "limitations": [
+    "Tracked association means fixed database projection only; all digest fields remain caller claims until the coordinator binds the held archive.",
+    "No renderer adoption, payload publication, owner release, installed execution or power-loss guarantee."
+  ]
+}

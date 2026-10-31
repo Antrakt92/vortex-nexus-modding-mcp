@@ -1,0 +1,27 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/renderer/src/reducers/index.ts",
+  "originalSourceSHA256": "e59a69384003bade4d1216ee28a8347b38d27291f9b3688c82dc488c168a4e22",
+  "inputSHA256": "4824d5ec9ffb9e768835d430e043e47b91d8e52cc18c2d9f1272c099e4d730c9",
+  "outputSHA256": "b38465930bedaeb68abe68a1e5e2e6fe51ad27c68033c66474a002bcf8d20a92",
+  "patchSHA256": "1a8ccc4909c2ed0fd024de8b1ab1d3110db4a60240d4bf6b0907fefce1c13b06",
+  "prerequisitePatch": "renderer-store-binding.patch",
+  "prerequisitePatchSHA256": "f4ed4c4e7ae11b5f98a0c7c46ea0077956c444eedd905bfcbc29e430e3469a3e",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "installationPermit": false,
+  "powerLossPersistenceVerified": false,
+  "releaseSupported": false,
+  "limitations": [
+    "Internal exact renderer adoption only; v2 data is not authenticated main commit authority. Future source-bound coordinator must verify commit before minting.",
+    "Main/SQL/backend release and renderer target release are not implemented; renderer flush remains held.",
+    "Trusted Redux/enhancer integration, not arbitrary privileged JavaScript isolation."
+  ],
+  "requiredCompanionPatch": "renderer-persistence-adoption.patch",
+  "requiredCompanionPatchSHA256": "d5b46a4219cc4d322701c161002748341ceb320c28dc0a0944e85d4b7e32b1d0",
+  "requiredCompanionOutputSHA256": "56862197cee81144c886bdce89e1fb9fe3c1b4ff8b5e2d879205531967621788"
+}

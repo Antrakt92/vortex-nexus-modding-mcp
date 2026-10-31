@@ -1,6 +1,6 @@
 # Assemble the reviewed Vortex source patches
 
-`native-source-series.mjs` applies the fixed sequence of 64 reviewed patches to
+`native-source-series.mjs` applies the fixed sequence of 68 reviewed patches to
 24 original files from Vortex `v2.9.1`, commit
 `c80326367cbe6d96621ad6cf4a5488ef49bac110`. It replaces manually composing separate
 patch chains before compilation. It does not change an installed application or
@@ -35,7 +35,7 @@ match the pinned series. Patch application requires exact offsets and context;
 it has no fuzzy matching or hash-refresh mode.
 
 The fixed graph combines the 32-patch mod-management/transfer packet with the
-32-patch persistence packet. The latter includes renderer target admission and
+36-patch persistence packet. The latter includes renderer target admission and
 acknowledged diffs, main/preload/shared IPC, backend reservations and managed SQL
 ownership. Both runtime packet directories have separate closed inventories;
 test-only adapters are excluded. A cross-file companion must already have been
@@ -378,3 +378,35 @@ remained absent.
 This qualifies minimal database registration, not the complete tracked install.
 Archive association, filesystem custody, renderer adoption, durable recovery and
 release remain separate [registration gates](NATIVE-ADOPTION-BOUNDARY.md#next-implementation-gates).
+
+## Tracked registration and renderer adoption — 31 October 2026
+
+The 68-patch recipe extends the fixed Level/main registration path and adds
+renderer adoption in the root reducer and persistence middleware. The runtime
+packets contain 32 lifecycle and 36 persistence patch pairs. All 24 assembled
+outputs match the qualified source tree.
+
+The combined affected suite passed 291 cases without skips. Ten separate cases
+ran the patched Level method against fresh own LevelDB directories: nominal
+registration, matching optional download ID, changed metadata, an existing
+installed marker, a disabled profile reference, duplicate download hash/name,
+another mod's archive reference, rollback after INSERT, and a lost COMMIT reply.
+The final case retained the committed rows while refusing replay. SQL ownership
+was facaded; these cases did not construct the full Vortex runtime.
+
+Main TypeScript, direct build and all 52 upstream tests passed. Renderer
+TypeScript and webpack passed. Seven main and fifteen renderer sources matched
+fresh Program and runtime-map inputs; three unchanged preload/shared Program
+inputs retain their prior qualification. The total is 25 Program inputs and 23
+runtime-map inputs. All eight configuration pins, the lockfile and both preload
+outputs remained unchanged. Electron's npm SDK and path marker remained absent.
+
+The initial main typecheck found four possibly undefined array indices. Guarded
+local variables repaired them without changing SQL or compiler configuration;
+the failed input and log were retained. The existing 22 registration cases and
+54 renderer cases also passed against the newly composed runtimes.
+
+This adds internal registration/adoption primitives. It does not establish
+archive custody, a source-bound coordinator, crash recovery, hold release, two
+sequential installs or installation through MCP. See the
+[current contract](NATIVE-ADOPTION-BOUNDARY.md#tracked-registration-and-renderer-adoption).
