@@ -1,9 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
+import {types} from 'node:util';
 import paths from './paths.cjs';
 import dispatch from './native-dispatch-contract.cjs';
 import {createNativeIntentJournal} from './native-intent-journal.mjs';
 import {createImmutableRecordIO, identity, generation} from './immutable-records.mjs';
+import strictJSON from './strict-json.cjs';
 
 const need = (ok, code) => {if (!ok) throw Error('NATIVE_EXECUTOR_' + code);};
 const id = (value, prefix) => typeof value === 'string' && new RegExp('^' + prefix + '_[a-f0-9]{32}$').test(value);
@@ -13,13 +16,55 @@ const exact = (value, keys) => value && typeof value === 'object' && !Array.isAr
 const BINDING_KEYS = ['schema', 'operationId', 'nativeJobId', 'requestSHA256', 'packetSHA256',
   'workerLifetime', 'rootId', 'jobsRootId', 'directoryId'];
 const io = createImmutableRecordIO({maxBytes: 8192, prefix: 'NATIVE_EXECUTOR_'});
+export const INVENTORY_LIMITS = Object.freeze({records: 1024, bytes: 32 * 1024 * 1024});
+const EVIDENCE_KEYS = ['schema', 'outcome', 'fullRecordSHA256', 'registrationObservationSHA256',
+  'adoptionObservationSHA256', 'workerClosureObservationSHA256', 'releaseObservationSHA256'];
+const TERMINAL_KEYS = ['schema', ...BINDING_KEYS.slice(1, 6), 'rootId', 'jobsRootId', 'jobDirectoryId',
+  'terminalsRootId', 'directoryId', ...EVIDENCE_KEYS.slice(1), 'evidenceSHA256'];
+const encoded = value => Buffer.from(JSON.stringify(value) + '\n');
+const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+const rootId = value => typeof value === 'string' && /^[0-9]+:[0-9]+$/.test(value) && value.length <= 100;
+function codeOf(error) {
+  if (error === null || typeof error !== 'object' || types.isProxy(error)) return 'NATIVE_EXECUTOR_IO_FAILED';
+  const descriptor = Object.getOwnPropertyDescriptor(error, 'message');
+  const value = descriptor && 'value' in descriptor ? descriptor.value : undefined;
+  if (typeof value !== 'string') return 'NATIVE_EXECUTOR_IO_FAILED';
+  if (/^NATIVE_EXECUTOR_[A-Z_]+$/.test(value)) return value;
+  const intent = /^NATIVE_INTENT_([A-Z_]+)$/.exec(value);
+  return intent ? 'NATIVE_EXECUTOR_INTENT_' + intent[1] : 'NATIVE_EXECUTOR_IO_FAILED';
+}
+function bindingSnapshot(value) {
+  need(value !== null && typeof value === 'object' && !types.isProxy(value), 'INVALID_BINDING');
+  const keys = ['operationId', 'nativeJobId', 'requestSHA256', 'packetSHA256', 'workerLifetime'];
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  need(Reflect.ownKeys(descriptors).length === keys.length && keys.every(key => descriptors[key]
+    && 'value' in descriptors[key] && descriptors[key].enumerable), 'INVALID_BINDING');
+  const result = Object.fromEntries(keys.map(key => [key, descriptors[key].value]));
+  need(id(result.operationId, 'op') && id(result.nativeJobId, 'exec') && id(result.workerLifetime, 'worker')
+    && sha(result.requestSHA256) && sha(result.packetSHA256), 'INVALID_BINDING');
+  return Object.freeze(result);
+}
+function evidenceSnapshot(bytes) {
+  try {
+    need(types.isUint8Array(bytes) && !types.isProxy(bytes), 'INVALID_TERMINAL');
+    const prototype = Object.getPrototypeOf(Uint8Array.prototype);
+    const size = Object.getOwnPropertyDescriptor(prototype, 'byteLength').get.call(bytes);
+    const backing = Object.getOwnPropertyDescriptor(prototype, 'buffer').get.call(bytes);
+    need(size > 0 && size <= 8192 && !types.isSharedArrayBuffer(backing), 'INVALID_TERMINAL');
+    const copy = new Uint8Array(size); Uint8Array.prototype.set.call(copy, bytes);
+    const value = strictJSON.parseStrictJSON(copy, {maxBytes: 8192, maxDepth: 4, maxTokens: 100});
+    need(exact(value, EVIDENCE_KEYS) && value.schema === 'native-executor-terminal-evidence/1'
+      && value.outcome === 'committed_adopted_closed' && EVIDENCE_KEYS.slice(2).every(key => sha(value[key])), 'INVALID_TERMINAL');
+    const result = Object.fromEntries(EVIDENCE_KEYS.map(key => [key, value[key]]));
+    need(Buffer.from(copy).equals(Buffer.from(JSON.stringify(result))), 'INVALID_TERMINAL');
+    return Object.freeze(result);
+  } catch {throw Error('NATIVE_EXECUTOR_INVALID_TERMINAL');}
+}
 
 function safe(fn) {
   try {return fn();}
   catch (error) {
-    if (/^NATIVE_EXECUTOR_[A-Z_]+$/.test(error?.message || '')) throw Error(error.message);
-    const intent = /^NATIVE_INTENT_([A-Z_]+)$/.exec(error?.message || '');
-    throw Error(intent ? 'NATIVE_EXECUTOR_INTENT_' + intent[1] : 'NATIVE_EXECUTOR_IO_FAILED');
+    throw Error(codeOf(error));
   }
 }
 function checked(bytes) {
@@ -44,10 +89,10 @@ export function createNativeExecutorJournal(options = {}) {
   const candidate = options.root ?? path.join(paths.resolvePaths().build, 'native-install-executor');
   need(typeof candidate === 'string' && candidate.length <= 4096 && path.isAbsolute(candidate)
     && !/[\x00-\x1f]/.test(candidate), 'INVALID_ROOT');
-  const root = path.resolve(candidate), jobsRoot = path.join(root, 'jobs');
+  const root = path.resolve(candidate), jobsRoot = path.join(root, 'jobs'), terminalsRoot = path.join(root, 'terminals');
   const intents = createNativeIntentJournal({root: path.join(root, 'operations')});
   const seenJobs = new Set();
-  let rootPins, jobsPins;
+  let rootPins, jobsPins, terminalsPins;
   function roots(create) {
     const current = io.ancestry(root, create);
     if (rootPins) {need(current, 'PATH_CHANGED'); io.sameAncestry(root, rootPins);}
@@ -151,5 +196,239 @@ export function createNativeExecutorJournal(options = {}) {
       return observed;
     });
   }
-  return Object.freeze({begin, read});
+  function terminals(create) {
+    const current = io.ancestry(terminalsRoot, create);
+    io.sameAncestry(root, rootPins);
+    if (terminalsPins) {need(current, 'PATH_CHANGED'); io.sameAncestry(terminalsRoot, terminalsPins);}
+    else if (current) terminalsPins = current;
+    return current;
+  }
+  function terminalRecord(binding, job, reader = (file, observations) => io.readJSON(file, observations)) {
+    if (!terminals(false)) return null;
+    const dir = path.join(terminalsRoot, binding.operationId); let stat;
+    try {stat = fs.lstatSync(dir, {bigint: true});}
+    catch (error) {if (error.code === 'ENOENT') return null; throw error;}
+    need(stat.isDirectory() && !stat.isSymbolicLink(), 'UNSAFE_PATH');
+    const pins = io.ancestry(dir), observations = new Map(), file = path.join(dir, 'terminal.json');
+    io.sameAncestry(root, rootPins); io.sameAncestry(terminalsRoot, terminalsPins);
+    need(JSON.stringify(names(dir)) === '["terminal.json"]', 'TERMINAL_CORRUPT');
+    const record = reader(file, observations);
+    need(exact(record, TERMINAL_KEYS) && record.schema === 'native-executor-terminal/1'
+      && Object.keys(binding).every(key => record[key] === binding[key])
+      && record.rootId === rootPins.get(root) && record.jobsRootId === jobsPins.get(jobsRoot)
+      && record.jobDirectoryId === job.directoryId && record.terminalsRootId === terminalsPins.get(terminalsRoot)
+      && record.directoryId === identity(stat) && sha(record.evidenceSHA256), 'TERMINAL_BINDING_MISMATCH');
+    const evidence = Object.fromEntries(EVIDENCE_KEYS.map(key => [key,
+      key === 'schema' ? 'native-executor-terminal-evidence/1' : record[key]]));
+    evidenceSnapshot(Buffer.from(JSON.stringify(evidence)));
+    need(hash(Buffer.from(JSON.stringify(evidence))) === record.evidenceSHA256, 'TERMINAL_CORRUPT');
+    io.sameAncestry(dir, pins);
+    need(JSON.stringify(names(dir)) === '["terminal.json"]'
+      && generation(fs.lstatSync(file, {bigint: true})) === observations.get(file), 'CHANGED');
+    io.sameAncestry(dir, pins); io.sameAncestry(root, rootPins);
+    io.sameAncestry(terminalsRoot, terminalsPins); io.sameAncestry(jobsRoot, jobsPins);
+    return record;
+  }
+  function appendTerminal(originalBinding, evidenceBytes) {
+    return safe(() => {
+      const binding = bindingSnapshot(originalBinding), evidence = evidenceSnapshot(evidenceBytes);
+      const status = read(binding.operationId, binding.requestSHA256, binding.nativeJobId, binding.packetSHA256);
+      need(status.state === 'reserved' && status.workerLifetime === binding.workerLifetime, 'TERMINAL_NOT_RESERVED');
+      const job = reservation(binding.operationId, binding.requestSHA256, binding.nativeJobId, binding.packetSHA256);
+      need(job && job.workerLifetime === binding.workerLifetime, 'TERMINAL_BINDING_MISMATCH');
+      terminals(true);
+      const dir = path.join(terminalsRoot, binding.operationId);
+      try {fs.mkdirSync(dir, {mode: 0o700});}
+      catch (error) {if (error.code === 'EEXIST') throw Error('NATIVE_EXECUTOR_TERMINAL_EXISTS_HOLD'); throw error;}
+      const pins = io.ancestry(dir);
+      io.sameAncestry(root, rootPins); io.sameAncestry(jobsRoot, jobsPins); io.sameAncestry(terminalsRoot, terminalsPins);
+      const record = {schema: 'native-executor-terminal/1', ...binding,
+        rootId: rootPins.get(root), jobsRootId: jobsPins.get(jobsRoot), jobDirectoryId: job.directoryId,
+        terminalsRootId: terminalsPins.get(terminalsRoot), directoryId: pins.get(dir),
+        ...Object.fromEntries(EVIDENCE_KEYS.slice(1).map(key => [key, evidence[key]])),
+        evidenceSHA256: hash(Buffer.from(JSON.stringify(evidence)))};
+      const guard = () => {
+        io.sameAncestry(dir, pins); io.sameAncestry(root, rootPins); io.sameAncestry(jobsRoot, jobsPins);
+        io.sameAncestry(terminalsRoot, terminalsPins); need(names(dir).length === 0, 'CHANGED');
+        const current = read(binding.operationId, binding.requestSHA256, binding.nativeJobId, binding.packetSHA256);
+        need(current.state === 'reserved' && current.workerLifetime === binding.workerLifetime, 'TERMINAL_BINDING_MISMATCH');
+      };
+      io.publish(dir, 'terminal.json', encoded(record), pins, guard);
+      const observed = terminalRecord(binding, job);
+      need(observed && JSON.stringify(observed) === JSON.stringify(record), 'CHANGED');
+      const final = inventory({expectedRootId: rootPins.get(root)});
+      need(final.complete && final.records.some(row => row.operationId === binding.operationId
+        && row.state === 'historical_closed' && row.evidenceSHA256 === record.evidenceSHA256), 'CHANGED');
+      return Object.freeze({schema: 'native-executor-terminal-observation/1', ...binding,
+        state: 'historical_closed', evidenceSHA256: record.evidenceSHA256,
+        historicalOnly: true, independentCompletionVerified: false, currentStateVerified: false,
+        canReplay: false, effectsAllowed: false, installationPermit: false, powerLossPersistenceVerified: false});
+    });
+  }
+  function inventory(options = {}) {
+    let expectedRootId, expectedInventorySHA256;
+    safe(() => {
+      need(options !== null && typeof options === 'object' && !types.isProxy(options), 'INVALID_OPTIONS');
+      const descriptors = Object.getOwnPropertyDescriptors(options), keys = Reflect.ownKeys(descriptors);
+      need(keys.length <= 2 && keys.every(key => ['expectedRootId', 'expectedInventorySHA256'].includes(key)
+        && 'value' in descriptors[key]), 'INVALID_OPTIONS');
+      expectedRootId = descriptors.expectedRootId?.value;
+      expectedInventorySHA256 = descriptors.expectedInventorySHA256?.value;
+      need(expectedRootId === undefined || rootId(expectedRootId), 'INVALID_ROOT_ID');
+      need(expectedInventorySHA256 === undefined || sha(expectedInventorySHA256), 'INVALID_INVENTORY_SHA');
+    });
+    let observedRootId = null;
+    const response = (complete, rows, code = null, observedInventorySHA256 = null) => {
+      const closed = rows.filter(row => row.state === 'historical_closed').length;
+      const rootIdentityVerified = complete && expectedRootId !== undefined && expectedRootId === observedRootId;
+      const historySealVerified = rootIdentityVerified && expectedInventorySHA256 !== undefined
+        && expectedInventorySHA256 === observedInventorySHA256;
+      return Object.freeze({schema: 'native-executor-inventory/1', complete, observedRootId, rootIdentityVerified,
+        observedInventorySHA256, historySealVerified,
+        startupHoldRequired: !complete || !historySealVerified || closed !== rows.length,
+        observedEmpty: complete && rows.length === 0,
+        records: Object.freeze(rows), closedCount: closed, unresolvedCount: rows.length - closed, code,
+        historicalOnly: true, independentCompletionVerified: false, currentStateVerified: false,
+        discoveryPermit: false, canReplay: false, effectsAllowed: false, installationPermit: false,
+        powerLossPersistenceVerified: false});
+    };
+    try {
+      if (!roots(false)) return response(false, [], 'NATIVE_EXECUTOR_ROOT_MISSING');
+      observedRootId = rootPins.get(root);
+      need(expectedRootId === undefined || expectedRootId === observedRootId, 'ROOT_ID_MISMATCH');
+      const directories = new Map(), observations = new Map(); let bytes = 0;
+      function consume(size) {
+        need(size >= 0n && size <= BigInt(INVENTORY_LIMITS.bytes), 'INVENTORY_LIMIT');
+        bytes += Number(size) + 1; need(bytes <= INVENTORY_LIMITS.bytes, 'INVENTORY_LIMIT');
+      }
+      function list(dir, cap) {
+        const before = fs.lstatSync(dir, {bigint: true});
+        need(before.isDirectory() && !before.isSymbolicLink(), 'UNSAFE_PATH');
+        const entries = [], handle = fs.opendirSync(dir);
+        try {let entry; while ((entry = handle.readSync()) !== null) {
+          need(entries.length < cap, 'INVENTORY_LIMIT'); entries.push(entry.name);
+        }} finally {handle.closeSync();}
+        entries.sort();
+        need(generation(fs.lstatSync(dir, {bigint: true})) === generation(before), 'CHANGED');
+        const pins = io.ancestry(dir); io.sameAncestry(root, rootPins);
+        directories.set(dir, {stamp: generation(before), entries, pins});
+        return entries;
+      }
+      function readRecord(file, maxBytes) {
+        const stat = fs.lstatSync(file, {bigint: true});
+        need(stat.size > 0n && stat.size <= BigInt(maxBytes), 'INVENTORY_LIMIT');
+        consume(stat.size);
+        // The I/O layer's own admission must not grow beyond this admitted
+        // generation or the charged byte count, even if the path changes now.
+        const reader = createImmutableRecordIO({maxBytes: Number(stat.size), prefix: 'NATIVE_EXECUTOR_'});
+        const value = reader.readJSON(file, observations), stamp = observations.get(file);
+        need(stamp === generation(stat), 'CHANGED');
+        // Records produced by this journal have one exact compact JSON encoding.
+        consume(stat.size); const again = new Map(); reader.readJSON(file, again, encoded(value));
+        need(again.get(file) === stamp, 'CHANGED');
+        return value;
+      }
+      const top = list(root, 3);
+      need(top.every(name => ['operations', 'jobs', 'terminals'].includes(name)), 'INVENTORY_CORRUPT');
+      const records = {operations: new Map(), jobs: new Map(), terminals: new Map()};
+      for (const kind of top) {
+        const parent = path.join(root, kind), entries = list(parent, INVENTORY_LIMITS.records);
+        for (const name of entries) {
+          need(id(name, kind === 'jobs' ? 'exec' : 'op'), 'INVENTORY_CORRUPT');
+          const dir = path.join(parent, name), fileName = kind === 'operations' ? 'intent.json'
+            : kind === 'jobs' ? 'binding.json' : 'terminal.json';
+          need(JSON.stringify(list(dir, 1)) === JSON.stringify([fileName]), 'INVENTORY_CORRUPT');
+          const file = path.join(dir, fileName), max = kind === 'operations' ? dispatch.LIMITS.bytes + 4096 : 8192;
+          const record = readRecord(file, max);
+          records[kind].set(name, {record, file, digest: hash(encoded(record))});
+        }
+      }
+      const operationIds = new Set(records.operations.keys()), jobsByOperation = new Map();
+      for (const [jobId, {record}] of records.jobs) {
+        need(exact(record, BINDING_KEYS) && record.schema === 'native-executor-binding/1'
+          && record.nativeJobId === jobId && id(record.operationId, 'op') && id(record.workerLifetime, 'worker')
+          && sha(record.requestSHA256) && sha(record.packetSHA256) && record.rootId === rootPins.get(root)
+          && record.jobsRootId === directories.get(jobsRoot).pins.get(jobsRoot)
+          && record.directoryId === directories.get(path.join(jobsRoot, jobId)).pins.get(path.join(jobsRoot, jobId)), 'INVENTORY_CORRUPT');
+        need(!jobsByOperation.has(record.operationId), 'INVENTORY_CORRUPT');
+        seenJobs.add(jobId);
+        jobsByOperation.set(record.operationId, records.jobs.get(jobId));
+        operationIds.add(record.operationId);
+      }
+      for (const opId of records.terminals.keys()) operationIds.add(opId);
+      for (const jobId of seenJobs) need(records.jobs.has(jobId), 'PATH_CHANGED');
+      need(operationIds.size <= INVENTORY_LIMITS.records, 'INVENTORY_LIMIT');
+      const rows = [], census = [], boundJobsSeen = new Set();
+      for (const opId of [...operationIds].sort()) {
+        const intent = records.operations.get(opId); let request = null, requestSHA256 = null;
+        if (intent) {
+          request = checked(Buffer.from(JSON.stringify(intent.record.request)));
+          requestSHA256 = dispatch.dispatchRequestDigest(Buffer.from(JSON.stringify(request)));
+          need(exact(intent.record, ['schema', 'operationId', 'requestSHA256', 'rootId', 'directoryId', 'request'])
+            && intent.record.schema === 'native-intent-record/1' && intent.record.operationId === opId
+            && intent.record.rootId === directories.get(path.join(root, 'operations')).pins.get(path.join(root, 'operations'))
+            && intent.record.directoryId === directories.get(path.dirname(intent.file)).pins.get(path.dirname(intent.file))
+            && request.operationId === opId && intent.record.requestSHA256 === requestSHA256, 'INVENTORY_CORRUPT');
+        }
+        const job = jobsByOperation.get(opId);
+        census.push({operationId: opId, nativeJobId: request?.nativeJobId ?? job?.record.nativeJobId ?? null,
+          requestSHA256: requestSHA256 ?? job?.record.requestSHA256 ?? null,
+          packetSHA256: job?.record.packetSHA256 ?? null, workerLifetime: job?.record.workerLifetime ?? null,
+          intentRecordSHA256: intent?.digest ?? null, jobRecordSHA256: job?.digest ?? null,
+          terminalRecordSHA256: records.terminals.get(opId)?.digest ?? null});
+        if (!intent || !job) {
+          need(!records.terminals.has(opId), 'TERMINAL_NOT_RESERVED');
+          rows.push(Object.freeze({operationId: opId, nativeJobId: request?.nativeJobId ?? job?.record.nativeJobId ?? null,
+            requestSHA256, packetSHA256: job?.record.packetSHA256 ?? null, state: 'unresolved',
+            reason: intent ? 'intent_only' : 'reservation_only'}));
+          continue;
+        }
+        need(!boundJobsSeen.has(job.record.nativeJobId), 'INVENTORY_CORRUPT'); boundJobsSeen.add(job.record.nativeJobId);
+        const binding = bindingSnapshot({operationId: opId, nativeJobId: request.nativeJobId, requestSHA256,
+          packetSHA256: job.record.packetSHA256, workerLifetime: job.record.workerLifetime});
+        need(job.record.nativeJobId === binding.nativeJobId && job.record.requestSHA256 === requestSHA256, 'BINDING_MISMATCH');
+        let terminal = null;
+        if (records.terminals.has(opId)) {
+          const cached = records.terminals.get(opId); terminal = cached.record;
+          need(exact(terminal, TERMINAL_KEYS) && terminal.schema === 'native-executor-terminal/1'
+            && Object.keys(binding).every(key => terminal[key] === binding[key])
+            && terminal.rootId === observedRootId
+            && terminal.jobsRootId === directories.get(jobsRoot).pins.get(jobsRoot)
+            && terminal.jobDirectoryId === job.record.directoryId
+            && terminal.terminalsRootId === directories.get(terminalsRoot).pins.get(terminalsRoot)
+            && terminal.directoryId === directories.get(path.dirname(cached.file)).pins.get(path.dirname(cached.file))
+            && sha(terminal.evidenceSHA256), 'TERMINAL_BINDING_MISMATCH');
+          const evidence = Object.fromEntries(EVIDENCE_KEYS.map(key => [key,
+            key === 'schema' ? 'native-executor-terminal-evidence/1' : terminal[key]]));
+          evidenceSnapshot(Buffer.from(JSON.stringify(evidence)));
+          need(hash(Buffer.from(JSON.stringify(evidence))) === terminal.evidenceSHA256, 'TERMINAL_CORRUPT');
+        }
+        rows.push(Object.freeze({...binding, state: terminal ? 'historical_closed' : 'unresolved',
+          reason: terminal ? null : 'terminal_missing', evidenceSHA256: terminal?.evidenceSHA256 ?? null}));
+      }
+      // The complete census and every initially read file must remain unchanged.
+      for (const [dir, snapshot] of directories) {
+        io.sameAncestry(dir, snapshot.pins);
+        need(generation(fs.lstatSync(dir, {bigint: true})) === snapshot.stamp, 'CHANGED');
+        const handle = fs.opendirSync(dir), found = [];
+        try {let entry; while ((entry = handle.readSync()) !== null) {
+          need(found.length < snapshot.entries.length, 'CHANGED'); found.push(entry.name);
+        }} finally {handle.closeSync();}
+        need(JSON.stringify(found.sort()) === JSON.stringify(snapshot.entries), 'CHANGED');
+        io.sameAncestry(dir, snapshot.pins);
+      }
+      for (const [file, stamp] of observations)
+        need(generation(fs.lstatSync(file, {bigint: true})) === stamp, 'CHANGED');
+      for (const [dir, snapshot] of directories) {
+        io.sameAncestry(dir, snapshot.pins);
+        need(generation(fs.lstatSync(dir, {bigint: true})) === snapshot.stamp, 'CHANGED');
+      }
+      io.sameAncestry(root, rootPins);
+      const observedInventorySHA256 = hash(Buffer.from(JSON.stringify({schema: 'native-executor-census/1',
+        rootId: observedRootId, indexes: top, records: census})));
+      return response(true, rows, expectedInventorySHA256 !== undefined && expectedInventorySHA256 !== observedInventorySHA256
+        ? 'NATIVE_EXECUTOR_INVENTORY_MISMATCH' : null, observedInventorySHA256);
+    } catch (error) {return response(false, [], codeOf(error));}
+  }
+  return Object.freeze({begin, read, appendTerminal, inventory});
 }
