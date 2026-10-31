@@ -311,6 +311,10 @@
       "sha256_lf": "0aab550bbd591914768da738260df477b28f87acd4d15c271e0829910416cf02"
     },
     {
+      "path": "docs/NATIVE-EXECUTOR-TERMINAL.md",
+      "sha256_lf": "e475e7cd9c10c4437ba17f65433d22e29f292fa9f413bed25ed18f4f1eec98ee"
+    },
+    {
       "path": "docs/NATIVE-EXTRACTOR-CLOSE-PATCH.md",
       "sha256_lf": "ac5eca694d081d13115fe12d6a9a706b8e7b4958c14f807ce7fcd2819f69bc3e"
     },
@@ -972,11 +976,11 @@
     },
     {
       "path": "tools/modding/vortex-agent/native-executor-journal.mjs",
-      "sha256_lf": "c16c23f8db5a2d4e222e190b461b2fdca8f3687b455ea0b4b6f9a65a2f92fee4"
+      "sha256_lf": "55d370bebd9c9b206cef9a4a9ff5f4cf1fa8538b874372fac0d4e6c1ed36b253"
     },
     {
       "path": "tools/modding/vortex-agent/native-executor-journal.test.mjs",
-      "sha256_lf": "ebee7387a8ac8b2ac0ed0ac5f4558b56736ca27ef709298d555ab4af725e6787"
+      "sha256_lf": "fbd00238a06a3d96862328f7178687e3c4b93fb0d7603dbac73bcabb4caf8f9b"
     },
     {
       "path": "tools/modding/vortex-agent/native-extractor-close-patch.test.mjs",
