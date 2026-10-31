@@ -1,0 +1,24 @@
+--- a/src/main/src/store/ReduxPersistorIPC.ts
++++ b/src/main/src/store/ReduxPersistorIPC.ts
+@@ -502,6 +502,21 @@
+     }
+     if (this.mNativeRegistration?.phase === "writing") throw new Error("NATIVE_REGISTRATION_BUSY");
+     this.checkNativeModPersistenceBackend(reservation);
++  }
++
++  /** Retain a genuine owner's reservation after a failed external coordinator gate. */
++  public holdNativeModPersistenceReservation(owner: object): void {
++    if (this === null || typeof this !== "object" || !(#mNativeExecutorAnchor in this)) {
++      throw new Error("NATIVE_PERSISTENCE_HOLD_OWNER");
++    }
++    const reservation = this.mNativeModPersistenceReservation;
++    if (reservation === undefined || reservation.owner !== owner) {
++      throw new Error("NATIVE_PERSISTENCE_HOLD_OWNER");
++    }
++    reservation.phase = "held";
++    this.mPersistenceWriteFailureObserved = true;
++    if (this.#mNativeExecutorAnchor !== undefined) this.#mNativeExecutorAnchor.phase = "held";
++    if (this.mNativeRegistration !== undefined) this.mNativeRegistration.phase = "held";
+   }
+ 
+   #checkNativeExecutorAnchorIdle(): void {

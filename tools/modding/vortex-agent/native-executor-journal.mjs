@@ -109,6 +109,11 @@ export function createNativeExecutorJournal(options = {}) {
   const intents = createNativeIntentJournal({root: path.join(root, 'operations')});
   const seenJobs = new Set();
   let rootPins, jobsPins, terminalsPins, pendingReservationInProgress = false;
+  let provisionPhase = 'unused';
+  function writable() {
+    if (provisionPhase === 'checking') provisionPhase = 'held';
+    need(provisionPhase !== 'held', 'PROVISION_HELD');
+  }
   function roots(create) {
     const current = io.ancestry(root, create);
     if (rootPins) {need(current, 'PATH_CHANGED'); io.sameAncestry(root, rootPins);}
@@ -180,6 +185,7 @@ export function createNativeExecutorJournal(options = {}) {
   }
   function begin(requestBytes, workerLifetime, packetSHA256) {
     return safe(() => {
+      writable();
       const request = checked(requestBytes);
       need(id(workerLifetime, 'worker'), 'INVALID_WORKER_LIFETIME');
       need(sha(packetSHA256), 'INVALID_BINDING');
@@ -247,6 +253,7 @@ export function createNativeExecutorJournal(options = {}) {
   }
   function appendTerminal(originalBinding, evidenceBytes) {
     return safe(() => {
+      writable();
       const binding = bindingSnapshot(originalBinding), evidence = evidenceSnapshot(evidenceBytes);
       const status = read(binding.operationId, binding.requestSHA256, binding.nativeJobId, binding.packetSHA256);
       need(status.state === 'reserved' && status.workerLifetime === binding.workerLifetime, 'TERMINAL_NOT_RESERVED');
@@ -454,6 +461,7 @@ export function createNativeExecutorJournal(options = {}) {
   // the disk transition; main must still COMMIT/read back its successor anchor.
   function reservePending(requestBytes, workerLifetime, packetSHA256, anchorBytes) {
     return safe(() => {
+      writable();
       const anchor = anchorSnapshot(anchorBytes), request = checked(requestBytes);
       need(id(workerLifetime, 'worker') && sha(packetSHA256), 'INVALID_BINDING');
       need(!pendingReservationInProgress, 'RESERVATION_BUSY');
@@ -487,5 +495,53 @@ export function createNativeExecutorJournal(options = {}) {
       } finally {pendingReservationInProgress = false;}
     });
   }
-  return Object.freeze({begin, read, appendTerminal, inventory, reservePending});
+  // Exclusive genesis observation only. The existing ordinary parent is a
+  // caller setup precondition; this method never recursively creates/adopts it.
+  // Main must independently CAS the returned anchor before any pending START.
+  function provision() {
+    return safe(() => {
+      if (provisionPhase !== 'unused') {provisionPhase = 'held'; need(false, 'PROVISION_REFUSED');}
+      provisionPhase = 'checking';
+      const current = () => need(provisionPhase === 'checking', 'PROVISION_HELD');
+      try {
+        const parent = path.dirname(root), parentPins = io.ancestry(parent);
+        current(); need(parentPins !== null, 'PROVISION_PARENT_MISSING');
+        // EEXIST is terminal: even an empty existing directory is not ours.
+        fs.mkdirSync(root, {mode: 0o700});
+        current(); io.sameAncestry(parent, parentPins);
+        const made = fs.lstatSync(root, {bigint: true});
+        need(made.isDirectory() && !made.isSymbolicLink(), 'UNSAFE_PATH');
+        const madeId = identity(made), madeGeneration = generation(made);
+        need(rootId(madeId), 'INVALID_ROOT_ID');
+        const pins = io.ancestry(root); current();
+        need(pins !== null && pins.get(root) === madeId, 'PATH_CHANGED');
+        if (rootPins) io.sameAncestry(root, rootPins);
+        rootPins = pins;
+        const first = inspectInventory({expectedRootId: madeId}); current();
+        need(first.observation.complete && first.observation.observedEmpty
+          && first.observation.records.length === 0 && first.census !== null
+          && first.census.indexes.length === 0 && first.census.records.length === 0
+          && first.observation.observedRootId === madeId && sha(first.observation.observedInventorySHA256),
+        'PROVISION_CENSUS_FAILED');
+        const anchor = Object.freeze({schema: 'native-executor-anchor/1', rootId: madeId,
+          inventorySHA256: first.observation.observedInventorySHA256});
+        const second = inspectInventory({expectedRootId: madeId, expectedInventorySHA256: anchor.inventorySHA256});
+        current();
+        need(second.observation.complete && second.observation.historySealVerified
+          && second.observation.observedEmpty && !second.observation.startupHoldRequired
+          && second.census !== null && second.census.indexes.length === 0 && second.census.records.length === 0,
+        'PROVISION_CENSUS_FAILED');
+        io.sameAncestry(parent, parentPins); io.sameAncestry(root, pins); current();
+        need(generation(fs.lstatSync(root, {bigint: true})) === madeGeneration && names(root).length === 0,
+          'PROVISION_CHANGED');
+        io.sameAncestry(parent, parentPins); io.sameAncestry(root, pins); current();
+        need(generation(fs.lstatSync(root, {bigint: true})) === madeGeneration, 'PROVISION_CHANGED');
+        const receipt = Object.freeze({schema: 'native-executor-genesis-observation/1', anchor,
+          effectsAllowed: false, installationPermit: false, powerLossPersistenceVerified: false});
+        provisionPhase = 'complete';
+        return receipt;
+      } catch (error) {provisionPhase = 'held'; throw error;}
+    });
+  }
+  return Object.freeze({begin, read, appendTerminal, inventory, reservePending, provision});
 }

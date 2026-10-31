@@ -83,7 +83,7 @@ test('immutable dual-index reservation survives a fresh bound reader and detache
   const result = store.begin(bytes, worker, packet); bytes.fill(0); r.plan.context.profileId = 'changed';
   held(result); assert.equal(result.state, 'reserved'); assert.equal(result.workerLifetime, worker);
   assert.equal(result.packetSHA256, packet); assert.equal(result.request.plan.context.profileId, 'fixture');
-  assert(Object.isFrozen(result.request.plan)); assert.deepEqual(Object.keys(store).sort(), ['appendTerminal', 'begin', 'inventory', 'read', 'reservePending']);
+  assert(Object.isFrozen(result.request.plan)); assert.deepEqual(Object.keys(store).sort(), ['appendTerminal', 'begin', 'inventory', 'provision', 'read', 'reservePending']);
   assert.deepEqual(read(createNativeExecutorJournal({root})), result);
   assert.deepEqual(fs.readdirSync(path.dirname(bindingPath(root))), ['binding.json']);
   assert.deepEqual(fs.readdirSync(path.dirname(intentPath(root))), ['intent.json']);
@@ -768,4 +768,148 @@ test('a complete 1024-record closed census refuses the next pending reservation 
   const after = reader.inventory({expectedRootId: snapshot.observedRootId, expectedInventorySHA256: snapshot.observedInventorySHA256});
   assert.equal(after.complete, true); assert.equal(after.historySealVerified, true);
   assert.equal(after.closedCount, INVENTORY_LIMITS.records); assert.equal(after.startupHoldRequired, false); noAuthority(after);
+});
+
+// Provisioning observes exclusive empty genesis; it does not establish main trust.
+
+function provisionFixture() {
+  const base = path.resolve(HERE, '../../../local-state/executor-pending-anchor/prep');
+  fs.mkdirSync(base, {recursive: true});
+  const workspace = fs.mkdtempSync(path.join(base, 'provision-'));
+  const root = path.join(workspace, 'executor');
+  return {workspace, root, store: createNativeExecutorJournal({root})};
+}
+
+test('provision exclusively creates only its root and returns frozen canonical empty anchor', () => {
+  const {root,store}=provisionFixture();
+  assert.equal(store.inventory().complete,false);assert.equal(fs.existsSync(root),false);
+  const receipt=store.provision();
+  assert.equal(receipt.schema,'native-executor-genesis-observation/1');
+  assert(Object.isFrozen(receipt));assert(Object.isFrozen(receipt.anchor));
+  assert.deepEqual(Object.keys(receipt.anchor),['schema','rootId','inventorySHA256']);
+  assert.equal(receipt.anchor.schema,'native-executor-anchor/1');
+  assert.equal(receipt.anchor.rootId,rootIdentity(root));
+  for(const key of ['effectsAllowed','installationPermit','powerLossPersistenceVerified'])assert.equal(receipt[key],false);
+  assert.deepEqual(fs.readdirSync(root),[]);
+  const inventory=store.inventory({expectedRootId:receipt.anchor.rootId,expectedInventorySHA256:receipt.anchor.inventorySHA256});
+  assert.equal(inventory.complete,true);assert.equal(inventory.observedEmpty,true);assert.equal(inventory.historySealVerified,true);
+  const reserved=store.reservePending(encode(request()),worker,packet,encode(receipt.anchor));
+  assert.equal(reserved.transition.previousInventorySHA256,receipt.anchor.inventorySHA256);
+  assert.equal(reserved.reservation.state,'reserved');
+});
+
+test('provision refuses preexisting empty/nonempty roots and never adopts one through a fresh object', () => {
+  for(const nonempty of [false,true]){
+    const {root,store}=provisionFixture();fs.mkdirSync(root);
+    if(nonempty)fs.writeFileSync(path.join(root,'unknown'),'keeper',{flag:'wx'});
+    assert.throws(()=>store.provision(),/NATIVE_EXECUTOR_/);
+    assert.throws(()=>store.provision(),/PROVISION_REFUSED/);
+    assert.throws(()=>store.begin(encode(request()),worker,packet),/PROVISION_HELD/);
+    assert.throws(()=>createNativeExecutorJournal({root}).provision(),/NATIVE_EXECUTOR_/);
+    assert.deepEqual(fs.readdirSync(root),nonempty?['unknown']:[]);
+    if(nonempty)assert.equal(fs.readFileSync(path.join(root,'unknown'),'utf8'),'keeper');
+  }
+});
+
+test('provision requires existing ordinary parent and refuses reparse ancestors without creating scaffolding', () => {
+  const {workspace}=provisionFixture(),missing=path.join(workspace,'missing','executor');
+  const absent=createNativeExecutorJournal({root:missing});
+  assert.throws(()=>absent.provision(),/PROVISION_PARENT_MISSING/);
+  assert.equal(fs.existsSync(path.dirname(missing)),false);
+  fs.mkdirSync(path.dirname(missing));assert.throws(()=>absent.provision(),/PROVISION_REFUSED/);
+  const outside=path.join(workspace,'outside'),alias=path.join(workspace,'alias');fs.mkdirSync(outside);
+  fs.symlinkSync(outside,alias,process.platform==='win32'?'junction':'dir');
+  assert.throws(()=>createNativeExecutorJournal({root:path.join(alias,'executor')}).provision(),/UNSAFE_PATH/);
+  assert.deepEqual(fs.readdirSync(outside),[]);
+});
+
+test('provision EEXIST race refuses the competing directory and retains it unchanged', () => {
+  const {root,store}=provisionFixture(),original=fs.mkdirSync;let raced=false;
+  fs.mkdirSync=function(target,...args){
+    if(path.resolve(target)===root&&!raced){raced=true;original.call(fs,target,...args);fs.writeFileSync(path.join(root,'winner'),'keep',{flag:'wx'});}
+    return original.call(fs,target,...args);
+  };
+  try{assert.throws(()=>store.provision(),/NATIVE_EXECUTOR_/);}finally{fs.mkdirSync=original;}
+  assert(raced);assert.equal(fs.readFileSync(path.join(root,'winner'),'utf8'),'keep');
+  assert.throws(()=>store.begin(encode(request()),worker,packet),/PROVISION_HELD/);
+});
+
+test('provision reentry is claimed before filesystem callbacks and cannot be swallowed into success', () => {
+  for(const operation of ['provision','begin']){
+    const {root,store}=provisionFixture(),original=fs.mkdirSync;let entered=false;
+    fs.mkdirSync=function(target,...args){
+      if(path.resolve(target)===root&&!entered){entered=true;assert.throws(()=>operation==='provision'?store.provision():store.begin(encode(request()),worker,packet),/PROVISION_/);}
+      return original.call(fs,target,...args);
+    };
+    try{assert.throws(()=>store.provision(),/PROVISION_HELD/);}finally{fs.mkdirSync=original;}
+    assert(entered);assert.deepEqual(fs.readdirSync(root),[]);
+    assert.throws(()=>store.provision(),/PROVISION_REFUSED/);
+  }
+});
+
+test('failed census and late readback/identity drift preserve partial output and permanently hold provisioning', () => {
+  for(const mode of ['inventory','late-entry','root-swap','parent-swap']){
+    const {root,workspace,store}=provisionFixture(),originalOpen=fs.opendirSync,originalStat=fs.lstatSync;
+    let opened=0,changed=false;
+    fs.opendirSync=function(target,...args){
+      if(path.resolve(target)===root){
+        opened++;
+        if(mode==='inventory'&&!changed){changed=true;throw Error('own census failure');}
+      }
+      return originalOpen.call(fs,target,...args);
+    };
+    fs.lstatSync=function(target,...args){
+      if(path.resolve(target)===root&&opened>=4&&!changed){
+        changed=true;
+        if(mode==='late-entry')fs.writeFileSync(path.join(root,'late'),'unknown',{flag:'wx'});
+        else if(mode==='root-swap'){fs.renameSync(root,path.join(workspace,'created-keeper'));fs.mkdirSync(root);}
+        else if(mode==='parent-swap'){
+          const keeper=workspace+'-keeper';fs.renameSync(workspace,keeper);fs.mkdirSync(workspace);fs.renameSync(path.join(keeper,'executor'),root);
+        }
+      }
+      return originalStat.call(fs,target,...args);
+    };
+    try{assert.throws(()=>store.provision(),/NATIVE_EXECUTOR_/);}finally{fs.opendirSync=originalOpen;fs.lstatSync=originalStat;}
+    assert(changed,mode);assert.equal(fs.existsSync(root),true);
+    assert.throws(()=>store.provision(),/PROVISION_REFUSED/);
+    assert.throws(()=>store.reservePending(encode(request()),worker,packet,encode({schema:'native-executor-anchor/1',rootId:'1:2',inventorySHA256:h})),/PROVISION_HELD/);
+  }
+});
+
+test('duplicate successful provision holds the object without deleting its empty root', () => {
+  const {root,store}=provisionFixture();store.provision();
+  assert.throws(()=>store.provision(),/PROVISION_REFUSED/);
+  assert.throws(()=>store.begin(encode(request()),worker,packet),/PROVISION_HELD/);
+  assert.deepEqual(fs.readdirSync(root),[]);
+});
+
+test('two actual processes can provision a shared fresh root only once', {timeout:15000}, async()=>{
+  const {root}=provisionFixture();
+  const code=`import {createNativeExecutorJournal} from ${JSON.stringify(moduleURL)};
+    process.stdout.write('ready\\n');await new Promise(resolve=>process.stdin.once('data',resolve));
+    try{process.stdout.write(JSON.stringify({ok:true,receipt:createNativeExecutorJournal({root:process.argv[1]}).provision()})+'\\n');}
+    catch(error){process.stdout.write(JSON.stringify({ok:false,code:error.message})+'\\n');}`;
+  const runners=[0,1].map(()=>{
+    const child=spawn(process.execPath,['--input-type=module','--eval',code,root],{stdio:['pipe','pipe','pipe'],windowsHide:true});
+    let output='',errors='',readyResolve;
+    const ready=new Promise(resolve=>{readyResolve=resolve;});
+    const done=new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>{child.kill();reject(Error('Own provision child deadline'));},8000);
+      child.on('error',error=>{clearTimeout(timer);reject(error);});
+      child.stdout.on('data',chunk=>{output+=chunk;if(output.includes('\n'))readyResolve();if(output.length>8192){child.kill();reject(Error('Own output limit'));}});
+      child.stderr.on('data',chunk=>{errors+=chunk;if(errors.length>8192){child.kill();reject(Error('Own stderr limit'));}});
+      child.on('close',exit=>{clearTimeout(timer);try{assert.equal(exit,0,errors);assert.equal(errors,'');resolve(JSON.parse(output.trim().split('\n').at(-1)));}catch(error){reject(error);}});
+    });
+    return{child,ready,done};
+  });
+  try{
+    await Promise.race([Promise.all(runners.map(r=>r.ready)),...runners.map(r=>r.done)]);
+    runners.forEach(r=>r.child.stdin.end('go'));
+    const results=await Promise.all(runners.map(r=>r.done));assert.equal(results.filter(r=>r.ok).length,1);
+    assert.match(results.find(r=>!r.ok).code,/NATIVE_EXECUTOR_/);
+    const winner=results.find(r=>r.ok).receipt;
+    assert.equal(winner.anchor.rootId,rootIdentity(root));assert.deepEqual(fs.readdirSync(root),[]);
+    assert.equal(createNativeExecutorJournal({root}).inventory({expectedRootId:winner.anchor.rootId,
+      expectedInventorySHA256:winner.anchor.inventorySHA256}).historySealVerified,true);
+  }finally{runners.forEach(r=>{if(r.child.exitCode===null)r.child.kill();});}
 });

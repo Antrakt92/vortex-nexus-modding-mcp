@@ -1,6 +1,6 @@
 # Assemble the reviewed Vortex source patches
 
-`native-source-series.mjs` applies the fixed sequence of 81 reviewed patches to
+`native-source-series.mjs` applies the fixed sequence of 83 reviewed patches to
 25 original files from Vortex `v2.9.1`, commit
 `c80326367cbe6d96621ad6cf4a5488ef49bac110`. It replaces manually composing separate
 patch chains before compilation. It does not change an installed application or
@@ -35,7 +35,7 @@ match the pinned series. Patch application requires exact offsets and context;
 it has no fuzzy matching or hash-refresh mode.
 
 The fixed graph combines the 33-patch mod-management/transfer packet with the
-48-patch persistence packet. The latter includes renderer target admission and
+50-patch persistence packet. The latter includes renderer target admission and
 acknowledged diffs, main/preload/shared IPC, backend reservations and managed SQL
 ownership, the main build's runtime binding and startup history classification.
 Both runtime packet directories have separate closed inventories;
@@ -508,3 +508,34 @@ Historical failures and uncertain fixture journals were retained.
 
 These checks do not start or replace Vortex. Electron loading, native constructor
 acceptance, coordinator initialization and installation remain separate gates.
+
+## First history initialization — 31 October 2026
+
+The 83-patch graph adds a genuine owner-bound main hold and the
+[initialization bridge](NATIVE-EXECUTOR-GENESIS.md). The journal exclusively
+provisions a new root under an existing ordinary parent. Main persists and
+verifies its empty anchor through actual retained ownership; an initialized
+startup reuses its captured journal. Unknown results retain the reservation.
+
+The fresh main TypeScript target, its seven prerequisites, Rolldown build and
+52 upstream tests passed. All 25 graph outputs, seven main Program/map entries,
+the emitted SDK15 tuple, eight compiler configs and the lockfile matched.
+Eighteen unchanged renderer/preload/shared entries retained earlier evidence.
+
+The source sweep passed 477 of 479 checks. Two builder fixtures used the shared
+system temporary directory, whose unrelated activity changed an ancestor's
+metadata. Moving those fixtures to an isolated task directory preserved every
+production guard and assertion; all eleven builder checks then passed, including
+under controlled concurrent temporary-directory activity. The original failures
+were retained rather than reported as a clean first sweep.
+
+Journal/path checks passed 79 cases. The worker/relay matrix passed 62 checks;
+two optional helper/retained-proof fixtures were not enabled in that run. Eight
+archive-hash checks passed, including real own-file custody. Staging now binds
+its download directory in Node's identity domain and checks SHA-256 plus MD5
+through one held native archive handle before extraction. Full native identities
+remain separate from Node filesystem labels.
+
+No Vortex application was started or replaced. Pending transition coordination,
+renderer ownership transport, terminal ownership and native host acceptance are
+still required before an installation endpoint can be enabled.

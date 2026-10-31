@@ -1,0 +1,175 @@
+--- a/src/main/src/store/mainPersistence.ts
++++ b/src/main/src/store/mainPersistence.ts
+@@ -47,7 +47,7 @@
+ const nativeStartupRead = LevelPersist.prototype.readNativeExecutorAnchor;
+ const nativeStartupNames = Object.freeze(['owned-zip-relay-client.mjs','owned-zip-relay-runner.mjs','child-terminal-observer.cjs','owned-zip-worker-client.mjs','owned-zip-worker.py','owned-file-transfer.py','owned-zip-extractor.py','native-executor-journal.mjs','native-intent-journal.mjs','immutable-records.mjs','paths.cjs','paths-core.cjs','native-dispatch-contract.cjs','install-job-contract.cjs','strict-json.cjs']);
+ type NativeStartupPhase = 'checking' | 'held' | 'unconfigured' | 'uninitialized' | 'initialized';
+-let nativeStartupAttempt: {backend: LevelPersist; phase: NativeStartupPhase} | undefined;
++let nativeStartupAttempt: NativeExecutorStartupAttempt | undefined;
+ type NativeStartupReason='BINDING'|'ANCHOR_READ'|'ROOT_OBSERVATION'|'SOURCE_CLOSURE'|'SDK_LOAD'|'HISTORY_SCAN'|'REENTRY';
+ const nativeStartupError=(reason:NativeStartupReason='BINDING')=>Object.assign(new Error('NATIVE_EXECUTOR_STARTUP_HOLD'),{reasonCode:reason});
+ function nativeStartupData(value: unknown, keys: readonly string[]): Record<string, unknown> {
+@@ -107,13 +107,13 @@
+ export async function verifyNativeExecutorStartup(backend:LevelPersist, maintenance=false) {
+   const old=nativeStartupAttempt;
+   if(old!==undefined && !(maintenance===true && old.backend!==backend && ['unconfigured','uninitialized'].includes(old.phase))){old.phase='held';throw nativeStartupError('REENTRY');}
+-  const attempt:{backend:LevelPersist;phase:NativeStartupPhase}={backend,phase:'checking'};nativeStartupAttempt=attempt;
++  const attempt:NativeExecutorStartupAttempt={backend,phase:'checking'};nativeStartupAttempt=attempt;
+   const current=()=>{if(nativeStartupAttempt!==attempt||attempt.phase==='held')throw nativeStartupError();};
+   const finish=(phase:'unconfigured'|'uninitialized'|'initialized')=>{current();attempt.phase=phase;return Object.freeze({schema:'native-executor-startup/1',phase,nativeAdmission:false,installationPermit:false,effectsAllowed:false,powerLossPersistenceVerified:false});};
+   let reason:NativeStartupReason='BINDING';
+   try{
+     if(typeof maintenance!=='boolean')throw nativeStartupError();
+-    const binding=nativeStartupBinding();
++    const binding=nativeStartupBinding();if(binding!==null)attempt.binding=binding;
+     reason='ANCHOR_READ';const raw=await nativeStartupRead.call(backend);current();
+     const anchor=raw===null?null:nativeHistoryAnchorSnapshot(raw);current();
+     if(binding===null){if(anchor!==null)throw nativeStartupError();return finish('unconfigured');}
+@@ -135,8 +135,146 @@
+     const observed:unknown=inventory.value({expectedRootId:anchor.rootId,expectedInventorySHA256:anchor.inventorySHA256});current();
+     if(observed===null||typeof observed!=='object'||nativeStartupTypes.isProxy(observed))throw nativeStartupError();
+     for(const[k,want]of [['schema','native-executor-inventory/1'],['complete',true],['historySealVerified',true],['startupHoldRequired',false],['observedRootId',anchor.rootId],['observedInventorySHA256',anchor.inventorySHA256]] as const){const d=Object.getOwnPropertyDescriptor(observed,k);if(d===undefined||!Object.hasOwn(d,'value')||d.value!==want)throw nativeStartupError();}
+-    reason='SOURCE_CLOSURE';const final=nativeStartupClosure(binding);nativeStartupSame(before.dirs,final.dirs);nativeStartupSame(before.files,final.files);nativeStartupSame(root.pins,nativeStartupAncestry(binding.journal).pins);current();return finish('initialized');
++    reason='SOURCE_CLOSURE';const final=nativeStartupClosure(binding);nativeStartupSame(before.dirs,final.dirs);nativeStartupSame(before.files,final.files);nativeStartupSame(root.pins,nativeStartupAncestry(binding.journal).pins);current();attempt.source=nativeExecutorCapture(module,journal);attempt.anchor=anchor;current();return finish('initialized');
+   }catch{const held=attempt.phase==='held';attempt.phase='held';throw nativeStartupError(held?'REENTRY':reason);}
++}
++
++const nativeGenesisCheckReservation = ReduxPersistorIPC.prototype.checkNativeModPersistenceReservation;
++const nativeGenesisWriteAnchor = ReduxPersistorIPC.prototype.writeNativeExecutorAnchor;
++const nativeGenesisHoldReservation = ReduxPersistorIPC.prototype.holdNativeModPersistenceReservation;
++type NativeExecutorJournalSource = { namespace: object; factory: (options: {root: string}) => unknown;
++  journal: object; inventory: (options: {expectedRootId: string; expectedInventorySHA256: string}) => unknown;
++  provision: () => unknown };
++type NativeExecutorStartupAttempt = {backend: LevelPersist; phase: NativeStartupPhase;
++  binding?: NonNullable<ReturnType<typeof nativeStartupBinding>>; anchor?: Readonly<{schema: string; rootId: string; inventorySHA256: string}>;
++  source?: NativeExecutorJournalSource};
++type NativeExecutorGenesisAttempt = {owner: object; mainOwner: object; reservationOwner: object;
++  main: ReduxPersistorIPC; startup: NativeExecutorStartupAttempt; phase: 'checking' | 'ready' | 'held';
++  anchor?: Readonly<{schema: string; rootId: string; inventorySHA256: string}>};
++let nativeGenesisAttempt: NativeExecutorGenesisAttempt | undefined;
++let nativeGenesisPreflight = false;
++let nativeGenesisReentered = false;
++const nativeGenesisError = () => new Error('NATIVE_EXECUTOR_HISTORY_HOLD');
++function nativeExecutorCapture(namespace: unknown, journal: unknown): NativeExecutorJournalSource {
++  if(namespace===null||typeof namespace!=='object'||nativeStartupTypes.isProxy(namespace)
++    ||journal===null||typeof journal!=='object'||nativeStartupTypes.isProxy(journal)||!Object.isFrozen(journal))throw nativeGenesisError();
++  const factory=Object.getOwnPropertyDescriptor(namespace,'createNativeExecutorJournal');
++  const data=nativeStartupData(journal,['begin','read','appendTerminal','inventory','reservePending','provision']);
++  if(factory===undefined||!Object.hasOwn(factory,'value')||typeof factory.value!=='function'||nativeStartupTypes.isProxy(factory.value)
++    ||typeof data.inventory!=='function'||nativeStartupTypes.isProxy(data.inventory)
++    ||typeof data.provision!=='function'||nativeStartupTypes.isProxy(data.provision))throw nativeGenesisError();
++  return {namespace,factory:factory.value,journal,inventory:data.inventory as NativeExecutorJournalSource['inventory'],
++    provision:data.provision as NativeExecutorJournalSource['provision']};
++}
++function nativeExecutorCheckSource(source: NativeExecutorJournalSource): void {
++  const current=nativeExecutorCapture(source.namespace,source.journal);
++  if(current.factory!==source.factory||current.inventory!==source.inventory||current.provision!==source.provision)throw nativeGenesisError();
++}
++function nativeExecutorColdJournal(binding: NonNullable<ReturnType<typeof nativeStartupBinding>>): NativeExecutorJournalSource {
++  for(const name of nativeStartupNames)if(Object.hasOwn(nativeStartupRequire.cache,path.join(binding.sdk,name)))throw nativeGenesisError();
++  const namespace:unknown=nativeStartupRequire(path.join(binding.sdk,'native-executor-journal.mjs'));
++  if(namespace===null||typeof namespace!=='object'||nativeStartupTypes.isProxy(namespace))throw nativeGenesisError();
++  const factory=Object.getOwnPropertyDescriptor(namespace,'createNativeExecutorJournal');
++  if(factory===undefined||!Object.hasOwn(factory,'value')||typeof factory.value!=='function'||nativeStartupTypes.isProxy(factory.value))throw nativeGenesisError();
++  return nativeExecutorCapture(namespace,factory.value({root:binding.journal}));
++}
++function nativeExecutorClosedCensus(source: NativeExecutorJournalSource, anchor: {rootId:string;inventorySHA256:string}, empty: boolean): void {
++  nativeExecutorCheckSource(source);
++  const observed=source.inventory.call(source.journal,{expectedRootId:anchor.rootId,expectedInventorySHA256:anchor.inventorySHA256});
++  nativeExecutorCheckSource(source);
++  if(observed===null||typeof observed!=='object'||nativeStartupTypes.isProxy(observed))throw nativeGenesisError();
++  const want={schema:'native-executor-inventory/1',complete:true,historySealVerified:true,startupHoldRequired:false,
++    observedRootId:anchor.rootId,observedInventorySHA256:anchor.inventorySHA256};
++  for(const [key,value]of Object.entries(want)){const d=Object.getOwnPropertyDescriptor(observed,key);if(d===undefined||!Object.hasOwn(d,'value')||d.value!==value)throw nativeGenesisError();}
++  if(empty){const records=Object.getOwnPropertyDescriptor(observed,'records'),observedEmpty=Object.getOwnPropertyDescriptor(observed,'observedEmpty');
++    if(records===undefined||!Object.hasOwn(records,'value')||!Array.isArray(records.value)||nativeStartupTypes.isProxy(records.value)||records.value.length!==0
++      ||observedEmpty===undefined||!Object.hasOwn(observedEmpty,'value')||observedEmpty.value!==true)throw nativeGenesisError();}
++}
++/** Main-owned read-only/genesis bridge. Returned identity is not START authority. */
++export async function initializeNativeExecutorHistory(mainReadyOwner: object, modReservationOwner: object) {
++  if(nativeGenesisPreflight){nativeGenesisReentered=true;throw nativeGenesisError();}
++  const previous=nativeGenesisAttempt;
++  if(previous!==undefined && previous.mainOwner===mainReadyOwner && previous.reservationOwner===modReservationOwner){
++    previous.phase='held';previous.startup.phase='held';
++    try{nativeGenesisHoldReservation.call(previous.main,modReservationOwner);}catch{/* Keep the one-shot failure. */}
++    throw nativeGenesisError();
++  }
++  nativeGenesisPreflight=true;nativeGenesisReentered=false;
++  let main:ReduxPersistorIPC;
++  let startup:NativeExecutorStartupAttempt;
++  let validated: {main: ReduxPersistorIPC; startup: NativeExecutorStartupAttempt} | undefined;
++  try{
++    checkNativeMainPersistenceReady(mainReadyOwner);
++    const ready=nativeMainAttempt,selected=nativeStartupAttempt;
++    if(ready===undefined||selected===undefined||ready.backend!==selected.backend
++      ||!['uninitialized','initialized'].includes(selected.phase)||selected.binding===undefined)throw nativeGenesisError();
++    main=ready.main;startup=selected;
++    nativeGenesisCheckReservation.call(main,modReservationOwner);
++    validated={main,startup};
++    checkNativeMainPersistenceReady(mainReadyOwner);
++    if(nativeMainAttempt!==ready||nativeStartupAttempt!==selected||nativeGenesisReentered)throw nativeGenesisError();
++  }catch(primary){if(validated!==undefined){validated.startup.phase='held';try{nativeGenesisHoldReservation.call(validated.main,modReservationOwner);}catch{/* Preserve primary. */}}throw primary;}
++  finally{nativeGenesisPreflight=false;}
++  if(nativeGenesisAttempt!==undefined){
++    nativeGenesisAttempt.phase='held';startup.phase='held';
++    nativeGenesisHoldReservation.call(main,modReservationOwner);throw nativeGenesisError();
++  }
++  const attempt:NativeExecutorGenesisAttempt={owner:Object.freeze({}),mainOwner:mainReadyOwner,reservationOwner:modReservationOwner,main,startup,phase:'checking'};
++  nativeGenesisAttempt=attempt;
++  const check=()=>{
++    if(nativeGenesisAttempt!==attempt||attempt.phase!=='checking'||nativeStartupAttempt!==startup
++      ||!['uninitialized','initialized'].includes(startup.phase)||startup.binding===undefined)throw nativeGenesisError();
++    checkNativeMainPersistenceReady(mainReadyOwner);
++    const ready=nativeMainAttempt;
++    if(ready===undefined||ready.main!==main||ready.backend!==startup.backend)throw nativeGenesisError();
++    nativeGenesisCheckReservation.call(main,modReservationOwner);
++    if(attempt.phase!=='checking'||nativeStartupAttempt!==startup)throw nativeGenesisError();
++  };
++  try{
++    check();const binding=startup.binding;if(binding===undefined)throw nativeGenesisError();
++    const initial=await nativeHistoryAnchorRead.call(startup.backend);check();
++    let anchor:Readonly<{schema:string;rootId:string;inventorySHA256:string}>;
++    const before=nativeStartupClosure(binding);check();
++    let source=startup.source;
++    if(startup.phase==='initialized'){
++      if(initial===null||startup.anchor===undefined||source===undefined)throw nativeGenesisError();
++      anchor=nativeHistoryAnchorSnapshot(initial);
++      if(JSON.stringify(anchor)!==JSON.stringify(startup.anchor))throw nativeGenesisError();
++      nativeExecutorClosedCensus(source,anchor,false);check();
++    }else{
++      if(initial!==null||source!==undefined)throw nativeGenesisError();
++      source=nativeExecutorColdJournal(binding);check();
++      const loaded=nativeStartupClosure(binding);nativeStartupSame(before.dirs,loaded.dirs);nativeStartupSame(before.files,loaded.files);check();
++      const proof=source.provision.call(source.journal);check();nativeExecutorCheckSource(source);
++      if(proof===null||typeof proof!=='object'||nativeStartupTypes.isProxy(proof)||!Object.isFrozen(proof))throw nativeGenesisError();
++      const fields=nativeStartupData(proof,['schema','anchor','effectsAllowed','installationPermit','powerLossPersistenceVerified']);
++      if(fields.schema!=='native-executor-genesis-observation/1'||fields.effectsAllowed!==false||fields.installationPermit!==false
++        ||fields.powerLossPersistenceVerified!==false||fields.anchor===null||typeof fields.anchor!=='object'
++        ||nativeStartupTypes.isProxy(fields.anchor)||!Object.isFrozen(fields.anchor))throw nativeGenesisError();
++      const a=nativeStartupData(fields.anchor,['schema','rootId','inventorySHA256']);
++      if(a.schema!=='native-executor-anchor/1'||typeof a.rootId!=='string'||!/^[0-9]+:[0-9]+$/.test(a.rootId)||a.rootId.length>100
++        ||typeof a.inventorySHA256!=='string'||!/^[a-f0-9]{64}$/.test(a.inventorySHA256))throw nativeGenesisError();
++      anchor=nativeHistoryAnchorSnapshot(Buffer.from(JSON.stringify(a)));check();
++      nativeExecutorClosedCensus(source,anchor,true);check();
++      const next=Buffer.from(JSON.stringify(anchor));
++      const acknowledgement=await nativeGenesisWriteAnchor.call(main,modReservationOwner,null,next);check();
++      const ack=nativeStartupData(acknowledgement,['schema','previousSHA256','anchorSHA256','rootId','inventorySHA256','commitObserved','readbackVerified','effectsAllowed','installationPermit','powerLossPersistenceVerified']);
++      if(ack.schema!=='native-executor-anchor-write/1'||ack.previousSHA256!==null
++        ||ack.anchorSHA256!==nativeStartupHash('sha256').update(next).digest('hex')||ack.rootId!==anchor.rootId||ack.inventorySHA256!==anchor.inventorySHA256
++        ||ack.commitObserved!==true||ack.readbackVerified!==true||ack.effectsAllowed!==false||ack.installationPermit!==false||ack.powerLossPersistenceVerified!==false)throw nativeGenesisError();
++    }
++    const readback=await nativeHistoryAnchorRead.call(startup.backend);check();
++    if(readback===null||!Buffer.from(readback).equals(Buffer.from(JSON.stringify(anchor))))throw nativeGenesisError();
++    const final=nativeStartupClosure(binding);nativeStartupSame(before.dirs,final.dirs);nativeStartupSame(before.files,final.files);check();
++    nativeExecutorClosedCensus(source,anchor,startup.phase==='uninitialized');check();
++    const receipt=Object.freeze({schema:'native-executor-history-initialization/1',owner:attempt.owner,rootId:anchor.rootId,
++      inventorySHA256:anchor.inventorySHA256,effectsAllowed:false,installationPermit:false,powerLossPersistenceVerified:false});
++    startup.source=source;startup.anchor=anchor;startup.phase='initialized';attempt.anchor=anchor;attempt.phase='ready';
++    return receipt;
++  }catch(primary){attempt.phase='held';startup.phase='held';
++    try{nativeGenesisHoldReservation.call(main,modReservationOwner);}catch{/* Preserve the actual initialization failure. */}
++    throw primary;
++  }
+ }
+ 
+ let mainPersistor: ReduxPersistorIPC | undefined;

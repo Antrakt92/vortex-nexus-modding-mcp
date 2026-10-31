@@ -31,6 +31,11 @@ generations. A size check does not authorize an unbounded whole-file read.
 
 The separate archive binding requires explicit `win-file-id128/1` parent/file
 identities. Node `dev:ino` context labels must not be converted into that domain.
+For staging, the archive parent must match the plan's download path. The SDK
+checks that directory's current Node identity before spawning, preparation and
+START. Python independently verifies the complete native identity through its
+held parent/archive handles. Windows volume serial representations can differ
+between these APIs; truncating either value is not an identity check.
 The original factory's output paths derive from the maintained source checkout:
 `local-state/owned-zip-worker-work/<operationId>/Extract` and `Final`.
 The coordinator checks the scratch ancestry without creating directories. The
@@ -59,11 +64,21 @@ parent chain and returns its `win-file-id128/1` observation. The SDK checks the
 Node identity again while that chain remains held. These are separately bound
 identity domains; neither is cast into the other.
 
-The version-2 START packet includes the exact returned destination tuple. Its
+The version-2 START packet includes the exact returned destination tuple and
+the plan's MD5 in its private archive descriptor. The external archive binding
+still has six fields; scratch version 1 keeps its existing descriptor. Its
 digest is reserved by the existing executor journal before START delivery.
 Python checks it against its retained token and parent handle. Handoff creates
 the new leaf relative to that handle without reopening the parent path. Existing
 targets, including case aliases, refuse without merging or overwriting files.
+
+Staging acquisition computes SHA-256 and MD5 in one pass through the same held
+archive HANDLE, before creating `Extract` or starting the decoder. Both must
+match. MD5 binds the Nexus/Vortex association; it does not replace SHA-256 as the
+content pin. A mismatch retains failed custody and creates no extracted payload
+or final staging target. The worker may already have created its owned operation
+scaffolding, which remains evidence. This check follows START acceptance and is
+not a pre-START archive attestation.
 
 After successful copying, the guardian creates `CopyProof.json` exclusively
 through its held operation-directory handle. The bounded proof binds worker,

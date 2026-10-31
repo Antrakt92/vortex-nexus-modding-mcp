@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
-import os from 'node:os';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {repo,original,stage,sha} from './native-query-source-admission.test.mjs';
@@ -37,7 +36,16 @@ function config({workspace,io=fs,extraEnv={},patched=true}={}){
     createConfig,mainOutputDirectory:path.join(HERE,'own-not-created-build')},{timeout:1000});
 }
 function fixture(t){
-  const parent=fs.realpathSync(os.tmpdir()),root=fs.mkdtempSync(path.join(parent,'nmt-runtime-binding-'));
+  // The builder intentionally pins every ancestor generation. Parallel suites
+  // create siblings in global Temp, so keep these fixtures under our own parent.
+  const requestedParent=path.resolve(HERE,'../../../local-state/executor-pending-anchor/recovery/build-tests');
+  for(let current=requestedParent;;current=path.dirname(current)){
+    let stat;try{stat=fs.lstatSync(current);}catch(error){if(error.code!=='ENOENT')throw error;}
+    if(stat){assert(stat.isDirectory());assert(!stat.isSymbolicLink());}
+    if(current===path.dirname(current))break;
+  }
+  fs.mkdirSync(requestedParent,{recursive:true});
+  const parent=fs.realpathSync(requestedParent),root=fs.mkdtempSync(path.join(parent,'nmt-runtime-binding-'));
   const sdk=path.join(root,'tools','modding','vortex-agent');fs.mkdirSync(sdk,{recursive:true});
   for(const name of NAMES)fs.writeFileSync(path.join(sdk,name),'throw new Error("SDK must not execute: '+name+'");\n',{flag:'wx'});
   t.after(()=>{assert.equal(path.dirname(root),parent);assert(path.basename(root).startsWith('nmt-runtime-binding-'));assert(!fs.lstatSync(root).isSymbolicLink());fs.rmSync(root,{recursive:true});});

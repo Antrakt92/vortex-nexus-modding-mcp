@@ -1,0 +1,22 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/main/src/store/ReduxPersistorIPC.ts",
+  "originalSourceSHA256": "2a86c8e57e643172e8babf3474bd2e697a1cf8b3f3e3f3ea1f44934781a737e3",
+  "inputSHA256": "d7a0e8f23e0d949be5ef7c7d44aa8d7f8c2df7f352fe1816c9da75414281e56b",
+  "outputSHA256": "e0e03cf5c7a47d32b61bc53ffe1290a46e8078beccfe8bb0109e91423db8f635",
+  "patchSHA256": "de555f56499c59bb63a529c4ac60631a98f2bbcc03b86a5df5173c8dcc7b5968",
+  "prerequisitePatch": "native-main-executor-anchor.patch",
+  "prerequisitePatchSHA256": "8c9ff78c329d7cead964215ac6c623340cd9528fba73e0f9ae83ce32906101d8",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "installationPermit": false,
+  "powerLossPersistenceVerified": false,
+  "startupGateSupported": false,
+  "limitations": [
+    "Source-owned irreversible main hold only; no cancellation, lower-owner release, rollback, journal transition or START authority."
+  ]
+}
