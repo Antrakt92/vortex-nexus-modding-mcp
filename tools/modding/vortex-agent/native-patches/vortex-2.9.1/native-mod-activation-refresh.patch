@@ -1,0 +1,11 @@
+--- a/src/renderer/src/extensions/mod_management/eventHandlers.ts
++++ b/src/renderer/src/extensions/mod_management/eventHandlers.ts
+@@ -288,7 +288,7 @@
+     } catch { /* Notification failure cannot release uncertain ownership. */ }
+   };
+   try {
+-    void InstallManager.trackNativeLifecycleCall(() => {
++    void InstallManager.trackNativeGameActivationRefresh(api.store, newGame, () => {
+       try { return onGameModeActivatedTracked(api, activators, newGame); } catch (error) {
+         report(error);
+         throw error;

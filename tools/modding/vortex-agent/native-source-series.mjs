@@ -12,7 +12,7 @@ const PACKETS = Object.freeze({
   lifecycle: path.join(HERE, 'native-patches/vortex-2.9.1'),
   persistence: path.join(HERE, 'native-patches/vortex-persistence-2.9.1'),
 });
-const SERIES_SHA256 = '0c98213c6456d2d08ce0c80ec457d25eecb50a1a85867c0a9e85422af5afe2c3';
+const SERIES_SHA256 = '7da7ee06fdc9c44da6de06a4cbd58e939eb6bade8cf94b99777a30c89ac56527';
 export const NATIVE_SOURCE_PATHS = Object.freeze([
   "src/renderer/src/extensions/mod_management/eventHandlers.ts",
   "src/renderer/src/extensions/mod_management/index.ts",
@@ -38,7 +38,8 @@ export const NATIVE_SOURCE_PATHS = Object.freeze([
   "src/shared/src/types/preload.ts",
   "src/renderer/src/renderer.tsx",
   "src/renderer/src/ExtensionManager.ts",
-  "src/main/build.mjs"
+  "src/main/build.mjs",
+  "src/renderer/src/extensions/gamemode_management/index.ts"
 ]);
 export const NATIVE_SOURCE_LIMITS = Object.freeze({fileBytes: 2*1024*1024, totalBytes: 8*1024*1024});
 const fail = code => {throw Error('NATIVE_SOURCE_SERIES_' + code);};
@@ -115,13 +116,13 @@ function readPacket() {
   const raw = read(path.join(HERE, 'native-source-series.json'), 96*1024);
   need(sha(raw) === SERIES_SHA256, 'SERIES');
   const series = strict.parseStrictJSON(raw, {maxBytes: 96*1024, maxDepth: 8, maxTokens: 8000});
-  need(series.schema === 'native-source-series/2' && series.files.length === 25
-    && series.patches.length === 124 && exact(Object.fromEntries(series.files.map(row => [row.path, true])), NATIVE_SOURCE_PATHS), 'SERIES');
+  need(series.schema === 'native-source-series/2' && series.files.length === 26
+    && series.patches.length === 129 && exact(Object.fromEntries(series.files.map(row => [row.path, true])), NATIVE_SOURCE_PATHS), 'SERIES');
   const inventory = () => {
     for (const {id, directory: packet} of roots) {
       const names = series.patches.filter(row => row.packet === id)
         .flatMap(row => [row.name+'.json', row.name+'.patch']).sort();
-      need(names.length === (id === 'lifecycle' ? 68 : 180), 'SERIES');
+      need(names.length === (id === 'lifecycle' ? 76 : 182), 'SERIES');
       const directory = fs.opendirSync(packet), actual = [];
       try {
         for (let entry = directory.readSync(); entry !== null; entry = directory.readSync()) {

@@ -19,7 +19,7 @@ const dummy = () => Object.fromEntries(NATIVE_SOURCE_PATHS.map(file => [file, Bu
 const reject = (input, code = 'INPUT') => assert.throws(() => assembleNativeSources(input),
   error => error.message === 'NATIVE_SOURCE_SERIES_'+code);
 const integration = (name, action) => test(name, {
-  skip: process.env.VORTEX_NATIVE_SOURCE_ROOT ? false : 'Set VORTEX_NATIVE_SOURCE_ROOT to the exact original 25-file source root',
+  skip: process.env.VORTEX_NATIVE_SOURCE_ROOT ? false : 'Set VORTEX_NATIVE_SOURCE_ROOT to the exact original 26-file source root',
 }, action);
 const originals = () => Object.fromEntries(NATIVE_SOURCE_PATHS.map(file => [file,
   fs.readFileSync(path.join(process.env.VORTEX_NATIVE_SOURCE_ROOT, file))]));
@@ -96,7 +96,7 @@ test('fixed packet is checked, but an unpinned original can never assemble', () 
 });
 
 test('pinned series closes all fixed nodes, exact source chains and cross-file manager dependencies', () => {
-  assert.equal(series.patches.length, 124); assert.equal(series.files.length, 25);
+  assert.equal(series.patches.length, 129); assert.equal(series.files.length, 26);
   assert.equal(series.schema, 'native-source-series/2');
   assert.deepEqual([...series.files.map(row => row.path)].sort(), [...NATIVE_SOURCE_PATHS].sort());
   const done = new Map(), current = new Map(series.files.map(row => [row.path, row.originalSHA256]));
@@ -201,7 +201,7 @@ test('a previously read packet changing before read verification is refused', as
   assert(mutated);
 });
 
-integration('all 25 final sources equal independent exact application and return detached immutable observations', () => {
+integration('all 26 final sources equal independent exact application and return detached immutable observations', () => {
   const input = originals(), result = assembleNativeSources(input);
   assert(Object.isFrozen(result)); assert(Object.isFrozen(result.sources)); assert(Object.isFrozen(result.receipt));
   const expected = Object.fromEntries(Object.entries(input).map(([file, bytes]) => [file, bytes.toString('utf8')]));
@@ -302,10 +302,36 @@ function changeManifest(copy, graph, name, update) {
   fs.writeFileSync(file, bytes); row.manifestSHA256 = sha(bytes);
 }
 
+// Execute the actual bounded-prefix source independently of packet byte admission.
+// Synthetic names do not claim dependency-edge admission; full-packet tests retain it.
+test('actual additional-companion validator accepts eight unique well-formed refs and refuses nine', () => {
+  const source = fs.readFileSync(path.join(HERE, 'native-source-series.mjs'), 'utf8');
+  function between(start, end) {
+    const index = source.indexOf(start); assert(index >= 0);
+    assert.equal(source.indexOf(start, index+start.length), -1, 'unique source start');
+    const finish = source.indexOf(end, index+start.length); assert(finish > index);
+    return source.slice(index, finish);
+  }
+  const helpers = between('const fail = code =>', 'const frozen = value =>');
+  const guard = between('    const additional = row.additionalCompanions ?? [];', '    return {row, patch: decode(patchBytes)};');
+  const validate = new Function('row', 'manifest', 'PACKETS', 'crypto',
+    helpers+'\n'+guard+'\nreturn additional.length;');
+  const refs = Array.from({length:9}, (_, index) => ({packet:'lifecycle',
+    name:'companion-'+String.fromCharCode(97+index),
+    patchSHA256:'a'.repeat(64), outputSHA256:'b'.repeat(64)}));
+  assert.equal(new Set(refs.map(value => value.packet+':'+value.name)).size,9);
+  const eight = refs.slice(0,8);
+  assert.equal(validate({additionalCompanions:eight},
+    {additionalCompanions:structuredClone(eight)},PACKETS,crypto),8);
+  assert.throws(() => validate({additionalCompanions:refs},
+    {additionalCompanions:structuredClone(refs)},PACKETS,crypto),
+    /^Error: NATIVE_SOURCE_SERIES_GRAPH$/);
+});
+
 test('additional companion lists are closed, bounded and matched to the pinned manifest', async t => {
   const name = series.patches.find(row => row.additionalCompanions?.length)?.name;
   assert(name, 'current multi-source consumer must declare its extra dependency');
-  for (const mode of ['missing-row', 'missing-manifest', 'unknown-packet', 'extra-field', 'duplicate', 'oversize']) {
+  for (const mode of ['missing-row', 'missing-manifest', 'unknown-packet', 'extra-field', 'duplicate']) {
     const copy = clonePacket(t);
     resealFixture(copy, graph => changeManifest(copy, graph, name, (manifest, row) => {
       if (mode === 'missing-row') delete row.additionalCompanions;
@@ -315,7 +341,6 @@ test('additional companion lists are closed, bounded and matched to the pinned m
         if (mode === 'unknown-packet') value[0].packet = '../outside';
         if (mode === 'extra-field') value[0].root = 'C:/outside';
         if (mode === 'duplicate') value.push({...value[0]});
-        if (mode === 'oversize') while (value.length < 9) value.push({...value[0]});
         manifest.additionalCompanions = value; row.additionalCompanions = value;
       }
     }));

@@ -1,0 +1,22 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/renderer/src/extensions/gamemode_management/index.ts",
+  "originalSourceSHA256": "730912e97b01240f4d58887ee8e1a4af7868788e36d1054063f4f90b140990ee",
+  "inputSHA256": "730912e97b01240f4d58887ee8e1a4af7868788e36d1054063f4f90b140990ee",
+  "outputSHA256": "86ea4ad9f85fd015e0a27197fdeefe2ee48b4859cfecb884d1543b0043ffb01b",
+  "patchSHA256": "b8dd10b9780ea1d96da54ab8d49d713169feecb8380e32157edccaa2e82b8f10",
+  "prerequisitePatch": null,
+  "prerequisitePatchSHA256": null,
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "nativeTerminalGuarantee": false,
+  "globalIdleGuarantee": false,
+  "effectsAllowed": false,
+  "installationPermit": false,
+  "nativeAdmission": false,
+  "requiredManagerPatchSHA256": "caa9daff75ca4bcfe6b37f1c0d84332cec10f7f8e06ed2d58addaad6223407bd"
+}
