@@ -1,0 +1,126 @@
+--- a/src/renderer/src/reducers/index.ts
++++ b/src/renderer/src/reducers/index.ts
+@@ -14,6 +14,8 @@
+ 
+ import { prepareNativePersistenceRegistrationRelease, checkNativePersistenceRegistrationRelease,
+   armNativePersistenceRegistrationRelease, failNativePersistenceRegistrationRelease } from "../store/persistDiffMiddleware";
++import { prepareNativePersistenceInertRelease, checkNativePersistenceInertRelease,
++  armNativePersistenceInertRelease, failNativePersistenceInertRelease } from "../store/persistDiffMiddleware";
+ import type { NativeRendererReleaseFinalizer } from "../store/persistDiffMiddleware";
+ import { createNativePersistenceAdoption, consumeNativePersistenceAdoption, finishNativePersistenceAdoption,
+   failNativePersistenceAdoption, failNativePersistenceFlushAdoption, checkNativeAdoptionRecord, checkNativeAdoptionDownload } from "../store/persistDiffMiddleware";
+@@ -417,6 +419,11 @@
+ let nativeTargetRelease: NativeTargetRelease | undefined;
+ const nativeTargetReleaseTickets = new WeakMap<object, NativeTargetRelease>();
+ let nativeTargetReleaseDepth = 0;
++interface NativeTargetInertRelease { owner: object; target: NativeRendererTarget; binding: NativeRendererStoreBinding; flushOwner: object;
++  flushTicket?: object; phase: "preparing" | "prepared" | "armed" | "released" | "held"; }
++let nativeTargetInertRelease: NativeTargetInertRelease | undefined;
++const nativeTargetInertReleaseTickets = new WeakMap<object, NativeTargetInertRelease>();
++let nativeTargetInertReleaseDepth = 0;
+ let nativeRendererState: any;
+ let nativeRendererDepth = 0;
+ let nativeRendererFactory: object | undefined;
+@@ -583,6 +590,7 @@
+ export function adoptNativeRendererTarget(owner: object, flushOwner: object, observedJSON: string): void {
+   const reservation = nativeRendererTarget, binding = nativeStoreBinding;
+   if (reservation === undefined || reservation.owner !== owner) throw new Error("NATIVE_RENDERER_TARGET_REFUSED");
++  if (nativeTargetInertRelease !== undefined) { failNativeTargetInertRelease(nativeTargetInertRelease); throw new Error("NATIVE_RENDERER_RELEASE_HELD"); }
+   let action: object | undefined;
+   try {
+     checkNativeRendererTarget(owner);
+@@ -597,8 +605,86 @@
+   } catch (error) { if (action !== undefined) failNativePersistenceAdoption(action); failNativePersistenceFlushAdoption(flushOwner); reservation.phase = "held"; holdNativeStore(); throw error; }
+ }
+ 
++const nativeTargetInertReleaseHeld = (record: NativeTargetInertRelease): boolean => record.phase === "held";
++function failNativeTargetInertRelease(record: NativeTargetInertRelease): void {
++  if (nativeTargetInertRelease !== record || record.phase === "released") return;
++  record.phase = "held";
++  failNativePersistenceFlushAdoption(record.flushOwner);
++  if (record.flushTicket !== undefined) failNativePersistenceInertRelease(record.flushTicket);
++  holdNativeStore();
++}
++export function prepareNativeRendererTargetInertRelease(rootOwner: object, flushOwner: object): object {
++  const target = nativeRendererTarget, binding = nativeStoreBinding;
++  if (target === undefined || target.owner !== rootOwner || binding === undefined) throw new Error("NATIVE_RENDERER_RELEASE_REFUSED");
++  if (nativeTargetRelease !== undefined) { failNativeTargetRelease(nativeTargetRelease); throw new Error("NATIVE_RENDERER_RELEASE_HELD"); }
++  if (nativeTargetInertRelease !== undefined || nativeTargetInertReleaseDepth !== 0) {
++    if (nativeTargetInertRelease !== undefined) failNativeTargetInertRelease(nativeTargetInertRelease);
++    throw new Error("NATIVE_RENDERER_RELEASE_HELD");
++  }
++  const record: NativeTargetInertRelease = { owner: Object.freeze({}), target, binding, flushOwner, phase: "preparing" };
++  nativeTargetInertRelease = record; nativeTargetInertReleaseTickets.set(record.owner, record);
++  ++nativeTargetInertReleaseDepth;
++  try {
++    // Validate private parent identity/absence before claiming the child. No
++    // getState callback can release the flush owner between the two claims.
++    if (target.phase !== "reserved" || target.committed !== undefined || record.phase !== "preparing"
++        || nativeRendererTarget !== target || nativeStoreBinding !== binding || nativeStoreBindingPhase !== "bound") throw new Error();
++    record.flushTicket = prepareNativePersistenceInertRelease(flushOwner, rootOwner, binding.store);
++    checkNativeRendererTarget(rootOwner);
++    if (record.phase !== "preparing" || nativeRendererTarget !== target || nativeStoreBinding !== binding) throw new Error();
++    record.phase = "prepared";
++  } catch (error) { failNativeTargetInertRelease(record); throw error; }
++  finally { --nativeTargetInertReleaseDepth; }
++  checkNativeRendererTargetInertRelease(record.owner);
++  return record.owner;
++}
++export function checkNativeRendererTargetInertRelease(ticket: object): void {
++  const record = nativeTargetInertReleaseTickets.get(ticket);
++  if (record === undefined || nativeTargetInertRelease !== record) throw new Error("NATIVE_RENDERER_RELEASE_REFUSED");
++  if (nativeTargetInertReleaseDepth !== 0) { failNativeTargetInertRelease(record); throw new Error("NATIVE_RENDERER_RELEASE_REENTRY"); }
++  ++nativeTargetInertReleaseDepth;
++  try {
++    if (record.phase !== "prepared" && record.phase !== "armed") throw new Error();
++    checkNativeRendererTarget(record.target.owner);
++    if (record.target.phase !== "reserved" || nativeRendererTarget !== record.target || nativeStoreBinding !== record.binding
++        || record.flushTicket === undefined || record.target.committed !== undefined) throw new Error();
++    checkNativePersistenceInertRelease(record.flushTicket);
++    if (nativeTargetInertReleaseHeld(record)) throw new Error();
++  } catch (error) { failNativeTargetInertRelease(record); throw error; }
++  finally { --nativeTargetInertReleaseDepth; }
++}
++export function failNativeRendererTargetInertRelease(ticket: object): void {
++  const record = nativeTargetInertReleaseTickets.get(ticket);
++  if (record !== undefined && nativeTargetInertRelease === record) failNativeTargetInertRelease(record);
++}
++export function armNativeRendererTargetInertRelease(ticket: object): NativeRendererReleaseFinalizer {
++  checkNativeRendererTargetInertRelease(ticket);
++  const record = nativeTargetInertReleaseTickets.get(ticket);
++  if (record === undefined || record.phase !== "prepared" || record.flushTicket === undefined) throw new Error("NATIVE_RENDERER_RELEASE_HELD");
++  try {
++    const flush = armNativePersistenceInertRelease(record.flushTicket);
++    checkNativeRendererTargetInertRelease(ticket);
++    record.phase = "armed";
++    const check = () => {
++      try {
++      if (nativeTargetInertRelease !== record || record.phase !== "armed" || nativeRendererTarget !== record.target
++          || record.target.phase !== "reserved" || record.target.committed !== undefined || nativeStoreBinding !== record.binding || nativeStoreBindingPhase !== "bound"
++          || nativeRendererDepth !== 0 || nativeStoreReading || nativeRendererAmbiguous || nativeTargetInertReleaseDepth !== 0
++          || nativeRendererFactory !== record.binding.factory) throw new Error("NATIVE_RENDERER_RELEASE_HELD");
++      flush.check();
++      } catch (error) { failNativeTargetInertRelease(record); throw error; }
++    };
++    return Object.freeze({ check, finish: () => {
++      check();
++      flush.finish();
++      record.phase = "released"; nativeRendererTarget = undefined; nativeTargetInertRelease = undefined;
++    } });
++  } catch (error) { failNativeTargetInertRelease(record); throw error; }
++}
++
+ const nativeTargetReleaseHeld = (record: NativeTargetRelease): boolean => record.phase === "held";
+ function failNativeTargetRelease(record: NativeTargetRelease): void {
++  if (nativeTargetRelease !== record || record.phase === "released") return;
+   record.phase = "held";
+   failNativePersistenceFlushAdoption(record.flushOwner);
+   if (record.flushTicket !== undefined) failNativePersistenceRegistrationRelease(record.flushTicket);
+@@ -607,6 +693,7 @@
+ export function prepareNativeRendererTargetRelease(rootOwner: object, flushOwner: object): object {
+   const target = nativeRendererTarget, binding = nativeStoreBinding;
+   if (target === undefined || target.owner !== rootOwner || binding === undefined) throw new Error("NATIVE_RENDERER_RELEASE_REFUSED");
++  if (nativeTargetInertRelease !== undefined) { failNativeTargetInertRelease(nativeTargetInertRelease); throw new Error("NATIVE_RENDERER_RELEASE_HELD"); }
+   if (nativeTargetRelease !== undefined || nativeTargetReleaseDepth !== 0) {
+     if (nativeTargetRelease !== undefined) failNativeTargetRelease(nativeTargetRelease);
+     throw new Error("NATIVE_RENDERER_RELEASE_HELD");

@@ -1,0 +1,116 @@
+--- a/src/main/src/store/ReduxPersistorIPC.ts
++++ b/src/main/src/store/ReduxPersistorIPC.ts
+@@ -110,7 +110,81 @@
+   phase:"opening"|"open"|"reading"|"writing"|"committed"|"held"; checking:boolean;writeAttempted:boolean;readbackVerified:boolean;
+   checkCommitment:()=>void; lowerOwner?:object;next?:Buffer;
+ }
++type NativeUnregisteredMainRelease = {
++  owner:object; reservation:INativeModPersistenceReservation;
++  phase:"preparing"|"prepared"|"finalizing"|"released"|"held";checking:boolean;backendTicket?:object;
++};
++const nativeUnregisteredCheckSQL=LevelPersist.prototype.checkNativeSQLAdmission;
++const nativeUnregisteredPrepareBackend=LevelPersist.prototype.prepareNativeUnregisteredRelease;
++const nativeUnregisteredCheckBackend=LevelPersist.prototype.checkNativeUnregisteredRelease;
++const nativeUnregisteredArmBackend=LevelPersist.prototype.armNativeUnregisteredRelease;
++
+ class ReduxPersistorIPC {
++
++  #mNativeUnregisteredRelease:NativeUnregisteredMainRelease|undefined;
++  #holdUnregisteredRelease(r:NativeUnregisteredMainRelease):void {
++    r.phase="held";r.reservation.phase="held";this.mPersistenceWriteFailureObserved=true;
++  }
++  #unregisteredRelease(ticket:object):NativeUnregisteredMainRelease {
++    const r=this.#mNativeUnregisteredRelease;
++    if(r===undefined||r.owner!==ticket)throw new Error("NATIVE_UNREGISTERED_RELEASE_OWNER");return r;
++  }
++  #assertUnregisteredRelease(r:NativeUnregisteredMainRelease):void {
++    const owner=r.reservation;
++    if(this.#mNativeUnregisteredRelease!==r||r.phase==="held"||r.phase==="released"
++      ||this.mNativeModPersistenceReservation!==owner||owner.phase!=="reserved"||this.mNativeRegistration!==undefined
++      ||this.#mNativeExecutorAnchor!==undefined||this.#mNativeTerminalWindow!==undefined||this.mPersistenceWriteFailureObserved
++      ||this.mPersistors.persistent!==owner.persistor||this.#mLevelPersist!==owner.levelPersist||this.#mInvalidator!==owner.invalidator
++      ||this.#mQueryRegistry!==owner.registry||owner.backendOwner===undefined||owner.sqlOwner===undefined||owner.registry===undefined
++      ||this.#mNativeReleaseInProgress!==(r.phase==="finalizing"))throw new Error("NATIVE_UNREGISTERED_RELEASE_HELD");
++  }
++  #checkUnregisteredRelease(r:NativeUnregisteredMainRelease):void {
++    if(r.checking){this.#holdUnregisteredRelease(r);throw new Error("NATIVE_UNREGISTERED_RELEASE_REENTRY");}
++    r.checking=true;
++    try{
++      this.#assertUnregisteredRelease(r);const owner=r.reservation;
++      if(owner.backendOwner===undefined||owner.sqlOwner===undefined||owner.registry===undefined)throw new Error("NATIVE_UNREGISTERED_RELEASE_OWNER");
++      if(r.backendTicket===undefined)nativeUnregisteredCheckSQL.call(owner.levelPersist,owner.sqlOwner,owner.backendOwner,owner.registry);
++      else nativeUnregisteredCheckBackend.call(owner.levelPersist,r.backendTicket);
++      this.#assertUnregisteredRelease(r);
++    }catch(primary){try{this.#holdUnregisteredRelease(r);}catch{/* Preserve first primary. */}throw primary;}finally{r.checking=false;}
++  }
++  /** Does not certify cancellation: source Main coordinator must verify C beforehand. */
++  public prepareNativeUnregisteredRelease(modOwner:object):object {
++    const owner=this.mNativeModPersistenceReservation;
++    if(owner===undefined||owner.owner!==modOwner)throw new Error("NATIVE_UNREGISTERED_RELEASE_OWNER");
++    if(this.#mNativeUnregisteredRelease!==undefined){this.#holdUnregisteredRelease(this.#mNativeUnregisteredRelease);throw new Error("NATIVE_UNREGISTERED_RELEASE_REENTRY");}
++    const r:NativeUnregisteredMainRelease={owner:Object.freeze({}),reservation:owner,phase:"preparing",checking:false};
++    this.#mNativeUnregisteredRelease=r;
++    try{
++      this.#checkUnregisteredRelease(r);
++      if(owner.backendOwner===undefined||owner.sqlOwner===undefined||owner.registry===undefined)throw new Error("NATIVE_UNREGISTERED_RELEASE_OWNER");
++      const lower=nativeUnregisteredPrepareBackend.call(owner.levelPersist,owner.backendOwner,owner.sqlOwner,owner.registry);
++      if(lower===null||typeof lower!=="object"||nativeTerminalTypes.isProxy(lower))throw new Error("NATIVE_UNREGISTERED_RELEASE_OWNER");
++      r.backendTicket=lower;this.#checkUnregisteredRelease(r);r.phase="prepared";return r.owner;
++    }catch(primary){try{this.#holdUnregisteredRelease(r);}catch{/* Preserve first primary. */}throw primary;}
++  }
++  public checkNativeUnregisteredRelease(ticket:object):void {this.#checkUnregisteredRelease(this.#unregisteredRelease(ticket));}
++  public finalizeNativeUnregisteredRelease(ticket:object):void {
++    const r=this.#unregisteredRelease(ticket);
++    if(r.phase!=="prepared"){this.#holdUnregisteredRelease(r);throw new Error("NATIVE_UNREGISTERED_RELEASE_REENTRY");}
++    r.phase="finalizing";this.#mNativeReleaseInProgress=true;
++    try{
++      this.#checkUnregisteredRelease(r);const owner=r.reservation,lower=r.backendTicket;
++      if(lower===undefined)throw new Error("NATIVE_UNREGISTERED_RELEASE_OWNER");
++      const finishBackend=nativeUnregisteredArmBackend.call(owner.levelPersist,lower);
++      if(typeof finishBackend!=="function"||nativeTerminalTypes.isProxy(finishBackend))throw new Error("NATIVE_UNREGISTERED_RELEASE_OWNER");
++      // All potential callbacks are before the child-only private-guard cascade.
++      this.#checkUnregisteredRelease(r);
++      const d=Object.getOwnPropertyDescriptor(this,"mNativeModPersistenceReservation");
++      if(d===undefined||!("value" in d)||d.value!==owner||d.writable!==true)throw new Error("NATIVE_UNREGISTERED_RELEASE_HELD");
++      this.#assertUnregisteredRelease(r);finishBackend();
++      // CALLBACK-FREE tail: no fake registration, failure clear or consumed-ID reset.
++      r.phase="released";r.backendTicket=undefined;
++      this.mNativeModPersistenceReservation=undefined;this.#mNativeUnregisteredRelease=undefined;this.#mNativeReleaseInProgress=false;
++    }catch(primary){try{this.#holdUnregisteredRelease(r);}catch{/* Preserve first primary. */}this.#mNativeReleaseInProgress=false;throw primary;}
++  }
++
+   #mNativeTerminalWindow:NativeMainTerminalWindow|undefined;
+   private mPersistors: { [hive: string]: IPersistor } = {};
+   private mUpdateQueue: Promise<void> = Promise.resolve();
+@@ -507,6 +581,7 @@
+   }
+ 
+   public checkNativeModPersistenceReservation(owner: object): void {
++    if(this.#mNativeUnregisteredRelease!==undefined){const r=this.#mNativeUnregisteredRelease;if(r.reservation.owner===owner)this.#holdUnregisteredRelease(r);throw new Error("NATIVE_UNREGISTERED_RELEASE_BUSY");}
+     this.#checkNativeExecutorAnchorIdle();
+     const reservation = this.mNativeModPersistenceReservation;
+     if (reservation === undefined || reservation.owner !== owner || reservation.phase !== "reserved") {
+@@ -518,6 +593,7 @@
+ 
+   /** Bind a private reservation to the exact target before executor preparation. */
+   public checkNativeModPersistenceTarget(owner: object, gameId: string, modId: string): void {
++    if(this.#mNativeUnregisteredRelease!==undefined){const r=this.#mNativeUnregisteredRelease;if(r.reservation.owner===owner)this.#holdUnregisteredRelease(r);throw new Error("NATIVE_UNREGISTERED_RELEASE_BUSY");}
+     if (this === null || typeof this !== "object" || !(#mNativeExecutorAnchor in this)) {
+       throw new Error("NATIVE_EXECUTOR_TARGET_REFUSED");
+     }
+@@ -675,6 +751,7 @@
+     return this.#writeNativeExecutorAnchor(owner,expectedBytes,nextBytes);
+   }
+   #writeNativeExecutorAnchor(owner: object, expectedBytes: Uint8Array | null, nextBytes: Uint8Array, window?:NativeMainTerminalWindow) {
++    if(this.#mNativeUnregisteredRelease!==undefined){const r=this.#mNativeUnregisteredRelease;if(r.reservation.owner===owner)this.#holdUnregisteredRelease(r);return Promise.reject(new Error("NATIVE_UNREGISTERED_RELEASE_BUSY"));}
+     const reservation = this.mNativeModPersistenceReservation;
+     if (reservation === undefined || reservation.owner !== owner || reservation.phase !== "reserved"
+         || this.#mNativeExecutorAnchor !== undefined || this.#mNativeTerminalWindow!==window || this.mNativeRegistration!==window?.registration
+@@ -724,6 +801,7 @@
+     return this.#registerNativeMod(owner, bytes, "tracked");
+   }
+   #registerNativeMod(owner: object, bytes: Uint8Array, mode: "minimal" | "tracked"): Promise<unknown> {
++    if(this.#mNativeUnregisteredRelease!==undefined){const r=this.#mNativeUnregisteredRelease;if(r.reservation.owner===owner)this.#holdUnregisteredRelease(r);return Promise.reject(new Error("NATIVE_UNREGISTERED_RELEASE_BUSY"));}
+     if (this.#mNativeExecutorAnchor !== undefined) return Promise.reject(new Error("NATIVE_EXECUTOR_ANCHOR_BUSY"));
+     const reservation = this.mNativeModPersistenceReservation;
+     if (reservation === undefined || reservation.owner !== owner || reservation.phase !== "reserved" || this.mNativeRegistration !== undefined) return Promise.reject(new Error("NATIVE_REGISTRATION_REFUSED"));

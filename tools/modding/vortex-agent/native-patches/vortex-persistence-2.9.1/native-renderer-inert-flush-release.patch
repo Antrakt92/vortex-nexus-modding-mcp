@@ -1,0 +1,186 @@
+--- a/src/renderer/src/store/persistDiffMiddleware.ts
++++ b/src/renderer/src/store/persistDiffMiddleware.ts
+@@ -195,6 +195,10 @@
+ const nativeAdoptionJobIds = new Set<string>();
+ const nativeAdoptionRequestIds = new Set<string>();
+ export interface NativeRendererReleaseFinalizer { check: () => void; finish: () => void; }
++interface NativePersistenceInertRelease {
++  owner: object; held: object; flushOwner: object; rootOwner: object; store: object;
++  phase: "preparing" | "prepared" | "armed" | "released" | "held";
++}
+ interface NativePersistenceRelease {
+   owner: object; held: object; adoption: NativeAdoptionTicket; rootOwner: object; store: object;
+   phase: "preparing" | "prepared" | "armed" | "released" | "held";
+@@ -302,6 +306,19 @@
+ export function failNativePersistenceRegistrationRelease(ticket: object): void {
+   activeNativePersistenceHold?.failRelease(ticket);
+ }
++export function prepareNativePersistenceInertRelease(owner: object, rootOwner: object, store: object): object {
++  if (activeNativePersistenceHold === undefined) throw nativeAdoptionError();
++  return activeNativePersistenceHold.prepareInertRelease(owner, rootOwner, store);
++}
++export function checkNativePersistenceInertRelease(ticket: object): void {
++  if (activeNativePersistenceHold === undefined) throw nativeAdoptionError();
++  activeNativePersistenceHold.checkInertRelease(ticket);
++}
++export function armNativePersistenceInertRelease(ticket: object): NativeRendererReleaseFinalizer {
++  if (activeNativePersistenceHold === undefined) throw nativeAdoptionError();
++  return activeNativePersistenceHold.armInertRelease(ticket);
++}
++export function failNativePersistenceInertRelease(ticket: object): void { activeNativePersistenceHold?.failInertRelease(ticket); }
+ export function createNativePersistenceAdoption(flushOwner: object, rootOwner: object, store: object, bytes: string): object {
+   if (activeNativePersistenceHold === undefined) throw nativeAdoptionError();
+   return activeNativePersistenceHold.adoption(flushOwner, rootOwner, store, bytes);
+@@ -343,6 +360,10 @@
+   invalidate: () => void;
+   adoption: (owner: object, rootOwner: object, store: object, bytes: string) => object;
+   failAdoption: (owner: object) => void;
++  prepareInertRelease: (owner: object, rootOwner: object, store: object) => object;
++  checkInertRelease: (ticket: object) => void;
++  armInertRelease: (ticket: object) => NativeRendererReleaseFinalizer;
++  failInertRelease: (ticket: object) => void;
+   prepareRelease: (owner: object, rootOwner: object, store: object) => object;
+   checkRelease: (ticket: object) => NativeAdoptionData;
+   armRelease: (ticket: object) => NativeRendererReleaseFinalizer;
+@@ -389,6 +410,9 @@
+   let nativeControlDepth = 0;
+   const nativeAdoptionAttempted = new WeakSet<object>();
+   let nativeCompletedAdoption: NativeAdoptionTicket | undefined;
++  let nativeInertRelease: NativePersistenceInertRelease | undefined;
++  let nativeInertReleaseDepth = 0;
++  const nativeInertReleaseTickets = new WeakMap<object, NativePersistenceInertRelease>();
+   let nativeRelease: NativePersistenceRelease | undefined;
+   let nativeReleaseDepth = 0;
+   const nativeReleaseTickets = new WeakMap<object, NativePersistenceRelease>();
+@@ -586,6 +610,7 @@
+     return held;
+   };
+   const failRelease = (record: NativePersistenceRelease) => {
++    if (nativeRelease !== record || record.phase === "released") return;
+     record.phase = "held";
+     failNativeHold(nativeAdoptionError());
+   };
+@@ -607,6 +632,32 @@
+       return record;
+     } catch (error) { failRelease(record); throw error; }
+     finally { --nativeReleaseDepth; }
++  };
++  const failInertRelease = (record: NativePersistenceInertRelease) => {
++    if (nativeInertRelease !== record || record.phase === "released") return;
++    record.phase = "held"; failNativeHold(nativeAdoptionError());
++  };
++  const checkInertRelease = (ticket: object): NativePersistenceInertRelease => {
++    const record = nativeInertReleaseTickets.get(ticket);
++    if (record === undefined || nativeInertRelease !== record) throw nativeAdoptionError();
++    if (nativeInertReleaseDepth !== 0) { failInertRelease(record); throw nativeAdoptionError(); }
++    ++nativeInertReleaseDepth;
++    try {
++      const held = validateNativeHold(record.flushOwner);
++      if ((record.phase !== "prepared" && record.phase !== "armed") || held !== record.held
++          || nativeRelease !== undefined || nativeCompletedAdoption !== undefined || nativeAdoptionAttempted.has(record.flushOwner)
++          || record.store === null || typeof record.store !== "object" || nativeAdoptionTypes.isProxy(record.store)) throw nativeAdoptionError();
++      ++nativeControlDepth;
++      try {
++        const before = previousState;
++        const descriptor = Object.getOwnPropertyDescriptor(record.store, "getState");
++        if (descriptor === undefined || !("value" in descriptor) || descriptor.value !== held.getState
++            || Reflect.apply(descriptor.value, record.store, []) !== before || previousState !== before
++            || nativeHoldFailed() || nativeControlDepth !== 1 || nativeInertRelease !== record) throw nativeAdoptionError();
++      } finally { --nativeControlDepth; }
++      return record;
++    } catch (error) { failInertRelease(record); throw error; }
++    finally { --nativeInertReleaseDepth; }
+   };
+   const nativeController: NativePersistenceHoldController = {
+     acquire() {
+@@ -647,6 +698,7 @@
+     failAdoption(owner) { if (nativeHold?.owner === owner) failNativeHold(nativeAdoptionError()); },
+     adoption(owner, rootOwner, store, bytes) {
+       const held = validateNativeHold(owner);
++      if (nativeInertRelease !== undefined) { failInertRelease(nativeInertRelease); throw nativeAdoptionError(); }
+       if (nativeAdoptionAttempted.has(owner)) { failNativeHold(nativeAdoptionError()); throw nativeAdoptionError(); }
+       nativeAdoptionAttempted.add(owner);
+       ++nativeControlDepth;
+@@ -667,9 +719,64 @@
+       } catch (error) { failNativeHold(error); throw error; }
+       finally { --nativeControlDepth; }
+     },
++    prepareInertRelease(owner, rootOwner, store) {
++      const held = nativeHold;
++      if (held === undefined || held.owner !== owner) throw nativeAdoptionError();
++      if (nativeInertRelease !== undefined || nativeInertReleaseDepth !== 0) {
++        if (nativeInertRelease !== undefined) failInertRelease(nativeInertRelease);
++        throw nativeAdoptionError();
++      }
++      if (nativeRelease !== undefined || nativeReleaseDepth !== 0 || nativeCompletedAdoption !== undefined || nativeAdoptionAttempted.has(owner)) {
++        failNativeHold(nativeAdoptionError()); throw nativeAdoptionError();
++      }
++      const record: NativePersistenceInertRelease = {owner:Object.freeze({}),held,flushOwner:owner,rootOwner,store,phase:"preparing"};
++      nativeInertRelease=record; nativeInertReleaseTickets.set(record.owner,record);
++      ++nativeInertReleaseDepth;
++      try {
++        validateNativeHold(owner);
++        // Redux's middleware API and enhanced public store are different objects;
++        // the genuine binding is their retained own data getState function.
++        if (record.phase !== "preparing" || store === null || typeof store !== "object"
++            || nativeAdoptionTypes.isProxy(store) || nativeHoldFailed()) throw nativeAdoptionError();
++        const descriptor = Object.getOwnPropertyDescriptor(store, "getState");
++        if (descriptor === undefined || !("value" in descriptor) || descriptor.value !== held.getState) throw nativeAdoptionError();
++        record.phase="prepared";
++      } catch(error) { failInertRelease(record); throw error; }
++      finally { --nativeInertReleaseDepth; }
++      checkInertRelease(record.owner); return record.owner;
++    },
++    checkInertRelease(ticket) { checkInertRelease(ticket); },
++    failInertRelease(ticket) { const record=nativeInertReleaseTickets.get(ticket); if(record!==undefined&&nativeInertRelease===record)failInertRelease(record); },
++    armInertRelease(ticket) {
++      const record=checkInertRelease(ticket),held=nativeHold;
++      if(record.phase!=="prepared"||held===undefined){failInertRelease(record);throw nativeAdoptionError();}
++      try {
++        // Schedule the existing unrelated pending diffs before opening any gate.
++        if(Object.keys(pendingDiffs).length!==0&&flushTimeout===null){
++          let fired=false;let timer:ReturnType<typeof setTimeout>|undefined;
++          ++nativeInertReleaseDepth;
++          try { timer=setTimeout(()=>{fired=true;if(record.phase==="released")flushDiffs();else{if(flushTimeout===timer)flushTimeout=null;failInertRelease(record);}},DEBOUNCE_MS); }
++          finally{--nativeInertReleaseDepth;}
++          if(fired||timer===undefined)throw nativeAdoptionError();flushTimeout=timer;
++        }
++        checkInertRelease(ticket);record.phase="armed";
++        const check=()=>{
++          if(record.phase!=="armed"||nativeInertRelease!==record||nativeHold!==held||held.phase!=="ready"
++            ||nativeCompletedAdoption!==undefined||nativeAdoptionAttempted.has(record.flushOwner)||nativeRelease!==undefined
++            ||nativeControlDepth!==0||nativeDispatchDepth!==0||legacyFlushDepth!==0||nativeInertReleaseDepth!==0||nativeReleaseDepth!==0
++            ||acknowledgedHeld||acknowledgedFlight!==undefined||held.generation!==coherenceGeneration
++            ||(Object.keys(pendingDiffs).length!==0&&flushTimeout===null)
++            ||activeNativePersistenceHold!==nativeController||nativePersistenceWriter!==nativeController||nativePersistenceFactoryHeld||nativePersistenceWritersAmbiguous){
++            failInertRelease(record);throw nativeAdoptionError();
++          }
++        };
++        return Object.freeze({check,finish:()=>{check();record.phase="released";held.phase="released";nativeHold=undefined;nativeInertRelease=undefined;}});
++      }catch(error){failInertRelease(record);throw error;}
++    },
+     prepareRelease(owner, rootOwner, store) {
+       const held = nativeHold;
+       if (held === undefined || held.owner !== owner) throw nativeAdoptionError();
++      if (nativeInertRelease !== undefined) { failInertRelease(nativeInertRelease); throw nativeAdoptionError(); }
+       if (nativeRelease !== undefined || nativeReleaseDepth !== 0) {
+         if (nativeRelease !== undefined) failRelease(nativeRelease);
+         throw nativeAdoptionError();
+@@ -729,6 +836,7 @@
+     },
+     release(owner) {
+       const held = validateNativeHold(owner);
++      if (nativeInertRelease !== undefined) { failInertRelease(nativeInertRelease); throw nativeAdoptionError(); }
+       if (nativeRelease !== undefined) { failRelease(nativeRelease); throw nativeAdoptionError(); }
+       ++nativeControlDepth;
+       try {
+@@ -818,6 +926,9 @@
+       nativeStore = store;
+       return (next: Dispatch<AnyAction>) =>
+     (action: AnyAction) => {
++      if (nativeInertRelease !== undefined && (nativeInertReleaseDepth !== 0 || nativeControlDepth !== 0)) {
++        failInertRelease(nativeInertRelease); throw nativeAdoptionError();
++      }
+       const adoption = nativeAdoptions.get(action);
+       if (adoption !== undefined) {
+         try {

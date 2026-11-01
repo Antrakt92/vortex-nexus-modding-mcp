@@ -240,6 +240,28 @@ export function parseRelayOutput(bytes) {
     need(value?.schema === 'owned-zip-relay-copy-proof/1' || bytes.byteLength <= MAX_STATUS, 'FRAME_LIMIT');
     return value;
 }
+const relayInertObservers = new WeakMap();
+const relayInertGet = WeakMap.prototype.get;
+const relayInertSet = WeakMap.prototype.set;
+/** Source-owned observation only. Caller JSON/status/paths cannot create one. */
+export function observeRelayInertCancellation(owner) {
+    need(arguments.length === 1, 'INERT_CANCELLATION_ARGUMENTS');
+    need(owner !== null && typeof owner === 'object' && !isProxy(owner), 'INERT_CANCELLATION_OWNER');
+    const observe = Reflect.apply(relayInertGet, relayInertObservers, [owner]);
+    need(typeof observe === 'function', 'INERT_CANCELLATION_OWNER');
+    return observe();
+}
+function relayInertClosed(value, binding) {
+    validateRelayWorkerTerminal(value, binding);
+    need(value !== null && value.spawnObserved === true && value.exitObserved === true
+        && value.closeObserved === true && value.childResourcesClosed === true && value.exitSucceeded === true
+        && value.childErrorObserved === false && value.childErrorCode === null && value.held === false
+        && value.reasonCode === null && value.outcome === 'exited'
+        && value.exitCode === 0 && value.closeCode === 0 && value.exitSignal === null && value.closeSignal === null
+        && Object.values(value.pipes).every(p => p.closeObserved === true && p.errorObserved === false && p.errorCode === null), 'INERT_CANCELLATION_TERMINAL');
+    return Object.freeze({...value,binding:Object.freeze({...value.binding}),pipes:Object.freeze({
+        stdin:Object.freeze({...value.pipes.stdin}),stdout:Object.freeze({...value.pipes.stdout}),stderr:Object.freeze({...value.pipes.stderr})})});
+}
 let occupied = null;
 export function snapshotNativeExecutorRuntimeBinding(bytes) {
     const copy = bytesCopy(bytes, 8192);
@@ -654,5 +676,39 @@ function createRelay(requestBytes, archiveBindingBytes, mode, runtime) {
             return waitFor('closed');
         }
     });
+    Reflect.apply(relayInertSet, relayInertObservers, [owner, () => {
+        // No external owner method/status callback is called: these are this
+        // exact genuine owner's retained monotonic controls and parsed replies.
+        const sdk = last?.sdk;
+        need(mode === 'staging' && runtime !== null && explicitPrepare && preparedReceipt !== null
+            && preparedDigest !== null && prepareNonce !== null && !startPreparedAttempted
+            && startAttempted && startSent && cancelAttempted && releaseAttempted && controllerEnded && closed
+            && !handoffAttempted && !protocolBroken && firstError === null && stderrBytes === 0
+            && !writing && outbound.length === 0 && pending.length === 0
+            && proofNonce === null && proofFlight === null && proofCache === null && !proofReceived && !proofTimedOut
+            && last?.phase === 'released' && last.accepted === false && last.controllerEOF === false
+            && last.errorCode === null && ready !== null, 'INERT_CANCELLATION_UNPROVEN');
+        validateRelayPreparedReceipt(preparedReceipt, binding, preparedAnchor);
+        need(digest(Buffer.from(JSON.stringify(preparedReceipt))) === preparedDigest, 'INERT_CANCELLATION_PREPARED');
+        validateRelaySDKStatus(sdk, binding, mode);
+        // This exact conjunction identifies SDK's private inertAbortAttempted
+        // branch: no ordinary Python worker status can yield worker===null.
+        need(sdk.phase === 'cancelled' && sdk.startAttempted === true && sdk.startSent === false
+            && sdk.worker === null && sdk.cancelAttempted === true && sdk.handoffAttempted === false
+            && sdk.childClosed === true && sdk.childExitCode === 0 && sdk.childSignal === null
+            && sdk.errorCode === null && sdk.stderrObserved === false && sdk.copyProof === null
+            && sdk.destination !== null && sdk.destination.directoryIdentity === null
+            && sdk.workerLifetime === preparedReceipt.workerLifetime && sdk.workerPid === preparedReceipt.workerPid
+            && sdk.creationTime === preparedReceipt.creationTime && sdk.packetSHA256 === preparedReceipt.packetSHA256,
+            'INERT_CANCELLATION_UNPROVEN');
+        const relayTerminal = relayInertClosed(observer?.read() ?? null, binding);
+        const workerTerminal = relayInertClosed(sdk.workerTerminal, binding);
+        return Object.freeze({schema:'owned-zip-relay-inert-cancellation/1',binding:Object.freeze({...binding}),
+            preparedReceiptSHA256:preparedDigest,relayLifetime:ready.relayLifetime,relayPid:child.pid,
+            workerLifetime:sdk.workerLifetime,workerPid:sdk.workerPid,creationTime:sdk.creationTime,packetSHA256:sdk.packetSHA256,
+            cancelledBeforeStart:true,explicitStartAttempted:false,pythonStartSent:false,destinationAcquired:false,
+            relayTerminal,workerTerminal,effectsAllowed:false,installationPermit:false,nativeAdmission:false,
+            nativeInstallAccepted:false,powerLossPersistenceVerified:false});
+    }]);
     return owner;
 }

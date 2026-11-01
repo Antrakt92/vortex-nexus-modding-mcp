@@ -1,0 +1,382 @@
+--- a/src/renderer/src/ExtensionManager.ts
++++ b/src/renderer/src/ExtensionManager.ts
+@@ -9,7 +9,7 @@
+ import type { DiffOperation } from "@vortex/shared/ipc";
+ import { types as nativeReadinessTypes } from "util";
+ import { createHash as nativeExecutorTransportHash } from "crypto";
+-import type { NativeExecutorChallenge, NativeExecutorResponse, NativeExecutorPreparation, NativeExecutorExecutionChallenge, NativeExecutorExecutionResponse, NativeExecutorExecutionInvalidation, NativeExecutorExecutionResult, NativeExecutorRendererCompletion, NativeExecutorSuccessor } from "@vortex/shared/ipc";
++import type { NativeExecutorChallenge, NativeExecutorResponse, NativeExecutorPreparation, NativeExecutorExecutionChallenge, NativeExecutorExecutionResponse, NativeExecutorExecutionInvalidation, NativeExecutorExecutionResult, NativeExecutorRendererCompletion, NativeExecutorSuccessor, NativeExecutorCancellationChallenge, NativeExecutorCancellationResponse, NativeExecutorCancellationInvalidation, NativeExecutorCancellationResult, NativeExecutorCancellationSuccessor, NativeExecutorRendererCancellation } from "@vortex/shared/ipc";
+ import { performance as nativeReadinessClock } from "perf_hooks";
+ import type { NativeMainReadinessObservation } from "@vortex/shared/ipc";
+ import type InstallManager from "./extensions/mod_management/InstallManager";
+@@ -748,7 +748,7 @@
+   contextReading: boolean;
+   readyOwner?: object;
+   manager?: InstallManager;
+-  methods?: {prototype: object; reserve: PropertyDescriptor; check: PropertyDescriptor; describe: PropertyDescriptor; releasePrepare: PropertyDescriptor; releaseCheck: PropertyDescriptor; releaseFinalize: PropertyDescriptor};
++  methods?: {prototype: object; reserve: PropertyDescriptor; check: PropertyDescriptor; describe: PropertyDescriptor; releasePrepare: PropertyDescriptor; releaseCheck: PropertyDescriptor; releaseFinalize: PropertyDescriptor; inertPrepare: PropertyDescriptor; inertCheck: PropertyDescriptor; inertFinalize: PropertyDescriptor};
+   managerOwner?: object;
+   targetOwner?: object;
+   flushOwner?: object;
+@@ -769,6 +769,11 @@
+   executionInvalidate?: (value: NativeExecutorExecutionInvalidation) => void;
+   executionUnsubscribe?: () => void;
+   successor?: (transportId: string, executionId: string) => Promise<NativeExecutorSuccessor>;
++  cancel?: (transportId: string) => Promise<NativeExecutorCancellationResult>;
++  cancellationReceiver?: (handler: (challenge: NativeExecutorCancellationChallenge) => Promise<NativeExecutorCancellationResponse>) => () => void;
++  cancellationInvalidate?: (value: NativeExecutorCancellationInvalidation) => void;
++  cancellationSuccessor?: (transportId: string, cancellationId: string) => Promise<NativeExecutorCancellationSuccessor>;
++  cancellationUnsubscribe?: () => void;
+   acquire: ExtensionManager["acquireNativeRendererExecutorAdmission"];
+   check: ExtensionManager["checkNativeRendererExecutorAdmission"];
+   project: ExtensionManager["getNativeRendererExecutorAdmissionProjection"];
+@@ -822,7 +827,243 @@
+   invalidated: Promise<void>; invalidate: () => void;
+ }
+ 
++interface NativeRendererCancellation {
++  request: NativeExecutorRendererRequest; admission: NativeRendererExecutorAdmission;
++  phase: "running" | "finalizing" | "finalized" | "completed" | "held";
++  cancellationId?: string; sequence: number; busy: boolean; checking: boolean; notified: boolean;
++  primarySet: boolean; primary: unknown; invalidated: Promise<void>; invalidate: () => void;
++  challenges: Set<string>; ticket?: object; unsubscribeAttempted: boolean;
++  observation?: Readonly<NativeExecutorRendererCancellation>; mainRelease?: Readonly<Record<string,unknown>>;
++  result?: Readonly<NativeExecutorCancellationResult>;
++}
++interface NativeRendererCancellationSuccessor {
++  cancellation: NativeRendererCancellation; phase: "checking" | "waiting" | "retryable" | "held";
++  checking: boolean; unsubscribe?: () => void; unsubscribeAttempted: boolean;
++  invalidated: Promise<void>; invalidate: () => void;
++}
++
+ class ExtensionManager {
++  #mNativeCancellation: NativeRendererCancellation | undefined;
++  #mNativeCancellationSuccessor: NativeRendererCancellationSuccessor | undefined;
++  #mNativeCancellationLast: Readonly<NativeExecutorCancellationSuccessor> | undefined;
++  #nativeCancellationClosed(record: NativeRendererCancellation): boolean { return record.phase === "finalized" || record.phase === "completed"; }
++  #nativeCancellationHeld(record: NativeRendererCancellation): boolean { return record.phase === "held"; }
++  #holdNativeCancellation(record: NativeRendererCancellation, primary?: unknown, retain = false): void {
++    if (this.#nativeCancellationClosed(record)) return;
++    if (retain && !record.primarySet) { record.primarySet=true; record.primary=primary; }
++    record.phase="held";record.invalidate();this.#holdNativeTransport(record.request);
++    const b=record.request.binding,send=record.request.route.cancellationInvalidate;
++    if (record.notified || record.cancellationId===undefined || b===undefined || send===undefined) return;
++    record.notified=true;
++    const value:NativeExecutorCancellationInvalidation=Object.freeze({schema:"native-executor-cancellation-invalidated/1",transportId:b.transportId,
++      cancellationId:record.cancellationId,operationId:b.operationId,nativeJobId:b.nativeJobId,requestSHA256:b.requestSHA256,
++      requestBytesSHA256:b.requestBytesSHA256,archiveBytesSHA256:b.archiveBytesSHA256,reasonCode:"NATIVE_EXECUTOR_RENDERER_FAILED"});
++    try { Reflect.apply(send,record.request.route.persist,[value]); } catch { /* Notification failure never refunds ownership. */ }
++  }
++  #checkNativeCancellation(record:NativeRendererCancellation):void {
++    if(record.checking){this.#holdNativeCancellation(record);throw this.#nativeTransportError();}
++    record.checking=true;
++    try {
++      const r=record.request,a=record.admission,route=r.route;
++      const current=()=>this.#mNativeCancellation===record&&!this.#nativeCancellationHeld(record)
++        &&this.#mNativeExecutorRequest===r&&this.#mNativeExecutorAdmission===a&&r.admission===a
++        &&this.#mNativeExecution===undefined&&this.#mNativeCompletion===undefined&&this.#mNativeExecutorAdoption===undefined
++        &&r.prepared&&r.round===3&&!r.busy&&r.binding!==undefined&&a.owner===r.owner;
++      if(!current()||a.store===undefined||a.storeDescriptor===undefined||a.subscribeDescriptor===undefined
++        ||a.readyOwner===undefined||a.manager===undefined||a.methods===undefined||a.phase!=="ready")throw this.#nativeTransportError();
++      this.#checkNativeTransport(route,r);
++      if(!this.#nativeExecutorSameDescriptor(a.storeDescriptor,this.#nativeExecutorStoreDescriptor(a.store))
++        ||!this.#nativeExecutorSameDescriptor(a.subscribeDescriptor,this.#nativeExecutorStoreDescriptor(a.store,"subscribe")))throw this.#nativeTransportError();
++      this.#nativeExecutorProfile(a);this.checkNativeRendererManagerReady(a.readyOwner,a.store);
++      if(this.getNativeRendererManagerInstance(a.readyOwner,a.store)!==a.manager)throw this.#nativeTransportError();
++      const methods=this.#nativeExecutorMethods(a.manager),captured=a.methods;
++      const names=["reserve","check","describe","releasePrepare","releaseCheck","releaseFinalize","inertPrepare","inertCheck","inertFinalize"] as const;
++      if(methods.prototype!==captured.prototype||names.some(k=>!this.#nativeExecutorSameDescriptor(methods[k],captured[k])))throw this.#nativeTransportError();
++      if(!this.#nativeCancellationClosed(record)){
++        this.#checkNativeExecutorAttempt(a);
++        if(record.ticket!==undefined)Reflect.apply(captured.inertCheck.value,a.manager,[record.ticket]);
++      }
++      this.#nativeExecutorProfile(a);this.#checkNativeTransport(route,r);
++      if(!current())throw this.#nativeTransportError();
++    }catch(primary){this.#holdNativeCancellation(record,primary,true);throw primary;}
++    finally{record.checking=false;}
++  }
++  #nativeCancellationChallenge(raw:unknown):NativeExecutorCancellationChallenge {
++    const keys=["schema","transportId","cancellationId","challengeId","sequence","stage","payloadJSON","operationId","nativeJobId","requestSHA256","requestBytesSHA256","archiveBytesSHA256","gameId","modId","profileId","managerScope","rendererGeneration"];
++    const d=this.#nativeTransportData(raw,keys),n=d.sequence;
++    const stages=["prepare-inert-release","check-inert-after-close","check-inert-before-main-release","finalize-inert-release","hold"];
++    if(d.schema!=="native-executor-cancellation-challenge/1"||typeof n!=="number"||!Number.isInteger(n)||n<1||n>5||d.stage!==stages[n-1]
++      ||typeof d.cancellationId!=="string"||!/^cancellation_[a-f0-9]{32}$/.test(d.cancellationId)
++      ||typeof d.challengeId!=="string"||!/^challenge_[a-f0-9]{32}$/.test(d.challengeId)
++      ||(n===4?typeof d.payloadJSON!=="string"||Buffer.byteLength(d.payloadJSON)<1||Buffer.byteLength(d.payloadJSON)>8192:d.payloadJSON!==null))throw this.#nativeTransportError();
++    this.#nativeTransportChallenge({schema:"native-executor-challenge/1",...Object.fromEntries(["transportId","challengeId","operationId","nativeJobId","requestSHA256","requestBytesSHA256","archiveBytesSHA256","gameId","modId","profileId","managerScope","rendererGeneration"].map(k=>[k,d[k]])),round:1,stage:"acquire"});
++    return Object.freeze({...d}) as unknown as NativeExecutorCancellationChallenge;
++  }
++  #nativeCancellationObservation(record:NativeRendererCancellation,state:NativeExecutorRendererCancellation["state"]):Readonly<NativeExecutorRendererCancellation>{
++    const b=record.request.binding;if(b===undefined||record.cancellationId===undefined)throw this.#nativeTransportError();
++    return Object.freeze({schema:"native-executor-renderer-cancellation/1",transportId:b.transportId,cancellationId:record.cancellationId,
++      operationId:b.operationId,nativeJobId:b.nativeJobId,requestSHA256:b.requestSHA256,state,targetAbsent:true,effectsAllowed:false,installationPermit:false,nativeAdmission:false});
++  }
++  #finalizeNativeCancellation(record:NativeRendererCancellation,payload:string,observation:Readonly<NativeExecutorRendererCancellation>):void {
++    this.#checkNativeCancellation(record);
++    const r=record.request,a=record.admission,b=r.binding,methods=a.methods,manager=a.manager,ticket=record.ticket;
++    if(record.phase!=="running"||b===undefined||manager===undefined||methods===undefined||ticket===undefined||record.unsubscribeAttempted
++      ||a.store===undefined||a.storeDescriptor===undefined||a.unsubscribe===undefined)throw this.#nativeTransportError();
++    const d=this.#nativeTransportData(JSON.parse(payload),["schema","operationId","nativeJobId","requestSHA256","rootId","inventorySHA256","released","effectsAllowed","installationPermit","nativeAdmission"]);
++    if(JSON.stringify(d)!==payload||d.schema!=="native-executor-cancellation-release/1"||d.operationId!==b.operationId||d.nativeJobId!==b.nativeJobId
++      ||d.requestSHA256!==b.requestSHA256||typeof d.rootId!=="string"||d.rootId.length>100||!/^[0-9]+:[0-9]+$/.test(d.rootId)
++      ||typeof d.inventorySHA256!=="string"||!/^[a-f0-9]{64}$/.test(d.inventorySHA256)||d.released!==true
++      ||d.effectsAllowed!==false||d.installationPermit!==false||d.nativeAdmission!==false)throw this.#nativeTransportError();
++    record.mainRelease=Object.freeze({...d});record.phase="finalizing";
++    const before=Reflect.apply(a.storeDescriptor.value,a.store,[]);
++    this.#checkNativeCancellation(record);
++    const off=a.unsubscribe;if(typeof off!=="function"||nativeReadinessTypes.isProxy(off))throw this.#nativeTransportError();
++    record.unsubscribeAttempted=true;Reflect.apply(off,undefined,[]);
++    if(Reflect.apply(a.storeDescriptor.value,a.store,[])!==before)throw this.#nativeTransportError();
++    this.#checkNativeCancellation(record);
++    // This actual manager method completes nested checks and opens synchronously.
++    // No old owner checks, callbacks or allocation follow its deepest opener.
++    Reflect.apply(methods.inertFinalize.value,manager,[ticket]);
++    record.observation=observation;record.phase="finalized";
++  }
++  async #receiveNativeCancellation(route:NativeExecutorRendererTransport,raw:unknown):Promise<NativeExecutorCancellationResponse>{
++    const c=this.#nativeCancellationChallenge(raw),record=this.#mNativeCancellation,r=this.#mNativeExecutorRequest;
++    const response=(state:NativeExecutorCancellationResponse["state"],observation:NativeExecutorRendererCancellation|null=null):NativeExecutorCancellationResponse=>Object.freeze({
++      schema:"native-executor-cancellation-response/1",transportId:c.transportId,cancellationId:c.cancellationId,challengeId:c.challengeId,sequence:c.sequence,stage:c.stage,
++      requestSHA256:c.requestSHA256,requestBytesSHA256:c.requestBytesSHA256,archiveBytesSHA256:c.archiveBytesSHA256,state,observation,errorCode:state==="failed"?"NATIVE_EXECUTOR_RENDERER_FAILED":null});
++    if(record===undefined||r===undefined||record.request!==r||r.route!==route||r.binding===undefined)return response("failed");
++    const b=r.binding,names=["transportId","operationId","nativeJobId","requestSHA256","requestBytesSHA256","archiveBytesSHA256","gameId","modId","profileId","managerScope","rendererGeneration"] as const;
++    if(names.some(k=>c[k]!==b[k])||(record.cancellationId!==undefined&&record.cancellationId!==c.cancellationId))return response("failed");
++    try{
++      if(this.#nativeCancellationClosed(record))return response("failed");
++      if(record.cancellationId===undefined){if(c.sequence!==1)return response("failed");record.cancellationId=c.cancellationId;}
++      if(c.sequence===5){if(record.sequence===5||record.challenges.has(c.challengeId))return response("failed");record.challenges.add(c.challengeId);record.sequence=5;this.#holdNativeCancellation(record);return response("held");}
++      if(record.phase!=="running"||record.busy||record.challenges.has(c.challengeId)||c.sequence!==record.sequence+1)throw this.#nativeTransportError();
++      record.busy=true;record.challenges.add(c.challengeId);this.#checkNativeCancellation(record);
++      if(c.sequence===1){
++        const a=record.admission,m=a.methods;if(a.manager===undefined||m===undefined||a.managerOwner===undefined||a.targetOwner===undefined||a.flushOwner===undefined)throw this.#nativeTransportError();
++        record.ticket=this.#nativeExecutorOwner(Reflect.apply(m.inertPrepare.value,a.manager,[a.managerOwner,a.targetOwner,a.flushOwner]));
++        this.#checkNativeCancellation(record);
++      }
++      if(c.sequence===4){
++        if(c.payloadJSON===null)throw this.#nativeTransportError();
++        const observation=this.#nativeCancellationObservation(record,"finalized"),answer=response("finalized",observation);
++        this.#finalizeNativeCancellation(record,c.payloadJSON,observation);
++        record.sequence=4;return answer;
++      }
++      this.#checkNativeCancellation(record);record.sequence=c.sequence;
++      return response(c.sequence===1?"prepared":"checked",this.#nativeCancellationObservation(record,c.sequence===1?"prepared":"checked"));
++    }catch(primary){this.#holdNativeCancellation(record,primary,true);return response("failed");}
++    finally{record.busy=false;}
++  }
++  public async cancelNativeExecutorPrepared():Promise<NativeExecutorCancellationResult>{
++    if(this===null||typeof this!=="object"||nativeReadinessTypes.isProxy(this)||!(#mNativeCancellation in this)||arguments.length!==0)throw new Error("NATIVE_EXECUTOR_RENDERER_FAILED");
++    if(this.#mNativeCancellationSuccessor!==undefined&&this.#mNativeCancellationSuccessor.phase!=="retryable"){this.#holdNativeCancellationSuccessor(this.#mNativeCancellationSuccessor);throw this.#nativeTransportError();}
++    if(this.#mNativeCancellation!==undefined){this.#holdNativeCancellation(this.#mNativeCancellation);throw this.#nativeTransportError();}
++    if(this.#mNativeExecution!==undefined||this.#mNativeExecutorAdoption!==undefined||this.#mNativeCompletion!==undefined)throw this.#nativeTransportError();
++    const request=this.#mNativeExecutorRequest,admission=this.#mNativeExecutorAdmission;
++    if(request===undefined||admission===undefined||request.admission!==admission||!request.prepared||request.round!==3||request.busy||request.binding===undefined)throw this.#nativeTransportError();
++    let invalidate=()=>{};const invalidated=new Promise<void>(resolve=>{invalidate=resolve;});
++    const record:NativeRendererCancellation={request,admission,phase:"running",sequence:0,busy:false,checking:false,notified:false,primarySet:false,primary:undefined,invalidated,invalidate,challenges:new Set(),unsubscribeAttempted:false};
++    this.#mNativeCancellation=record;
++    void Promise.prototype.then.call(admission.invalidated,()=>this.#holdNativeCancellation(record),()=>this.#holdNativeCancellation(record)).catch(()=>{});
++    let timer:ReturnType<typeof setTimeout>|undefined;
++    try{
++      this.#checkNativeCancellation(record);const send=request.route.cancel;if(send===undefined)throw this.#nativeTransportError();
++      const expires=nativeReadinessClock.now()+120000,flight:unknown=Reflect.apply(send,request.route.persist,[request.binding.transportId]);
++      if(!nativeReadinessTypes.isPromise(flight)||nativeReadinessTypes.isProxy(flight))throw this.#nativeTransportError();
++      const result:unknown=await new Promise((resolve,reject)=>{
++        timer=setTimeout(()=>reject(this.#nativeTransportError()),120000);
++        void Promise.prototype.then.call(flight,resolve,reject).catch(()=>{});
++        void Promise.prototype.then.call(invalidated,()=>reject(record.primarySet?record.primary:this.#nativeTransportError()),reject).catch(()=>{});
++      });
++      if(nativeReadinessClock.now()>=expires)throw this.#nativeTransportError();
++      if(record.phase!=="finalized"||record.sequence!==4||record.observation===undefined||record.mainRelease===undefined)throw this.#nativeTransportError();
++      this.#checkNativeCancellation(record);
++      const d=this.#nativeTransportData(result,["schema","transportId","cancellationId","operationId","nativeJobId","requestSHA256","requestBytesSHA256","archiveBytesSHA256","rootId","inventorySHA256","outcome","mainReleased","rendererReleased","effectsAllowed","installationPermit","nativeAdmission","powerLossPersistenceVerified"]),b=request.binding;
++      if(d.schema!=="native-executor-cancellation-result/1"||d.transportId!==b.transportId||d.cancellationId!==record.cancellationId||d.operationId!==b.operationId||d.nativeJobId!==b.nativeJobId
++        ||d.requestSHA256!==b.requestSHA256||d.requestBytesSHA256!==b.requestBytesSHA256||d.archiveBytesSHA256!==b.archiveBytesSHA256
++        ||d.rootId!==record.mainRelease.rootId||d.inventorySHA256!==record.mainRelease.inventorySHA256||d.outcome!=="prepared_no_start_cancelled_worker_closed"
++        ||d.mainReleased!==true||d.rendererReleased!==true||d.effectsAllowed!==false||d.installationPermit!==false||d.nativeAdmission!==false||d.powerLossPersistenceVerified!==false)throw this.#nativeTransportError();
++      if(nativeReadinessClock.now()>=expires)throw this.#nativeTransportError();
++      const observed=Object.freeze({...d}) as unknown as NativeExecutorCancellationResult;
++      this.#checkNativeCancellation(record);if(nativeReadinessClock.now()>=expires)throw this.#nativeTransportError();
++      record.result=observed;record.phase="completed";return observed;
++    }catch(primary){this.#holdNativeCancellation(record,primary,true);throw record.primarySet?record.primary:primary;}
++    finally{if(timer!==undefined)clearTimeout(timer);}
++  }
++  #nativeCancellationSuccessorHeld(record:NativeRendererCancellationSuccessor):boolean { return record.phase==="held"; }
++  #holdNativeCancellationSuccessor(record:NativeRendererCancellationSuccessor):void {
++    record.phase="held";record.cancellation.request.route.held=true;record.invalidate();
++  }
++  #checkNativeCancellationSuccessor(record:NativeRendererCancellationSuccessor):void {
++    if(record.checking){this.#holdNativeCancellationSuccessor(record);throw this.#nativeTransportError();}
++    record.checking=true;
++    try{
++      const c=record.cancellation;
++      if(this.#mNativeCancellationSuccessor!==record||this.#nativeCancellationSuccessorHeld(record)||this.#mNativeCancellation!==c
++        ||c.phase!=="completed"||c.result===undefined||c.observation===undefined||c.mainRelease===undefined
++        ||c.busy||c.sequence!==4||c.cancellationId===undefined)throw this.#nativeTransportError();
++      this.#checkNativeCancellation(c);
++      if(this.#mNativeCancellationSuccessor!==record||this.#nativeCancellationSuccessorHeld(record)||this.#mNativeCancellation!==c||c.phase!=="completed")throw this.#nativeTransportError();
++    }catch(primary){this.#holdNativeCancellationSuccessor(record);throw primary;}
++    finally{record.checking=false;}
++  }
++  #finishNativeCancellationSuccessorWatch(record:NativeRendererCancellationSuccessor):void {
++    if(record.unsubscribe===undefined||record.unsubscribeAttempted)return;
++    record.unsubscribeAttempted=true;Reflect.apply(record.unsubscribe,undefined,[]);
++  }
++  public async handoffNativeExecutorCancellationSuccessor():Promise<NativeExecutorCancellationSuccessor>{
++    if(this===null||typeof this!=="object"||nativeReadinessTypes.isProxy(this)||!(#mNativeCancellationSuccessor in this)||arguments.length!==0)throw new Error("NATIVE_EXECUTOR_RENDERER_FAILED");
++    const c=this.#mNativeCancellation;
++    if(c===undefined&&this.#mNativeExecutorRequest===undefined&&this.#mNativeExecutorAdmission===undefined&&this.#mNativeCancellationLast!==undefined)return this.#mNativeCancellationLast;
++    const previous=this.#mNativeCancellationSuccessor;
++    if(previous!==undefined&&previous.phase!=="retryable"){this.#holdNativeCancellationSuccessor(previous);throw this.#nativeTransportError();}
++    if(c===undefined||c.phase!=="completed"||c.result===undefined||c.cancellationId===undefined||c.request.binding===undefined)throw this.#nativeTransportError();
++    let invalidate=()=>{};const invalidated=new Promise<void>(resolve=>{invalidate=resolve;});
++    const record:NativeRendererCancellationSuccessor={cancellation:c,phase:"checking",checking:false,unsubscribeAttempted:false,invalidated,invalidate};
++    this.#mNativeCancellationSuccessor=record;let retryable=false;
++    try{
++      this.#checkNativeCancellationSuccessor(record);
++      const a=c.admission,r=c.request,b=r.binding,store=a.store,descriptor=a.subscribeDescriptor,send=r.route.cancellationSuccessor;
++      if(store===undefined||descriptor===undefined||send===undefined||b===undefined)throw this.#nativeTransportError();
++      const off:unknown=Reflect.apply(descriptor.value,store,[()=>{
++        if(this.#mNativeCancellationSuccessor!==record||this.#nativeCancellationSuccessorHeld(record))return;
++        try{this.#nativeExecutorProfile(a);}catch{this.#holdNativeCancellationSuccessor(record);}
++      }]);
++      if(typeof off!=="function"||nativeReadinessTypes.isProxy(off))throw this.#nativeTransportError();record.unsubscribe=off as ()=>void;
++      this.#checkNativeCancellationSuccessor(record);record.phase="waiting";
++      const deadline=nativeReadinessClock.now()+5000,flight:unknown=Reflect.apply(send,r.route.persist,[b.transportId,c.cancellationId]);
++      if(!nativeReadinessTypes.isPromise(flight)||nativeReadinessTypes.isProxy(flight))throw this.#nativeTransportError();
++      let timer:ReturnType<typeof setTimeout>|undefined,result:unknown;
++      try{
++        result=await new Promise((resolve,reject)=>{
++          timer=setTimeout(()=>reject(this.#nativeTransportError()),5000);
++          void Promise.prototype.then.call(flight,resolve,reject).catch(()=>{});
++          void Promise.prototype.then.call(invalidated,()=>reject(this.#nativeTransportError()),reject).catch(()=>{});
++        });
++      }catch(primary){retryable=true;throw primary;}
++      finally{if(timer!==undefined)clearTimeout(timer);}
++      if(nativeReadinessClock.now()>=deadline){retryable=true;throw this.#nativeTransportError();}
++      this.#checkNativeCancellationSuccessor(record);
++      const d=this.#nativeTransportData(result,["schema","transportId","cancellationId","operationId","nativeJobId","requestSHA256","ready","effectsAllowed","installationPermit","nativeAdmission"]);
++      if(d.schema!=="native-executor-cancellation-successor/1"||d.transportId!==b.transportId||d.cancellationId!==c.cancellationId
++        ||d.operationId!==b.operationId||d.nativeJobId!==b.nativeJobId||d.requestSHA256!==b.requestSHA256
++        ||d.ready!==true||d.effectsAllowed!==false||d.installationPermit!==false||d.nativeAdmission!==false)throw this.#nativeTransportError();
++      const observed=Object.freeze({...d}) as unknown as NativeExecutorCancellationSuccessor;
++      this.#finishNativeCancellationSuccessorWatch(record);this.#checkNativeCancellationSuccessor(record);
++      if(nativeReadinessClock.now()>=deadline){retryable=true;throw this.#nativeTransportError();}
++      this.#mNativeCancellationLast=observed;this.#mNativeExecutorRequest=undefined;this.#mNativeExecutorAdmission=undefined;
++      this.#mNativeCancellation=undefined;this.#mNativeCancellationSuccessor=undefined;return observed;
++    }catch(primary){
++      try{this.#checkNativeCancellationSuccessor(record);}catch{retryable=false;}
++      try{this.#finishNativeCancellationSuccessorWatch(record);}catch{retryable=false;}
++      try{this.#checkNativeCancellationSuccessor(record);}catch{retryable=false;}
++      if(retryable&&!this.#nativeCancellationSuccessorHeld(record))record.phase="retryable";else this.#holdNativeCancellationSuccessor(record);
++      throw primary;
++    }
++  }
++
+   #mNativeSuccessor: NativeRendererSuccessor | undefined;
+   #mNativeSuccessorLast: Readonly<NativeExecutorSuccessor> | undefined;
+   #mNativeExecution: NativeRendererExecution | undefined;
+@@ -862,7 +1103,7 @@
+       this.checkNativeRendererManagerReady(admission.readyOwner, admission.store);
+       if (this.getNativeRendererManagerInstance(admission.readyOwner, admission.store) !== admission.manager) throw this.#nativeSuccessorError();
+       const methods = this.#nativeExecutorMethods(admission.manager), captured = admission.methods;
+-      const methodKeys = ["reserve","check","describe","releasePrepare","releaseCheck","releaseFinalize"] as const;
++      const methodKeys = ["reserve","check","describe","releasePrepare","releaseCheck","releaseFinalize","inertPrepare","inertCheck","inertFinalize"] as const;
+       if (captured === undefined || methods.prototype !== captured.prototype || methodKeys.some(
+         key => !this.#nativeExecutorSameDescriptor(methods[key], captured[key]))) throw this.#nativeSuccessorError();
+       this.#nativeExecutorProfile(admission);
+@@ -881,6 +1122,7 @@
+   /** Known-success handoff only. No retry of install work and no new permit. */
+   public async handoffNativeExecutorSuccessor(): Promise<NativeExecutorSuccessor> {
+     if (this === null || typeof this !== "object" || nativeReadinessTypes.isProxy(this) || !(#mNativeSuccessor in this)) throw new Error("NATIVE_EXECUTOR_SUCCESSOR_HELD");
++    if (this.#mNativeCancellation !== undefined) throw this.#nativeTransportError();
+     if (arguments.length !== 0) throw this.#nativeSuccessorError();
+     const request = this.#mNativeExecutorRequest, execution = this.#mNativeExecution, completion = this.#mNativeCompletion;
+     const adoption = this.#mNativeExecutorAdoption, admission = this.#mNativeExecutorAdmission;
+@@ -1088,6 +1330,8 @@
+ 
+   public async executeNativeExecutor(): Promise<NativeExecutorExecutionResult> {
+     if (this === null || typeof this !== "object" || nativeReadinessTypes.isProxy(this) || !(#mNativeExecution in this)) throw new Error("NATIVE_EXECUTOR_RENDERER_FAILED");
++    if (this.#mNativeCancellationSuccessor !== undefined && this.#mNativeCancellationSuccessor.phase !== "retryable") { this.#holdNativeCancellationSuccessor(this.#mNativeCancellationSuccessor); throw this.#nativeTransportError(); }
++    if (this.#mNativeCancellation !== undefined) { this.#holdNativeCancellation(this.#mNativeCancellation); throw this.#nativeTransportError(); }
+     if (this.#mNativeExecution !== undefined) { this.#holdNativeExecution(this.#mNativeExecution); throw this.#nativeTransportError(); }
+     const request = this.#mNativeExecutorRequest;
+     if (request === undefined || request.binding === undefined) throw this.#nativeTransportError();
+@@ -1227,6 +1471,7 @@
+ 
+   public prepareNativeExecutorTransportAdoption(transportId: string, observedBytes: Uint8Array): Readonly<NativeExecutorRendererAdoptionObservation> {
+     if (this === null || typeof this !== "object" || nativeReadinessTypes.isProxy(this) || !(#mNativeExecutorAdoption in this)) throw new Error("NATIVE_EXECUTOR_RENDERER_FAILED");
++    if (this.#mNativeCancellation !== undefined) { this.#holdNativeCancellation(this.#mNativeCancellation); throw this.#nativeTransportError(); }
+     const request = this.#nativeExecutorAdoptionRequest(transportId), previous = this.#mNativeExecutorAdoption;
+     if (previous !== undefined) { this.#holdNativeExecutorAdoption(previous); throw this.#nativeTransportError(); }
+     const admission = request.admission;
+@@ -1263,6 +1508,7 @@
+ 
+   public checkNativeExecutorTransportAdoption(transportId: string): Readonly<NativeExecutorRendererAdoptionObservation> {
+     if (this === null || typeof this !== "object" || nativeReadinessTypes.isProxy(this) || !(#mNativeExecutorAdoption in this)) throw new Error("NATIVE_EXECUTOR_RENDERER_FAILED");
++    if (this.#mNativeCancellation !== undefined) { this.#holdNativeCancellation(this.#mNativeCancellation); throw this.#nativeTransportError(); }
+     const request = this.#nativeExecutorAdoptionRequest(transportId), record = this.#mNativeExecutorAdoption;
+     if (record === undefined || record.request !== request) throw this.#nativeTransportError();
+     this.#checkNativeExecutorAdoption(record);
+@@ -1304,6 +1550,10 @@
+           || this.#nativeTransportMethod(route.persist, "onExecutorExecutionChallenge") !== route.executionReceiver
+           || this.#nativeTransportMethod(route.persist, "invalidateNativeExecutorExecution") !== route.executionInvalidate
+           || this.#nativeTransportMethod(route.persist, "handoffNativeExecutorSuccessor") !== route.successor
++          || this.#nativeTransportMethod(route.persist, "cancelNativeExecutorPrepared") !== route.cancel
++          || this.#nativeTransportMethod(route.persist, "onExecutorCancellationChallenge") !== route.cancellationReceiver
++          || this.#nativeTransportMethod(route.persist, "invalidateNativeExecutorCancellation") !== route.cancellationInvalidate
++          || this.#nativeTransportMethod(route.persist, "handoffNativeExecutorCancellationSuccessor") !== route.cancellationSuccessor
+           || Object.hasOwn(this, "acquireNativeRendererExecutorAdmission") || Object.hasOwn(this, "checkNativeRendererExecutorAdmission")
+           || Object.hasOwn(this, "getNativeRendererExecutorAdmissionProjection")
+           || ExtensionManager.prototype.acquireNativeRendererExecutorAdmission !== route.acquire
+@@ -1332,12 +1582,19 @@
+       route.executionReceiver = this.#nativeTransportMethod(persist, "onExecutorExecutionChallenge") as NonNullable<NativeExecutorRendererTransport["executionReceiver"]>;
+       route.executionInvalidate = this.#nativeTransportMethod(persist, "invalidateNativeExecutorExecution") as NonNullable<NativeExecutorRendererTransport["executionInvalidate"]>;
+       route.successor = this.#nativeTransportMethod(persist, "handoffNativeExecutorSuccessor") as NonNullable<NativeExecutorRendererTransport["successor"]>;
++      route.cancel = this.#nativeTransportMethod(persist, "cancelNativeExecutorPrepared") as NonNullable<NativeExecutorRendererTransport["cancel"]>;
++      route.cancellationReceiver = this.#nativeTransportMethod(persist, "onExecutorCancellationChallenge") as NonNullable<NativeExecutorRendererTransport["cancellationReceiver"]>;
++      route.cancellationInvalidate = this.#nativeTransportMethod(persist, "invalidateNativeExecutorCancellation") as NonNullable<NativeExecutorRendererTransport["cancellationInvalidate"]>;
++      route.cancellationSuccessor = this.#nativeTransportMethod(persist, "handoffNativeExecutorCancellationSuccessor") as NonNullable<NativeExecutorRendererTransport["cancellationSuccessor"]>;
+       const unsubscribe: unknown = Reflect.apply(route.receiver, persist, [(challenge: NativeExecutorChallenge) => this.#receiveNativeExecutorChallenge(route, challenge)]);
+       if (typeof unsubscribe !== "function" || nativeReadinessTypes.isProxy(unsubscribe)) throw this.#nativeTransportError();
+       route.unsubscribe = unsubscribe as () => void;
+       const executionUnsubscribe: unknown = Reflect.apply(route.executionReceiver, persist, [(challenge: NativeExecutorExecutionChallenge) => this.#receiveNativeExecution(route, challenge)]);
+       if (typeof executionUnsubscribe !== "function" || nativeReadinessTypes.isProxy(executionUnsubscribe)) throw this.#nativeTransportError();
+       route.executionUnsubscribe = executionUnsubscribe as () => void;
++      const cancellationUnsubscribe: unknown = Reflect.apply(route.cancellationReceiver, persist, [(challenge: NativeExecutorCancellationChallenge) => this.#receiveNativeCancellation(route, challenge)]);
++      if (typeof cancellationUnsubscribe !== "function" || nativeReadinessTypes.isProxy(cancellationUnsubscribe)) throw this.#nativeTransportError();
++      route.cancellationUnsubscribe = cancellationUnsubscribe as () => void;
+       route.registering = false;
+       this.#checkNativeTransport(route);
+     } catch { this.#holdNativeTransport(this.#mNativeExecutorRequest); this.holdNativeRendererLoad(load); }
+@@ -1519,7 +1776,7 @@
+           || nativeReadinessTypes.isProxy(descriptor.value)) throw this.#nativeExecutorError();
+       return Object.freeze({...descriptor});
+     };
+-    return {prototype, reserve: read("reserveNativeInstallExclusion"), check: read("checkNativeInstallExclusion"), describe: read("getNativeInstallExclusion"), releasePrepare: read("prepareNativeRegistrationRelease"), releaseCheck: read("checkNativeRegistrationRelease"), releaseFinalize: read("finalizeNativeRegistrationRelease")};
++    return {prototype, reserve: read("reserveNativeInstallExclusion"), check: read("checkNativeInstallExclusion"), describe: read("getNativeInstallExclusion"), releasePrepare: read("prepareNativeRegistrationRelease"), releaseCheck: read("checkNativeRegistrationRelease"), releaseFinalize: read("finalizeNativeRegistrationRelease"), inertPrepare: read("prepareNativeInertRelease"), inertCheck: read("checkNativeInertRelease"), inertFinalize: read("finalizeNativeInertRelease")};
+   }
+ 
+   #nativeExecutorProfile(attempt: NativeRendererExecutorAdmission): void {
+@@ -1567,7 +1824,10 @@
+             || !this.#nativeExecutorSameDescriptor(attempt.methods.describe, methods.describe)
+             || !this.#nativeExecutorSameDescriptor(attempt.methods.releasePrepare, methods.releasePrepare)
+             || !this.#nativeExecutorSameDescriptor(attempt.methods.releaseCheck, methods.releaseCheck)
+-            || !this.#nativeExecutorSameDescriptor(attempt.methods.releaseFinalize, methods.releaseFinalize)) throw this.#nativeExecutorError();
++            || !this.#nativeExecutorSameDescriptor(attempt.methods.releaseFinalize, methods.releaseFinalize)
++            || !this.#nativeExecutorSameDescriptor(attempt.methods.inertPrepare, methods.inertPrepare)
++            || !this.#nativeExecutorSameDescriptor(attempt.methods.inertCheck, methods.inertCheck)
++            || !this.#nativeExecutorSameDescriptor(attempt.methods.inertFinalize, methods.inertFinalize)) throw this.#nativeExecutorError();
+         if (attempt.managerOwner !== undefined) {
+           Reflect.apply(methods.check.value, manager, [attempt.managerOwner]);
+           const labels: unknown = Reflect.apply(methods.describe.value, manager, []);
+@@ -1594,7 +1854,10 @@
+             || !this.#nativeExecutorSameDescriptor(attempt.methods.describe, finalMethods.describe)
+             || !this.#nativeExecutorSameDescriptor(attempt.methods.releasePrepare, finalMethods.releasePrepare)
+             || !this.#nativeExecutorSameDescriptor(attempt.methods.releaseCheck, finalMethods.releaseCheck)
+-            || !this.#nativeExecutorSameDescriptor(attempt.methods.releaseFinalize, finalMethods.releaseFinalize)) throw this.#nativeExecutorError();
++            || !this.#nativeExecutorSameDescriptor(attempt.methods.releaseFinalize, finalMethods.releaseFinalize)
++            || !this.#nativeExecutorSameDescriptor(attempt.methods.inertPrepare, finalMethods.inertPrepare)
++            || !this.#nativeExecutorSameDescriptor(attempt.methods.inertCheck, finalMethods.inertCheck)
++            || !this.#nativeExecutorSameDescriptor(attempt.methods.inertFinalize, finalMethods.inertFinalize)) throw this.#nativeExecutorError();
+       }
+       if (!this.#nativeExecutorSameDescriptor(attempt.storeDescriptor, this.#nativeExecutorStoreDescriptor(attempt.store))
+           || !this.#nativeExecutorSameDescriptor(attempt.subscribeDescriptor, this.#nativeExecutorStoreDescriptor(attempt.store, "subscribe"))) throw this.#nativeExecutorError();

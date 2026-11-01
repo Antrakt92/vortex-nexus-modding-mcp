@@ -1,0 +1,20 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/renderer/src/store/persistDiffMiddleware.ts",
+  "originalSourceSHA256": "d4dbc85a48739c30239bda2b6b091ef9631b5e9df6b3affcd935a4a3a5cf0262",
+  "inputSHA256": "32639c4e836a0ceac7e75ab9b12a69cd73fb283f3a3937512d815b151abfad35",
+  "outputSHA256": "7316a95aa075c758b52218c65998d576b217d57ab391aecd73e7466f55234bb9",
+  "patchSHA256": "4a978aae276e0f5e31d6473fe955fb176ed493498561a0d0699dbc1abed9ada5",
+  "prerequisitePatch": "renderer-persistence-release.patch",
+  "prerequisitePatchSHA256": "a70d3918843f7c99130393a991df872f6e8dc94f90d195d512242bc30cb5c7c4",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "effectsAllowed": false,
+  "installationPermit": false,
+  "nativeAdmission": false,
+  "powerLossPersistenceVerified": false
+}

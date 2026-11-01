@@ -1,0 +1,28 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/renderer/src/extensions/mod_management/InstallManager.ts",
+  "originalSourceSHA256": "577d56a8728052069f850face9bb57437dbf2886bd41409fe6a66cfefc08ed33",
+  "inputSHA256": "38ceb37ac994f9da61e0a93b3be8e0e7618a9833b7e514e5aec710638653d667",
+  "outputSHA256": "fa286ebca414fc3368de7ef7b50a71a7c5327768098c42f8aabda1a4e7d1bdad",
+  "patchSHA256": "00c4050a245027f66b721c86f3491ef7e94aee03f1e36da4d2382e221294ebcd",
+  "prerequisitePatch": "native-manager-registration-release.patch",
+  "prerequisitePatchSHA256": "a89507c72cf8c8d74c2cc9f63692b27c206654b9d6e7ea610465e9275bdca16a",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "effectsAllowed": false,
+  "installationPermit": false,
+  "nativeAdmission": false,
+  "powerLossPersistenceVerified": false,
+  "additionalCompanions": [
+    {
+      "packet": "persistence",
+      "name": "native-renderer-inert-target-release",
+      "patchSHA256": "d3812f3a454f3b028683ca6c844a6dbf07130f8b55816f147852ca617a836d49",
+      "outputSHA256": "987a9529c672b683ec01c3e8fae9440a58c8a646943b67531a0d2bfc9e4cd3d7"
+    }
+  ]
+}

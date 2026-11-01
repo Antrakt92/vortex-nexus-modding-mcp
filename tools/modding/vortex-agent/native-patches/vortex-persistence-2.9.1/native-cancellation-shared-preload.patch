@@ -1,0 +1,25 @@
+--- a/src/shared/src/types/preload.ts
++++ b/src/shared/src/types/preload.ts
+@@ -23,6 +23,11 @@
+   DiffOperation,
+   PersistenceBatch,
+   NativeMainReadinessObservation,
++  NativeExecutorCancellationChallenge,
++  NativeExecutorCancellationResponse,
++  NativeExecutorCancellationInvalidation,
++  NativeExecutorCancellationResult,
++  NativeExecutorCancellationSuccessor,
+   NativeExecutorExecutionChallenge,
+   NativeExecutorExecutionResponse,
+   NativeExecutorExecutionInvalidation,
+@@ -395,6 +400,10 @@
+   observeMainReadiness(requestId: string): Promise<NativeMainReadinessObservation>;
+ 
+   /** Internal source transport; a prepared reply is not installation permission. */
++  cancelNativeExecutorPrepared(transportId: string): Promise<NativeExecutorCancellationResult>;
++  handoffNativeExecutorCancellationSuccessor(transportId: string, cancellationId: string): Promise<NativeExecutorCancellationSuccessor>;
++  onExecutorCancellationChallenge(handler: (challenge: NativeExecutorCancellationChallenge) => Promise<NativeExecutorCancellationResponse>): () => void;
++  invalidateNativeExecutorCancellation(value: NativeExecutorCancellationInvalidation): void;
+   executeNativeExecutor(transportId: string): Promise<NativeExecutorExecutionResult>;
+   handoffNativeExecutorSuccessor(transportId: string, executionId: string): Promise<NativeExecutorSuccessor>;
+   onExecutorExecutionChallenge(handler: (challenge: NativeExecutorExecutionChallenge) => Promise<NativeExecutorExecutionResponse>): () => void;

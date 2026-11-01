@@ -1,0 +1,109 @@
+--- a/src/main/src/store/LevelPersist.ts
++++ b/src/main/src/store/LevelPersist.ts
+@@ -204,7 +204,82 @@
+   phase: "opening" | "open" | "reading" | "writing" | "committed" | "held"; checking: boolean; writeAttempted: boolean;
+   active?: NativeRegistrationAttempt; next?: Buffer; readbackVerified: boolean;
+ }
++type NativeUnregisteredBackendRelease = {
++  owner:object; backendOwner:object; sqlOwner:object; registry:QueryRegistry;
++  hold:{owner:object;phase:"pending"|"reserved"|"held"};
++  sql:{owner:object;backendOwner:object;registry:QueryRegistry;singleton:DuckDBSingleton};
++  connection:unknown; alias:string; phase:"preparing"|"prepared"|"armed"|"released"|"held";
++  checking:boolean; finishSQL?:()=>void;
++};
++
+ class LevelPersist implements IPersistor {
++
++  #mNativeUnregisteredRelease:NativeUnregisteredBackendRelease|undefined;
++  #holdUnregisteredRelease(r:NativeUnregisteredBackendRelease):void {
++    r.phase="held";r.hold.phase="held";this.#mNativeWriteFailed=true;
++  }
++  #unregisteredRelease(ticket:object):NativeUnregisteredBackendRelease {
++    const r=this.#mNativeUnregisteredRelease;
++    if(r===undefined||r.owner!==ticket)throw new Error("NATIVE_UNREGISTERED_RELEASE_OWNER");return r;
++  }
++  // Pure private checks: also used immediately before the recursive first opener.
++  #assertUnregisteredRelease(r:NativeUnregisteredBackendRelease):void {
++    if(this.#mNativeUnregisteredRelease!==r||r.phase==="held"||r.phase==="released"
++      ||this.#mNativeWriteHold!==r.hold||r.hold.owner!==r.backendOwner||r.hold.phase!=="reserved"
++      ||this.#mNativeSQL!==r.sql||r.sql.owner!==r.sqlOwner||r.sql.backendOwner!==r.backendOwner
++      ||r.sql.registry!==r.registry||this.#mConnection!==r.connection||this.#mAlias!==r.alias
++      ||this.#mNativeRegistration!==undefined||this.#mNativeAnchor!==undefined||this.#mNativeTerminalWindow!==undefined
++      ||this.#mNativeActive!==0||this.#mNativeTransactionPending!==0||this.#mInTransaction
++      ||this.#mNativeWriteFailed||this.#mNativeRawExposed||this.#mNativeCloseAttempted)throw new Error("NATIVE_UNREGISTERED_RELEASE_HELD");
++  }
++  #checkUnregisteredRelease(r:NativeUnregisteredBackendRelease):void {
++    if(r.checking){this.#holdUnregisteredRelease(r);throw new Error("NATIVE_UNREGISTERED_RELEASE_REENTRY");}
++    r.checking=true;
++    try{
++      this.#assertUnregisteredRelease(r);
++      if(nativeRegistrationGetPool()!==r.sql.singleton)throw new Error("NATIVE_UNREGISTERED_RELEASE_HELD");
++      nativeRegistrationSQLCheck.call(r.sql.singleton,r.sqlOwner);this.#assertUnregisteredRelease(r);
++      if(nativeRegistrationGetPool()!==r.sql.singleton)throw new Error("NATIVE_UNREGISTERED_RELEASE_HELD");
++    }catch(primary){this.#holdUnregisteredRelease(r);throw primary;}finally{r.checking=false;}
++  }
++  /** Owner release primitive only: fixed Main coordinator separately proves cancel C. */
++  public prepareNativeUnregisteredRelease(backendOwner:object,sqlOwner:object,registry:QueryRegistry):object {
++    const hold=this.#mNativeWriteHold,sql=this.#mNativeSQL;
++    if(hold===undefined||hold.owner!==backendOwner||sql===undefined||sql.owner!==sqlOwner
++      ||sql.backendOwner!==backendOwner||sql.registry!==registry)throw new Error("NATIVE_UNREGISTERED_RELEASE_OWNER");
++    if(this.#mNativeUnregisteredRelease!==undefined){this.#holdUnregisteredRelease(this.#mNativeUnregisteredRelease);throw new Error("NATIVE_UNREGISTERED_RELEASE_REENTRY");}
++    const r:NativeUnregisteredBackendRelease={owner:Object.freeze({}),backendOwner,sqlOwner,registry,hold,sql,
++      connection:this.#mConnection,alias:this.#mAlias,phase:"preparing",checking:false};
++    this.#mNativeUnregisteredRelease=r;
++    try{
++      this.#checkUnregisteredRelease(r);
++      const finishSQL=nativeReleasePrepareSQL.call(sql.singleton,sqlOwner);
++      if(typeof finishSQL!=="function"||nativeRegistrationTypes.isProxy(finishSQL))throw new Error("NATIVE_UNREGISTERED_RELEASE_HELD");
++      r.finishSQL=finishSQL;this.#checkUnregisteredRelease(r);r.phase="prepared";return r.owner;
++    }catch(primary){this.#holdUnregisteredRelease(r);throw primary;}
++  }
++  public checkNativeUnregisteredRelease(ticket:object):void {this.#checkUnregisteredRelease(this.#unregisteredRelease(ticket));}
++  /** Source-created no-argument capability. Arm/finish only within one synchronous turn. */
++  public armNativeUnregisteredRelease(ticket:object):()=>void {
++    const r=this.#unregisteredRelease(ticket);
++    if(r.phase!=="prepared"){this.#holdUnregisteredRelease(r);throw new Error("NATIVE_UNREGISTERED_RELEASE_HELD");}
++    this.#checkUnregisteredRelease(r);const finishSQL=r.finishSQL;
++    if(finishSQL===undefined){this.#holdUnregisteredRelease(r);throw new Error("NATIVE_UNREGISTERED_RELEASE_HELD");}
++    r.phase="armed";
++    return Object.freeze(()=>{
++      if(r.phase==="released")throw new Error("NATIVE_UNREGISTERED_RELEASE_OWNER");
++      try{
++        this.#assertUnregisteredRelease(r);
++        if(r.phase!=="armed"||r.checking)throw new Error("NATIVE_UNREGISTERED_RELEASE_HELD");
++        finishSQL();
++        // CALLBACK-FREE successful unwind. No failure/source/consumed-ID reset.
++        r.phase="released";r.finishSQL=undefined;
++        this.#mNativeSQL=undefined;this.#mNativeSQLAttempted=false;this.#mNativeWriteHold=undefined;
++        this.#mNativeUnregisteredRelease=undefined;
++      }catch(primary){this.#holdUnregisteredRelease(r);throw primary;}
++    });
++  }
++
+   #mNativeTerminalWindow: NativeExecutorTerminalWindow | undefined;
+   public static async create(
+     persistPath: string,
+@@ -482,6 +557,7 @@
+     return this.#writeNativeExecutorAnchor(backendOwner,sqlOwner,registry,expectedBytes,nextBytes);
+   }
+   async #writeNativeExecutorAnchor(backendOwner: object, sqlOwner: object, registry: QueryRegistry, expectedBytes: Uint8Array | null, nextBytes: Uint8Array, window?: NativeExecutorTerminalWindow) {
++    if(this.#mNativeUnregisteredRelease!==undefined){const r=this.#mNativeUnregisteredRelease;if(r.backendOwner===backendOwner&&r.sqlOwner===sqlOwner&&r.registry===registry)this.#holdUnregisteredRelease(r);throw new Error("NATIVE_UNREGISTERED_RELEASE_BUSY");}
+     if (this === null || typeof this !== "object" || nativeRegistrationTypes.isProxy(this) || !(#mConnection in this)) throw new Error("NATIVE_EXECUTOR_ANCHOR_HOLD");
+     const hold = this.#mNativeWriteHold, sql = this.#mNativeSQL;
+     if (this.#mNativeAnchor !== undefined) {
+@@ -571,6 +647,7 @@
+     if (hold === undefined || owner !== hold.owner || hold.phase !== "reserved") {
+       throw new Error("NATIVE_BACKEND_WRITE_REFUSED");
+     }
++    if(this.#mNativeUnregisteredRelease!==undefined){this.#holdUnregisteredRelease(this.#mNativeUnregisteredRelease);throw new Error("NATIVE_UNREGISTERED_RELEASE_BUSY");}
+     if (this.#mNativeRegistration !== undefined && ["claimed", "writing"].includes(this.#mNativeRegistration.phase)) throw new Error("NATIVE_REGISTRATION_BUSY");
+     if (this.#mNativeActive !== 0 || this.#mNativeIneligible()) {
+       hold.phase = "held";
+@@ -734,6 +811,7 @@
+     const hold = this.#mNativeWriteHold, sql = this.#mNativeSQL;
+     if (hold === undefined || hold.owner !== backendOwner || hold.phase !== "reserved" || sql === undefined
+         || sql.owner !== sqlOwner || sql.backendOwner !== backendOwner || sql.registry !== registry || this.#mNativeRegistration !== undefined || this.#mNativeAnchor !== undefined) throw new Error("NATIVE_REGISTRATION_REFUSED");
++    if(this.#mNativeUnregisteredRelease!==undefined){const r=this.#mNativeUnregisteredRelease;if(r.backendOwner===backendOwner&&r.sqlOwner===sqlOwner&&r.registry===registry)this.#holdUnregisteredRelease(r);throw new Error("NATIVE_UNREGISTERED_RELEASE_BUSY");}
+     const attempt: NativeRegistrationAttempt = { backendOwner, sqlOwner, registry, phase: "claimed", transaction: "not_started", commitAttempted: false };
+     this.#mNativeRegistration = attempt;
+     this.#mNativeActive++;

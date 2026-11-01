@@ -1,0 +1,318 @@
+--- a/src/main/src/store/mainPersistence.ts
++++ b/src/main/src/store/mainPersistence.ts
+@@ -510,11 +510,11 @@
+ const nativeTransportReserve = ReduxPersistorIPC.prototype.reserveNativeModPersistence;
+ const nativeTransportPrepare = prepareNativeExecutorPending;
+ type NativeExecutorTransportAttempt = {
+-  owner:object;mainReadyOwner:object;phase:'preflighting'|'ready'|'reserving'|'reserved'|'preparing'|'prepared'|'executing'|'copied'|'registering'|'committed'|'closing'|'closed'|'sealing'|'sealed'|'releasing'|'main_released'|'held';checking:boolean;
++  owner:object;mainReadyOwner:object;phase:'preflighting'|'ready'|'reserving'|'reserved'|'preparing'|'prepared'|'executing'|'copied'|'registering'|'committed'|'closing'|'closed'|'sealing'|'sealed'|'releasing'|'main_released'|'cancelling'|'cancelled'|'cancel_sealing'|'cancel_sealed'|'cancel_releasing'|'cancel_released'|'held';checking:boolean;
+   requestBytes?:Buffer;archiveBytes?:Buffer;binding?:Readonly<NativeExecutorTransportBinding>;
+   ready?:NativeMainAttempt;startup?:NativeExecutorStartupAttempt;source?:NativeExecutorJournalSource;
+   closure?:ReturnType<typeof nativeStartupClosure>;modOwner?:object;reserveStarted:boolean;prepareStarted:boolean;
+-  frameOwner?:object;pendingBefore?:NativePendingAttempt;pending?:NativePendingAttempt;pendingOwner?:object;continuation?:NativeExecutorContinuation;
++  frameOwner?:object;pendingBefore?:NativePendingAttempt;pending?:NativePendingAttempt;pendingOwner?:object;continuation?:NativeExecutorContinuation;cancellation?:NativeExecutorCancellation;
+ };
+ let nativeExecutorTransport:NativeExecutorTransportAttempt|undefined;
+ const nativeTransportError=()=>new Error('NATIVE_EXECUTOR_TRANSPORT_HELD');
+@@ -537,6 +537,7 @@
+ }
+ function nativeTransportHold(attempt:NativeExecutorTransportAttempt):void {
+   attempt.phase='held';
++  if(attempt.cancellation?.releaseReceipt!==undefined)return;
+   if(attempt.startup!==undefined)attempt.startup.phase='held';
+   const pending=nativeTransportMatchingPending(attempt);if(pending!==undefined){attempt.pending=pending;nativePendingHold(pending);}
+   if(attempt.ready!==undefined&&attempt.modOwner!==undefined)try{nativeGenesisHoldReservation.call(attempt.ready.main,attempt.modOwner);}catch{/* No refund; preserve the primary failure. */}
+@@ -556,16 +557,18 @@
+     nativeExecutorCheckSource(source);
+     const observed=nativeStartupClosure(startup.binding);nativeStartupSame(closure.dirs,observed.dirs);nativeStartupSame(closure.files,observed.files);
+     if(attempt.modOwner!==undefined){
+-      if(attempt.phase==='registering')nativeContinuationRegistrationCheck.call(ready.main,attempt.modOwner);
++      if(attempt.cancellation?.lowerTicket!==undefined)nativeCancellationCheckRelease.call(ready.main,attempt.cancellation.lowerTicket);
++      else if(attempt.phase==='registering')nativeContinuationRegistrationCheck.call(ready.main,attempt.modOwner);
+       else if(['committed','closing','closed','sealing','sealed','releasing'].includes(attempt.phase)){
+         const continuation=attempt.continuation;if(continuation===undefined||continuation.terminalOwner===undefined)throw nativeTransportError();
+         nativeContinuationTerminalCheck.call(ready.main,continuation.terminalOwner);
+-      }else if(attempt.phase!=='main_released')nativePendingCheckTarget.call(ready.main,attempt.modOwner,binding.gameId,binding.modId);
++      }else if(attempt.phase!=='main_released'&&attempt.phase!=='cancel_released')nativePendingCheckTarget.call(ready.main,attempt.modOwner,binding.gameId,binding.modId);
+     }
+     if(attempt.continuation!==undefined){
+       const c=attempt.continuation;nativeContinuationStable(c);if(c.proofBytes!==undefined&&!c.completion?.closeInvoked)nativeContinuationSDK(c);
+       nativeCompletionCheck(attempt,c);
+     }
++    if(attempt.cancellation!==undefined)nativeCancellationCheck(attempt,attempt.cancellation);
+     if(attempt.frameOwner!==undefined)checkNativeExecutorFrame(attempt.frameOwner);
+     if(attempt.pending!==undefined){
+       if(nativeTransportMatchingPending(attempt)!==attempt.pending||attempt.pending.phase==='held')throw nativeTransportError();
+@@ -1154,7 +1157,7 @@
+ }
+ export async function copyNativeExecutorTransport(ticket:object):Promise<Readonly<Record<string,unknown>>>{
+   const attempt=nativeTransportTicket(ticket);
+-  if(attempt.continuation!==undefined||attempt.phase!=='prepared'){nativeTransportHold(attempt);throw nativeTransportError();}
++  if(attempt.continuation!==undefined||attempt.cancellation!==undefined||attempt.phase!=='prepared'){nativeTransportHold(attempt);throw nativeTransportError();}
+   // Claim before every SDK method, source callback and await. Never refund this slot.
+   const pending=attempt.pending,ready=attempt.ready,startup=attempt.startup,source=attempt.source;
+   if(pending===undefined||ready===undefined||startup===undefined||source===undefined||pending.relay===undefined||pending.preparedReceipt===undefined||pending.anchor===undefined
+@@ -1405,7 +1408,7 @@
+ /** Historical known ACK only; permits neither a release retry nor finalization. */
+ export function getNativeExecutorTransportMainRelease(ticket:object) {
+   const completed=nativeSuccessorHistory.get(ticket);
+-  if(completed!==undefined)return completed.release;
++  if(completed!==undefined)return completed.kind==='installed'?completed.release:null;
+   const attempt=nativeTransportTicket(ticket),c=attempt.continuation;
+   return c?.completion?.releaseReceipt===undefined?null:nativeCompletionReceipt(c,c.completion.releaseReceipt);
+ }
+@@ -1417,13 +1420,13 @@
+ const nativeSuccessorBackendStatus = LevelPersist.prototype.getNativeBackendWriteStatus;
+ const nativeSuccessorHistoryLimit = 4096;
+ type NativeExecutorCompletedHistory = Readonly<{
+-  operationId:string; nativeJobId:string; requestSHA256:string;
++  kind:'installed'|'cancelled'; operationId:string; nativeJobId:string; requestSHA256:string;
+   release:Readonly<Record<string,unknown>>; transition:Readonly<Record<string,unknown>>;
+   rootId:string; inventorySHA256:string;
+ }>;
+ let nativeSuccessorHistory = new Map<object,NativeExecutorCompletedHistory>();
+ type NativeExecutorSuccessor = {
+-  transport?:NativeExecutorTransportAttempt; phase:'preparing'|'armed'|'finalizing'|'retired'|'held'; checking:boolean;
++  kind:'installed'|'cancelled'; transport?:NativeExecutorTransportAttempt; phase:'preparing'|'armed'|'finalizing'|'retired'|'held'; checking:boolean;
+   history?:Map<object,NativeExecutorCompletedHistory>; nextHistory?:Map<object,NativeExecutorCompletedHistory>;
+ };
+ let nativeSuccessorAttempt:NativeExecutorSuccessor|undefined;
+@@ -1432,19 +1435,33 @@
+ function nativeSuccessorHold(record:NativeExecutorSuccessor):void {
+   record.phase='held';if(record.transport!==undefined)nativeTransportHold(record.transport);
+ }
++// The discriminator is private and selected by two distinct fixed exports.
++// No caller-supplied cancellation receipt or installation-shaped stand-in enters here.
++function nativeSuccessorCompletion(a:NativeExecutorTransportAttempt,kind:'installed'|'cancelled') {
++  if(kind==='installed') {
++    const c=a.continuation,e=c?.completion;
++    if(a.cancellation!==undefined||c===undefined||e===undefined||!e.closeInvoked||!e.sealStarted||!e.releaseStarted
++      ||e.closedJSON===undefined||e.releaseReceipt===undefined)return undefined;
++    return {next:e.next,transition:e.transition,releaseReceipt:nativeCompletionReceipt(c,e.releaseReceipt)};
++  }
++  const c=a.cancellation;
++  if(a.continuation!==undefined||c===undefined||!c.closeStarted||!c.sealStarted||!c.releaseStarted||c.lowerTicket!==undefined
++    ||c.observationJSON===undefined||c.workerJSON===undefined||c.releaseReceipt===undefined)return undefined;
++  return {next:c.next,transition:c.transition,releaseReceipt:c.releaseReceipt};
++}
+ function nativeSuccessorCheck(record:NativeExecutorSuccessor):void {
+   if(record.checking){nativeSuccessorHold(record);throw nativeSuccessorError();}
+   record.checking=true;
+   try{
+     const a=record.transport;if(a===undefined||record.history===undefined)throw nativeSuccessorError();
+     const current=()=>nativeSuccessorAttempt===record&&nativeExecutorTransport===a
+-      &&record.phase!=='held'&&record.phase!=='retired'&&a.phase==='main_released'
++      &&record.phase!=='held'&&record.phase!=='retired'&&a.phase===(record.kind==='installed'?'main_released':'cancel_released')
+       &&nativeSuccessorHistory===record.history;
+     if(!current())throw nativeSuccessorError();
+     nativeTransportCheck(a);
+-    const ready=a.ready,startup=a.startup,pending=a.pending,c=a.continuation,e=c?.completion;
++    const ready=a.ready,startup=a.startup,pending=a.pending,e=nativeSuccessorCompletion(a,record.kind);
+     const genesis=pending?.genesis;
+-    if(ready===undefined||startup===undefined||pending===undefined||genesis===undefined||c===undefined||e===undefined
++    if(ready===undefined||startup===undefined||pending===undefined||genesis===undefined||e===undefined
+       ||a.source===undefined||a.binding===undefined||a.frameOwner===undefined||a.modOwner===undefined
+       ||nativeMainAttempt!==ready||nativeStartupAttempt!==startup||startup.phase!=='initialized'
+       ||startup.source!==a.source||ready.backend!==startup.backend||nativePendingAttempt!==pending
+@@ -1452,8 +1469,8 @@
+       ||pending.mainReadyOwner!==a.mainReadyOwner||pending.modOwner!==a.modOwner||pending.frameOwner!==a.frameOwner
+       ||nativeGenesisAttempt!==genesis||genesis.phase!=='ready'||genesis.main!==ready.main||genesis.startup!==startup
+       ||genesis.mainOwner!==a.mainReadyOwner||genesis.reservationOwner!==a.modOwner
+-      ||nativeGenesisPreflight||nativeGenesisReentered||!e.closeInvoked||!e.sealStarted||!e.releaseStarted
+-      ||e.next===undefined||e.transition===undefined||e.closedJSON===undefined||e.releaseReceipt===undefined
++      ||nativeGenesisPreflight||nativeGenesisReentered
++      ||e.next===undefined||e.transition===undefined||e.releaseReceipt===undefined
+       ||startup.anchor!==e.next||pending.anchor!==e.next||genesis.anchor!==e.next)throw nativeSuccessorError();
+     // Use genuine captured prototypes, never an instance's substitute/status getter.
+     if(Object.getOwnPropertyDescriptor(ReduxPersistorIPC.prototype,'getNativeModPersistenceReservation')?.value!==nativeSuccessorMainStatus
+@@ -1481,17 +1498,24 @@
+ }
+ /** Opaque source-created capability only. No caller receipt or reset flags. */
+ export function prepareNativeExecutorSuccessor(ticket:object):()=>void {
++  return nativePrepareSuccessor(ticket,'installed');
++}
++/** Separate source API: only a genuinely cancelled/released operation qualifies. */
++export function prepareNativeExecutorCancellationSuccessor(ticket:object):()=>void {
++  return nativePrepareSuccessor(ticket,'cancelled');
++}
++function nativePrepareSuccessor(ticket:object,kind:'installed'|'cancelled'):()=>void {
+   const attempt=nativeTransportTicket(ticket);
+   if(nativeSuccessorAttempt!==undefined){nativeSuccessorHold(nativeSuccessorAttempt);throw nativeSuccessorError();}
+-  const record:NativeExecutorSuccessor={transport:attempt,phase:'preparing',checking:false,history:nativeSuccessorHistory};
++  const record:NativeExecutorSuccessor={kind,transport:attempt,phase:'preparing',checking:false,history:nativeSuccessorHistory};
+   nativeSuccessorAttempt=record;
+   try{
+     nativeSuccessorCheck(record);
+-    const binding=attempt.binding,c=attempt.continuation,e=c?.completion;
+-    if(binding===undefined||c===undefined||e===undefined||e.next===undefined||e.transition===undefined||e.releaseReceipt===undefined
++    const binding=attempt.binding,e=nativeSuccessorCompletion(attempt,kind);
++    if(binding===undefined||e===undefined||e.next===undefined||e.transition===undefined||e.releaseReceipt===undefined
+       ||record.history===undefined||record.history.size>=nativeSuccessorHistoryLimit||record.history.has(ticket))throw nativeSuccessorError();
+-    const retained=Object.freeze({operationId:binding.operationId,nativeJobId:binding.nativeJobId,requestSHA256:binding.requestSHA256,
+-      release:nativeCompletionReceipt(c,e.releaseReceipt),transition:e.transition,rootId:e.next.rootId,inventorySHA256:e.next.inventorySHA256});
++    const retained=Object.freeze({kind,operationId:binding.operationId,nativeJobId:binding.nativeJobId,requestSHA256:binding.requestSHA256,
++      release:e.releaseReceipt,transition:e.transition,rootId:e.next.rootId,inventorySHA256:e.next.inventorySHA256});
+     // All allocation/capacity work precedes any retirement. Never evict history.
+     const nextHistory=new Map(record.history);nextHistory.set(ticket,retained);record.nextHistory=nextHistory;
+     record.phase='armed';
+@@ -1526,3 +1550,160 @@
+   };
+   return Object.freeze(finalize);
+ }
++
++// Source-only inert cancellation. No registration/adoption receipt or IPC route.
++const nativeCancellationPrepareRelease=ReduxPersistorIPC.prototype.prepareNativeUnregisteredRelease;
++const nativeCancellationCheckRelease=ReduxPersistorIPC.prototype.checkNativeUnregisteredRelease;
++const nativeCancellationFinalizeRelease=ReduxPersistorIPC.prototype.finalizeNativeUnregisteredRelease;
++type NativeExecutorCancellation={
++  relay:object;namespace:object;methods:Map<string,Function>;observer:Function;
++  prepared:Readonly<Record<string,unknown>>;preparedJSON:string;anchor:Readonly<{schema:string;rootId:string;inventorySHA256:string}>;
++  closeStarted:boolean;sealStarted:boolean;releaseStarted:boolean;checking:boolean;
++  observationJSON?:string;workerJSON?:string;observation?:Readonly<Record<string,unknown>>;
++  transition?:Readonly<Record<string,unknown>>;next?:Readonly<{schema:string;rootId:string;inventorySHA256:string}>;
++  lowerTicket?:object;releaseReceipt?:Readonly<Record<string,unknown>>;
++};
++const nativeCancellationKeys=['schema','binding','preparedReceiptSHA256','relayLifetime','relayPid','workerLifetime','workerPid','creationTime','packetSHA256',
++  'cancelledBeforeStart','explicitStartAttempted','pythonStartSent','destinationAcquired','relayTerminal','workerTerminal',
++  'effectsAllowed','installationPermit','nativeAdmission','nativeInstallAccepted','powerLossPersistenceVerified'];
++function nativeCancellationCall(c:NativeExecutorCancellation,name:string):unknown {
++  const fn=c.methods.get(name);if(fn===undefined||nativeContinuationFunction(c.relay,name)!==fn)throw nativeTransportError();
++  return Reflect.apply(fn,c.relay,[]);
++}
++function nativeCancellationObserve(attempt:NativeExecutorTransportAttempt,c:NativeExecutorCancellation) {
++  if(nativeContinuationFunction(c.namespace,'observeRelayInertCancellation')!==c.observer)throw nativeTransportError();
++  // The actual source module authenticates its own relay WeakMap brand. No status DTO can replace this call.
++  const raw=Reflect.apply(c.observer,c.namespace,[c.relay]);
++  if(raw===null||typeof raw!=='object'||nativeStartupTypes.isProxy(raw)||!Object.isFrozen(raw))throw nativeTransportError();
++  const data=nativeStartupData(nativeCompletionSnapshot(raw),nativeCancellationKeys),b=attempt.binding;
++  if(b===undefined||data.schema!=='owned-zip-relay-inert-cancellation/1'||data.cancelledBeforeStart!==true||data.explicitStartAttempted!==false
++    ||data.pythonStartSent!==false||data.destinationAcquired!==false||data.effectsAllowed!==false||data.installationPermit!==false
++    ||data.nativeAdmission!==false||data.nativeInstallAccepted!==false||data.powerLossPersistenceVerified!==false
++    ||data.preparedReceiptSHA256!==nativeStartupHash('sha256').update(c.preparedJSON).digest('hex')
++    ||!['workerLifetime','workerPid','creationTime','packetSHA256'].every(k=>data[k]===c.prepared[k]))throw nativeTransportError();
++  const binding=nativeStartupData(data.binding,['operationId','nativeJobId','requestSHA256','rendererGeneration']);
++  const expected=nativeStartupData(c.prepared.binding,['operationId','nativeJobId','requestSHA256','rendererGeneration']);
++  if(!Object.keys(expected).every(k=>binding[k]===expected[k])||binding.operationId!==b.operationId||binding.nativeJobId!==b.nativeJobId||binding.requestSHA256!==b.requestSHA256
++    ||typeof data.relayLifetime!=='string'||!/^relay_[a-f0-9]{32}$/.test(data.relayLifetime)||!Number.isSafeInteger(data.relayPid)||(data.relayPid as number)<=0)throw nativeTransportError();
++  for(const terminal of [data.relayTerminal,data.workerTerminal]){
++    const t=nativeStartupData(terminal,['schema','binding','spawnObserved','exitObserved','closeObserved','childErrorObserved','childErrorCode',
++      'exitCode','exitSignal','closeCode','closeSignal','pipes','childResourcesClosed','held','reasonCode','outcome','exitSucceeded',
++      'nativeInstallAccepted','persistenceVerified','descendantsVerified']);
++    const tb=nativeStartupData(t.binding,['operationId','nativeJobId','requestSHA256','rendererGeneration']);
++    if(t.schema!=='child-terminal-observation/1'||!Object.keys(expected).every(k=>tb[k]===expected[k])||t.spawnObserved!==true||t.exitObserved!==true
++      ||t.closeObserved!==true||t.childErrorObserved!==false||t.childErrorCode!==null||t.exitCode!==0||t.exitSignal!==null||t.closeCode!==0||t.closeSignal!==null
++      ||t.childResourcesClosed!==true||t.held!==false||t.reasonCode!==null||t.outcome!=='exited'||t.exitSucceeded!==true
++      ||t.nativeInstallAccepted!==false||t.persistenceVerified!==false||t.descendantsVerified!==false)throw nativeTransportError();
++    const pipes=nativeStartupData(t.pipes,['stdin','stdout','stderr']);
++    for(const value of Object.values(pipes)){const pipe=nativeStartupData(value,['closeObserved','errorObserved','errorCode']);if(pipe.closeObserved!==true||pipe.errorObserved!==false||pipe.errorCode!==null)throw nativeTransportError();}
++  }
++  return {data:Object.freeze(data),json:JSON.stringify(data),workerJSON:JSON.stringify(data.workerTerminal)};
++}
++function nativeCancellationCheck(attempt:NativeExecutorTransportAttempt,c:NativeExecutorCancellation):void {
++  if(c.checking){nativeTransportHold(attempt);throw nativeTransportError();}c.checking=true;
++  try{
++    const p=attempt.pending;
++    if(attempt.cancellation!==c||attempt.continuation!==undefined||p===undefined||p.phase!=='prepared'||p.owner!==attempt.pendingOwner
++      ||p.relay!==c.relay||p.preparedReceipt!==c.prepared
++      ||JSON.stringify(nativeCompletionSnapshot(c.prepared))!==c.preparedJSON)throw nativeTransportError();
++    for(const[name,fn]of c.methods)if(nativeContinuationFunction(c.relay,name)!==fn)throw nativeTransportError();
++    if(nativeContinuationFunction(c.namespace,'observeRelayInertCancellation')!==c.observer)throw nativeTransportError();
++    for(const[name,fn]of [['prepareNativeUnregisteredRelease',nativeCancellationPrepareRelease],['checkNativeUnregisteredRelease',nativeCancellationCheckRelease],
++      ['finalizeNativeUnregisteredRelease',nativeCancellationFinalizeRelease]] as const){if(Object.getOwnPropertyDescriptor(ReduxPersistorIPC.prototype,name)?.value!==fn)throw nativeTransportError();}
++    if(c.observationJSON!==undefined){const observed=nativeCancellationObserve(attempt,c);if(observed.json!==c.observationJSON||observed.workerJSON!==c.workerJSON)throw nativeTransportError();}
++    const expectedAnchor=c.next??c.anchor;
++    for(const a of [attempt.startup?.anchor,p.anchor,p.genesis?.anchor])if(a!==expectedAnchor)throw nativeTransportError();
++    if(attempt.phase==='cancel_released'&&(c.releaseReceipt===undefined||c.next===undefined||c.transition===undefined))throw nativeTransportError();
++  }finally{c.checking=false;}
++}
++/** Only a healthy prepared operation may choose this irreversible, mutually exclusive branch. */
++export async function cancelNativeExecutorTransportPrepared(ticket:object) {
++  const a=nativeTransportTicket(ticket),p=a.pending;
++  if(a.phase!=='prepared'||a.continuation!==undefined||a.cancellation!==undefined||p===undefined||p.phase!=='prepared'
++    ||p.preparedReceipt===undefined||p.relay===undefined||p.anchor===undefined||a.source===undefined){nativeTransportHold(a);throw nativeTransportError();}
++  // Claim before source/native callbacks and before any await. COPY checks this latch too.
++  const c:NativeExecutorCancellation={relay:p.relay,namespace:{},methods:new Map(),observer:()=>{throw nativeTransportError();},prepared:p.preparedReceipt,
++    preparedJSON:'',anchor:p.anchor,closeStarted:true,sealStarted:false,releaseStarted:false,checking:false};a.cancellation=c;a.phase='cancelling';
++  try{
++    c.preparedJSON=JSON.stringify(nativeCompletionSnapshot(c.prepared));
++    const module=a.source.modules?.get('owned-zip-relay-client.mjs');if(module===undefined)throw nativeTransportError();c.namespace=module.namespace;
++    c.observer=nativeContinuationFunction(c.namespace,'observeRelayInertCancellation');
++    for(const name of ['cancel','release','status'])c.methods.set(name,nativeContinuationFunction(c.relay,name));
++    nativeTransportCheck(a);
++    const initial=nativeStartupData(nativeCompletionSnapshot(nativeCancellationCall(c,'status')),nativeCompletionStatusKeys);
++    const sdk=initial.sdk;if(sdk===null||typeof sdk!=='object'||Array.isArray(sdk))throw nativeTransportError();
++    const sd=sdk as Record<string,unknown>;
++    if(initial.cancelAttempted!==false||initial.handoffAttempted!==false||initial.releaseAttempted!==false||initial.controllerEnded!==false||initial.errorCode!==null
++      ||sd.startSent!==false||sd.cancelAttempted!==false||sd.handoffAttempted!==false||sd.childClosed!==false||sd.errorCode!==null||sd.worker!==null||sd.copyProof!==null
++      ||!['workerLifetime','workerPid','creationTime','packetSHA256'].every(k=>sd[k]===c.prepared[k]))throw nativeTransportError();
++    nativeTransportCheck(a);await nativeCancellationCall(c,'cancel');nativeTransportCheck(a);
++    await nativeCancellationCall(c,'release');nativeTransportCheck(a);
++    const observed=nativeCancellationObserve(a,c);c.observation=observed.data;c.observationJSON=observed.json;c.workerJSON=observed.workerJSON;
++    if(nativeTransportHeld(a))throw nativeTransportError();a.phase='cancelled';nativeTransportCheck(a);
++    const b=a.binding;if(b===undefined)throw nativeTransportError();
++    return Object.freeze({schema:'native-executor-inert-cancel-closed/1',operationId:b.operationId,nativeJobId:b.nativeJobId,requestSHA256:b.requestSHA256,
++      packetSHA256:c.prepared.packetSHA256,workerLifetime:c.prepared.workerLifetime,inertCancelObservationSHA256:nativeStartupHash('sha256').update(observed.json).digest('hex'),
++      effectsAllowed:false,installationPermit:false,nativeAdmission:false});
++  }catch(primary){nativeTransportHold(a);throw primary;}
++}
++/** Anchored v3 append, owned pre-registration CAS, then separate exact readback. */
++export async function sealNativeExecutorTransportCancellation(ticket:object) {
++  const a=nativeTransportTicket(ticket),c=a.cancellation;
++  if(c===undefined||a.phase!=='cancelled'||c.sealStarted){nativeTransportHold(a);throw nativeTransportError();}c.sealStarted=true;
++  try{
++    nativeTransportCheck(a);const ready=a.ready,source=a.source,p=a.pending,startup=a.startup,b=a.binding,owner=a.modOwner;
++    if(ready===undefined||source===undefined||p===undefined||startup===undefined||b===undefined||owner===undefined||c.observationJSON===undefined||c.workerJSON===undefined)throw nativeTransportError();
++    const before=Buffer.from(JSON.stringify(c.anchor)),raw=await nativeHistoryAnchorRead.call(startup.backend);nativeTransportCheck(a);
++    if(raw===null||!nativeTransportCopy(raw,1024).equals(before))throw nativeTransportError();nativePendingInventory(source,c.anchor,true);nativeTransportCheck(a);
++    const held={schema:'native-executor-inert-ownership-hold-observation/1',operationId:b.operationId,nativeJobId:b.nativeJobId,requestSHA256:b.requestSHA256,
++      rootId:c.anchor.rootId,inventorySHA256:c.anchor.inventorySHA256,mainReservationHeld:true,sourceFrameHeld:true,
++      inertCancelObservationSHA256:nativeStartupHash('sha256').update(c.observationJSON).digest('hex')};
++    const evidence={schema:'native-executor-terminal-evidence/3',outcome:'prepared_no_start_cancelled_worker_closed',
++      inertCancelObservationSHA256:held.inertCancelObservationSHA256,workerClosureObservationSHA256:nativeStartupHash('sha256').update(c.workerJSON).digest('hex'),
++      ownershipHoldObservationSHA256:nativeStartupHash('sha256').update(JSON.stringify(held)).digest('hex')};
++    const bytes=Buffer.from(JSON.stringify(evidence)),binding={operationId:b.operationId,nativeJobId:b.nativeJobId,requestSHA256:b.requestSHA256,
++      packetSHA256:c.prepared.packetSHA256,workerLifetime:c.prepared.workerLifetime};
++    a.phase='cancel_sealing';nativeTransportCheck(a);
++    const result=source.appendTerminalAnchored(source.journal,binding,bytes,before);nativeTransportCheck(a);
++    const transition=nativeStartupData(result,['schema','rootId','previousInventorySHA256','inventorySHA256','operationId','nativeJobId','requestSHA256','packetSHA256','workerLifetime','evidenceSHA256']);
++    if(transition.schema!=='native-executor-terminal-transition/1'||transition.rootId!==c.anchor.rootId||transition.previousInventorySHA256!==c.anchor.inventorySHA256
++      ||typeof transition.inventorySHA256!=='string'||!/^[a-f0-9]{64}$/.test(transition.inventorySHA256)||transition.inventorySHA256===c.anchor.inventorySHA256
++      ||!Object.keys(binding).every(k=>transition[k]===binding[k as keyof typeof binding])||transition.evidenceSHA256!==nativeStartupHash('sha256').update(bytes).digest('hex'))throw nativeTransportError();
++    c.transition=Object.freeze(transition);
++    const next=nativeHistoryAnchorSnapshot(Buffer.from(JSON.stringify({schema:'native-executor-anchor/1',rootId:transition.rootId,inventorySHA256:transition.inventorySHA256}))),after=Buffer.from(JSON.stringify(next));
++    nativePendingInventory(source,next,false);nativeTransportCheck(a);
++    const ack=nativeStartupData(await nativeGenesisWriteAnchor.call(ready.main,owner,before,after),['schema','previousSHA256','anchorSHA256','rootId','inventorySHA256','commitObserved','readbackVerified','effectsAllowed','installationPermit','powerLossPersistenceVerified']);nativeTransportCheck(a);
++    if(ack.schema!=='native-executor-anchor-write/1'||ack.previousSHA256!==nativeStartupHash('sha256').update(before).digest('hex')||ack.anchorSHA256!==nativeStartupHash('sha256').update(after).digest('hex')
++      ||ack.rootId!==next.rootId||ack.inventorySHA256!==next.inventorySHA256||ack.commitObserved!==true||ack.readbackVerified!==true||ack.effectsAllowed!==false||ack.installationPermit!==false||ack.powerLossPersistenceVerified!==false)throw nativeTransportError();
++    const readback=await nativeHistoryAnchorRead.call(startup.backend);nativeTransportCheck(a);
++    if(readback===null||!nativeTransportCopy(readback,1024).equals(after))throw nativeTransportError();nativePendingInventory(source,next,false);nativeTransportCheck(a);
++    if(p.genesis===undefined)throw nativeTransportError();startup.anchor=next;p.genesis.anchor=next;p.anchor=next;c.next=next;a.phase='cancel_sealed';nativeTransportCheck(a);
++    return c.transition;
++  }catch(primary){nativeTransportHold(a);throw primary;}
++}
++/** Does not release renderer owners or reset the completed transport slot. */
++export function releaseNativeExecutorTransportCancellation(ticket:object) {
++  const a=nativeTransportTicket(ticket),c=a.cancellation;
++  if(c===undefined||a.phase!=='cancel_sealed'||c.releaseStarted||a.ready===undefined||a.modOwner===undefined||a.binding===undefined||c.next===undefined){nativeTransportHold(a);throw nativeTransportError();}c.releaseStarted=true;
++  try{
++    nativeTransportCheck(a);a.phase='cancel_releasing';
++    if(a.source===undefined)throw nativeTransportError();
++    nativePendingInventory(a.source,c.next,false);nativeTransportCheck(a);
++    const token:unknown=nativeCancellationPrepareRelease.call(a.ready.main,a.modOwner);
++    if(token===null||typeof token!=='object'||nativeStartupTypes.isProxy(token)||!Object.isFrozen(token))throw nativeTransportError();c.lowerTicket=token;nativeTransportCheck(a);
++    nativeCancellationCheckRelease.call(a.ready.main,token);nativeTransportCheck(a);
++    nativePendingInventory(a.source,c.next,false);nativeTransportCheck(a);
++    const b=a.binding,receipt=Object.freeze({schema:'native-executor-cancellation-release/1',operationId:b.operationId,nativeJobId:b.nativeJobId,requestSHA256:b.requestSHA256,
++      rootId:c.next.rootId,inventorySHA256:c.next.inventorySHA256,released:true,effectsAllowed:false,installationPermit:false,nativeAdmission:false});
++    // The actual lower finalizer performs its final callback-capable checks before opening writers.
++    nativeCancellationFinalizeRelease.call(a.ready.main,token);
++    // No source/native callback after lower writers open; retain the known result even if a later observer holds.
++    c.releaseReceipt=receipt;c.lowerTicket=undefined;a.phase='cancel_released';return receipt;
++  }catch(primary){nativeTransportHold(a);throw primary;}
++}
++/** Historical known result only. No release retry or successor/reset permission. */
++export function getNativeExecutorTransportCancellationRelease(ticket:object) {
++  const completed=nativeSuccessorHistory.get(ticket);
++  if(completed!==undefined)return completed.kind==='cancelled'?completed.release:null;
++  return nativeTransportTicket(ticket).cancellation?.releaseReceipt??null;
++}
