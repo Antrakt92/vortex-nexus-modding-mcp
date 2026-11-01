@@ -1,6 +1,6 @@
 # Assemble the reviewed Vortex source patches
 
-`native-source-series.mjs` applies the fixed sequence of 95 reviewed patches to
+`native-source-series.mjs` applies the fixed sequence of 97 reviewed patches to
 25 original files from Vortex `v2.9.1`, commit
 `c80326367cbe6d96621ad6cf4a5488ef49bac110`. It replaces manually composing separate
 patch chains before compilation. It does not change an installed application or
@@ -35,7 +35,7 @@ match the pinned series. Patch application requires exact offsets and context;
 it has no fuzzy matching or hash-refresh mode.
 
 The fixed graph combines the 33-patch mod-management/transfer packet with the
-62-patch persistence packet. The latter includes renderer target admission and
+64-patch persistence packet. The latter includes renderer target admission and
 acknowledged diffs, main/preload/shared IPC, backend reservations and managed SQL
 ownership, the main build's runtime binding and startup history classification.
 Both runtime packet directories have separate closed inventories;
@@ -658,3 +658,34 @@ check are retained; this availability limitation remains a gate before public
 installation. Sequential fixture execution does not establish concurrent native
 acceptance. Full START/completion/release coordination, repeat-operation handoff,
 inert cancellation closure and installed-host acceptance remain required.
+
+## Copy, registration and adoption continuation — 1 November 2026
+
+The 97-patch graph adds two source changes. Main retains the validated prepared
+receipt and separates COPY from REGISTER; Renderer exposes fresh prepared-owner
+checks and adopts the actual committed record while retaining a genuine release
+ticket. The [continuation contract](NATIVE-EXECUTOR-CONTINUATION.md) describes the
+private methods and remaining fixed IPC/completion gates.
+
+Independent review found that worker closure during COMMIT could still return
+an observation, and that release methods replaced after admission could be
+accepted as genuine. Regression failures were retained. Main now rechecks live
+worker/relay custody after the database await and later committed checks;
+Renderer captures release methods at admission and refuses later substitution.
+Windows destination comparison uses the same canonical path semantics as the
+relay while retaining the exact leaf and native identity requirements.
+
+All 36 new actor checks passed, including five direct Main/Renderer composition
+cases, followed by all 23 graph checks and 434 related source checks, without
+skips. One graph fixture initially exceeded the independent 96 KiB byte cap before
+reaching its intended companion-count guard. Only that synthetic fixture is now
+compact, with an explicit size assertion and unchanged expected graph refusal.
+The production byte/count limits are unchanged.
+
+Fresh Main and Renderer TypeScript targets and builds passed, as did all 52
+upstream Main tests. Twenty-two selected Program/map sources matched afresh;
+three unchanged Shared/Preload entries retained the exact prior proof. All 25
+source graph outputs and the unchanged fifteen-file SDK tuple matched. There
+were no dependency changes, native-child executions or installed-host effects.
+Pending history and writer holds remain after source-method adoption; no public
+installation endpoint or completion/release claim is made.

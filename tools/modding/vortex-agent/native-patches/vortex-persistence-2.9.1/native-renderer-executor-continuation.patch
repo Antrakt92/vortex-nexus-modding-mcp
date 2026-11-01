@@ -1,0 +1,252 @@
+--- a/src/renderer/src/ExtensionManager.ts
++++ b/src/renderer/src/ExtensionManager.ts
+@@ -13,7 +13,8 @@
+ import { performance as nativeReadinessClock } from "perf_hooks";
+ import type { NativeMainReadinessObservation } from "@vortex/shared/ipc";
+ import type InstallManager from "./extensions/mod_management/InstallManager";
+-import { reserveNativeRendererTarget, checkNativeRendererTarget } from "./reducers";
++import { reserveNativeRendererTarget, checkNativeRendererTarget, adoptNativeRendererTarget } from "./reducers";
++const nativeExecutorAdopt = adoptNativeRendererTarget;
+ import { acquireNativePersistenceFlushHold, checkNativePersistenceFlushHold } from "./store/persistDiffMiddleware";
+ import type { PreloadWindow } from "@vortex/shared/preload";
+ import PromiseBB from "bluebird";
+@@ -747,7 +748,7 @@
+   contextReading: boolean;
+   readyOwner?: object;
+   manager?: InstallManager;
+-  methods?: {prototype: object; reserve: PropertyDescriptor; check: PropertyDescriptor; describe: PropertyDescriptor};
++  methods?: {prototype: object; reserve: PropertyDescriptor; check: PropertyDescriptor; describe: PropertyDescriptor; releasePrepare: PropertyDescriptor; releaseCheck: PropertyDescriptor};
+   managerOwner?: object;
+   targetOwner?: object;
+   flushOwner?: object;
+@@ -779,6 +780,7 @@
+   admission?: NativeRendererExecutorAdmission;
+   owner?: object;
+   round: number;
++  prepared: boolean;
+   busy: boolean;
+   held: boolean;
+   primarySet: boolean;
+@@ -786,7 +788,171 @@
+   challenges: Set<string>;
+ }
+ 
++interface NativeExecutorRendererAdoptionObservation {
++  schema: "native-executor-renderer-adoption/1"; transportId: string; operationId: string; nativeJobId: string;
++  requestSHA256: string; recordSHA256: string; fullRecordSHA256: string; effectsAllowed: false; installationPermit: false;
++}
++interface NativeExecutorRendererAdoption {
++  request: NativeExecutorRendererRequest; admission: NativeRendererExecutorAdmission; phase: "preparing" | "prepared" | "held";
++  checking: boolean; manager?: InstallManager; prototype?: object; prepare?: PropertyDescriptor; check?: PropertyDescriptor;
++  releaseTicket?: object; observedJSON?: string; observation?: Readonly<NativeExecutorRendererAdoptionObservation>;
++}
++
+ class ExtensionManager {
++  #mNativeExecutorAdoption: NativeExecutorRendererAdoption | undefined;
++
++  #nativeExecutorAdoptionRequest(transportId: string): NativeExecutorRendererRequest {
++    const request = this.#mNativeExecutorRequest;
++    if (typeof transportId !== "string" || !/^transport_[a-f0-9]{32}$/.test(transportId)
++        || request === undefined || request.binding === undefined || request.binding.transportId !== transportId) throw this.#nativeTransportError();
++    return request;
++  }
++
++  #holdNativeExecutorAdoption(record: NativeExecutorRendererAdoption): void {
++    record.phase = "held";
++    this.#holdNativeTransport(record.request);
++  }
++
++  #nativeExecutorReleaseMethods(manager: InstallManager) {
++    if (manager === null || typeof manager !== "object" || nativeReadinessTypes.isProxy(manager)) throw this.#nativeTransportError();
++    const prototype: unknown = Object.getPrototypeOf(manager);
++    if (prototype === null || typeof prototype !== "object" || nativeReadinessTypes.isProxy(prototype)) throw this.#nativeTransportError();
++    const read = (key: string): PropertyDescriptor => {
++      if (Object.hasOwn(manager, key)) throw this.#nativeTransportError();
++      const descriptor = Object.getOwnPropertyDescriptor(prototype, key);
++      if (descriptor === undefined || !("value" in descriptor) || typeof descriptor.value !== "function"
++          || nativeReadinessTypes.isProxy(descriptor.value)) throw this.#nativeTransportError();
++      return Object.freeze({...descriptor});
++    };
++    return {prototype, prepare: read("prepareNativeRegistrationRelease"), check: read("checkNativeRegistrationRelease")};
++  }
++
++  #checkNativeExecutorAdoption(record: NativeExecutorRendererAdoption, preparing = false): void {
++    if (record.checking) { this.#holdNativeExecutorAdoption(record); throw this.#nativeTransportError(); }
++    record.checking = true;
++    try {
++      const valid = () => this.#mNativeExecutorAdoption === record && record.phase === (preparing ? "preparing" : "prepared")
++        && record.request === this.#mNativeExecutorRequest && record.request.prepared && record.request.round === 3 && !record.request.busy
++        && record.request.admission === record.admission && this.#mNativeExecutorAdmission === record.admission;
++      if (!valid()) throw this.#nativeTransportError();
++      this.#checkNativeTransport(record.request.route, record.request);
++      this.#nativeTransportProjection(record.request);
++      const admission = record.admission, manager = admission.manager;
++      if (admission.owner !== record.request.owner || admission.phase !== "ready" || manager === undefined
++          || admission.managerOwner === undefined || admission.targetOwner === undefined || admission.flushOwner === undefined
++          || admission.load !== record.request.route.load || admission.store !== record.request.route.load.store) throw this.#nativeTransportError();
++      if (record.manager !== undefined) {
++        const methods = this.#nativeExecutorReleaseMethods(manager);
++        if (record.manager !== manager || record.prototype !== methods.prototype || record.prepare === undefined || record.check === undefined
++            || !this.#nativeExecutorSameDescriptor(record.prepare, methods.prepare)
++            || !this.#nativeExecutorSameDescriptor(record.check, methods.check)) throw this.#nativeTransportError();
++        if (record.releaseTicket !== undefined) Reflect.apply(record.check.value, manager, [record.releaseTicket]);
++      }
++      if (!preparing && (record.releaseTicket === undefined || record.observedJSON === undefined || record.observation === undefined)) throw this.#nativeTransportError();
++      this.#nativeTransportProjection(record.request);
++      if (!valid()) throw this.#nativeTransportError();
++    } catch (primary) { this.#holdNativeExecutorAdoption(record); throw primary; }
++    finally { record.checking = false; }
++  }
++
++  #copyNativeExecutorRegistration(bytes: Uint8Array, request: NativeExecutorRendererRequest) {
++    const copy = this.#nativeTransportCopy(bytes, 32768), text = Buffer.from(copy).toString("utf8"), raw: unknown = JSON.parse(text);
++    if (!Buffer.from(JSON.stringify(raw), "utf8").equals(Buffer.from(copy))) throw this.#nativeTransportError();
++    const fields = ["schema", "operationId", "nativeJobId", "requestSHA256", "recordSHA256", "recordJSON", "fullRecordSHA256",
++      "commitObserved", "readbackVerified", "trackedAssociationVerified", "trackedInstallComplete", "effectsAllowed", "installationPermit", "powerLossPersistenceVerified"];
++    const data = this.#nativeTransportData(raw, fields), binding = request.binding;
++    if (!Buffer.from(JSON.stringify(data), "utf8").equals(Buffer.from(copy))) throw this.#nativeTransportError();
++    if (binding === undefined || data.schema !== "native-tracked-mod-registration-observed/2" || data.operationId !== binding.operationId
++        || data.nativeJobId !== binding.nativeJobId || data.requestSHA256 !== binding.requestSHA256 || data.commitObserved !== true
++        || data.readbackVerified !== true || data.trackedAssociationVerified !== true || data.trackedInstallComplete !== false
++        || data.effectsAllowed !== false || data.installationPermit !== false || data.powerLossPersistenceVerified !== false
++        || typeof data.recordJSON !== "string" || Buffer.byteLength(data.recordJSON) > 16384
++        || typeof data.recordSHA256 !== "string" || !/^[a-f0-9]{64}$/.test(data.recordSHA256)
++        || typeof data.fullRecordSHA256 !== "string" || !/^[a-f0-9]{64}$/.test(data.fullRecordSHA256)
++        || nativeExecutorTransportHash("sha256").update(data.recordJSON).digest("hex") !== data.fullRecordSHA256) throw this.#nativeTransportError();
++    const record: unknown = JSON.parse(data.recordJSON);
++    if (JSON.stringify(record) !== data.recordJSON) throw this.#nativeTransportError();
++    const value = this.#nativeTransportData(record, ["id", "state", "type", "installationPath", "archiveId", "attributes"]);
++    if (value.id !== binding.modId || value.installationPath !== binding.modId || value.state !== "installed" || value.type !== ""
++        || typeof value.archiveId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value.archiveId)
++        || ["__proto__", "constructor", "prototype"].includes(value.archiveId)) throw this.#nativeTransportError();
++    const base = {id: value.id, state: value.state, type: value.type, installationPath: value.installationPath, archiveId: value.archiveId};
++    if (nativeExecutorTransportHash("sha256").update(JSON.stringify(base)).digest("hex") !== data.recordSHA256) throw this.#nativeTransportError();
++    const attributes = this.#nativeTransportData(value.attributes, ["__nmtNativeRegistration"]);
++    const marker = this.#nativeTransportData(attributes.__nmtNativeRegistration, ["schema", "operationId", "nativeJobId", "requestSHA256", "planId", "payloadSHA256", "recordSHA256", "archiveId", "archiveSHA256", "downloadProjectionSHA256"]);
++    if (marker.schema !== "native-tracked-mod-registration/2" || marker.operationId !== binding.operationId || marker.nativeJobId !== binding.nativeJobId
++        || marker.requestSHA256 !== binding.requestSHA256 || marker.recordSHA256 !== data.recordSHA256 || marker.archiveId !== value.archiveId
++        || !["planId", "payloadSHA256", "archiveSHA256", "downloadProjectionSHA256"].every(key => {
++          const value = marker[key]; return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
++        })) throw this.#nativeTransportError();
++    const canonicalRecord = {id: value.id, state: value.state, type: value.type, installationPath: value.installationPath, archiveId: value.archiveId, attributes: {__nmtNativeRegistration: marker}};
++    if (JSON.stringify(canonicalRecord) !== data.recordJSON) throw this.#nativeTransportError();
++    // This closed DTO decoder is correlation, not proof of Main authority. The
++    // fixed coordinator must deliver the actual committed source observation.
++    return {text, recordSHA256: data.recordSHA256, fullRecordSHA256: data.fullRecordSHA256};
++  }
++
++  public checkNativeExecutorTransportPreparation(transportId: string) {
++    if (this === null || typeof this !== "object" || nativeReadinessTypes.isProxy(this) || !(#mNativeExecutorAdoption in this)) throw new Error("NATIVE_EXECUTOR_RENDERER_FAILED");
++    const request = this.#nativeExecutorAdoptionRequest(transportId);
++    if (this.#mNativeExecutorAdoption !== undefined) throw this.#nativeTransportError();
++    try {
++      if (!request.prepared || request.round !== 3 || request.busy || request.admission === undefined
++          || request.admission !== this.#mNativeExecutorAdmission || request.admission.owner !== request.owner) throw this.#nativeTransportError();
++      this.#checkNativeTransport(request.route, request);
++      const projection = this.#nativeTransportProjection(request);
++      this.#checkNativeTransport(request.route, request);
++      return projection;
++    } catch (primary) { this.#holdNativeTransport(request); throw primary; }
++  }
++
++  public prepareNativeExecutorTransportAdoption(transportId: string, observedBytes: Uint8Array): Readonly<NativeExecutorRendererAdoptionObservation> {
++    if (this === null || typeof this !== "object" || nativeReadinessTypes.isProxy(this) || !(#mNativeExecutorAdoption in this)) throw new Error("NATIVE_EXECUTOR_RENDERER_FAILED");
++    const request = this.#nativeExecutorAdoptionRequest(transportId), previous = this.#mNativeExecutorAdoption;
++    if (previous !== undefined) { this.#holdNativeExecutorAdoption(previous); throw this.#nativeTransportError(); }
++    const admission = request.admission;
++    if (admission === undefined) { this.#holdNativeTransport(request); throw this.#nativeTransportError(); }
++    const record: NativeExecutorRendererAdoption = {request, admission, phase: "preparing", checking: false};
++    this.#mNativeExecutorAdoption = record;
++    try {
++      // Claim before either byte copying, decoder or source/native callback.
++      const observed = this.#copyNativeExecutorRegistration(observedBytes, request);
++      this.#checkNativeExecutorAdoption(record, true);
++      const manager = admission.manager, managerOwner = admission.managerOwner, rootOwner = admission.targetOwner, flushOwner = admission.flushOwner;
++      if (manager === undefined || managerOwner === undefined || rootOwner === undefined || flushOwner === undefined || request.binding === undefined) throw this.#nativeTransportError();
++      const methods = admission.methods;
++      if (methods === undefined) throw this.#nativeTransportError();
++      // These methods were captured when this actual manager first entered
++      // admission, before reserve/check/describe callbacks could replace them.
++      record.manager = manager; record.prototype = methods.prototype; record.prepare = methods.releasePrepare; record.check = methods.releaseCheck;
++      record.observedJSON = observed.text;
++      this.#checkNativeExecutorAdoption(record, true);
++      nativeExecutorAdopt(rootOwner, flushOwner, observed.text);
++      this.#checkNativeExecutorAdoption(record, true);
++      record.releaseTicket = this.#nativeExecutorOwner(Reflect.apply(methods.releasePrepare.value, manager, [managerOwner, rootOwner, flushOwner]));
++      this.#checkNativeExecutorAdoption(record, true);
++      const binding = request.binding;
++      const observation: Readonly<NativeExecutorRendererAdoptionObservation> = Object.freeze({schema: "native-executor-renderer-adoption/1", transportId,
++        operationId: binding.operationId, nativeJobId: binding.nativeJobId, requestSHA256: binding.requestSHA256,
++        recordSHA256: observed.recordSHA256, fullRecordSHA256: observed.fullRecordSHA256, effectsAllowed: false, installationPermit: false});
++      record.observation = observation;
++      record.phase = "prepared";
++      this.#checkNativeExecutorAdoption(record);
++      return observation;
++    } catch (primary) { this.#holdNativeExecutorAdoption(record); throw primary; }
++  }
++
++  public checkNativeExecutorTransportAdoption(transportId: string): Readonly<NativeExecutorRendererAdoptionObservation> {
++    if (this === null || typeof this !== "object" || nativeReadinessTypes.isProxy(this) || !(#mNativeExecutorAdoption in this)) throw new Error("NATIVE_EXECUTOR_RENDERER_FAILED");
++    const request = this.#nativeExecutorAdoptionRequest(transportId), record = this.#mNativeExecutorAdoption;
++    if (record === undefined || record.request !== request) throw this.#nativeTransportError();
++    this.#checkNativeExecutorAdoption(record);
++    const observation = record.observation;
++    if (observation === undefined) { this.#holdNativeExecutorAdoption(record); throw this.#nativeTransportError(); }
++    return observation;
++  }
++
++
+   #mNativeExecutorTransport: NativeExecutorRendererTransport | undefined;
+   #mNativeExecutorRequest: NativeExecutorRendererRequest | undefined;
+ 
+@@ -937,7 +1103,7 @@
+     if (this.#mNativeExecutorRequest !== undefined) { this.#holdNativeTransport(this.#mNativeExecutorRequest); throw this.#nativeTransportError(); }
+     const route = this.#mNativeExecutorTransport;
+     if (route === undefined) throw this.#nativeTransportError();
+-    const request: NativeExecutorRendererRequest = {route, request: new Uint8Array(), archive: new Uint8Array(), requestBytesSHA256: "", archiveBytesSHA256: "", round: 0,
++    const request: NativeExecutorRendererRequest = {route, request: new Uint8Array(), archive: new Uint8Array(), requestBytesSHA256: "", archiveBytesSHA256: "", round: 0, prepared: false,
+       busy: false, held: false, primarySet: false, primary: undefined, challenges: new Set()};
+     this.#mNativeExecutorRequest = request;
+     try {
+@@ -958,7 +1124,9 @@
+           || typeof d.rootId !== "string" || !/^[0-9]+:[0-9]+$/.test(d.rootId) || d.rootId.length > 100
+           || typeof d.inventorySHA256 !== "string" || !/^[a-f0-9]{64}$/.test(d.inventorySHA256)) throw this.#nativeTransportError();
+       this.#checkNativeTransport(route, request); this.#nativeTransportProjection(request);
+-      return Object.freeze({...d}) as unknown as NativeExecutorPreparation;
++      const preparation = Object.freeze({...d}) as unknown as NativeExecutorPreparation;
++      request.prepared = true;
++      return preparation;
+     } catch (primary) {
+       this.#holdNativeTransport(request, primary, true);
+       throw request.primarySet ? request.primary : primary;
+@@ -1021,7 +1189,7 @@
+           || nativeReadinessTypes.isProxy(descriptor.value)) throw this.#nativeExecutorError();
+       return Object.freeze({...descriptor});
+     };
+-    return {prototype, reserve: read("reserveNativeInstallExclusion"), check: read("checkNativeInstallExclusion"), describe: read("getNativeInstallExclusion")};
++    return {prototype, reserve: read("reserveNativeInstallExclusion"), check: read("checkNativeInstallExclusion"), describe: read("getNativeInstallExclusion"), releasePrepare: read("prepareNativeRegistrationRelease"), releaseCheck: read("checkNativeRegistrationRelease")};
+   }
+ 
+   #nativeExecutorProfile(attempt: NativeRendererExecutorAdmission): void {
+@@ -1066,7 +1234,9 @@
+         if (attempt.manager !== manager || attempt.methods === undefined || attempt.methods.prototype !== methods.prototype
+             || !this.#nativeExecutorSameDescriptor(attempt.methods.reserve, methods.reserve)
+             || !this.#nativeExecutorSameDescriptor(attempt.methods.check, methods.check)
+-            || !this.#nativeExecutorSameDescriptor(attempt.methods.describe, methods.describe)) throw this.#nativeExecutorError();
++            || !this.#nativeExecutorSameDescriptor(attempt.methods.describe, methods.describe)
++            || !this.#nativeExecutorSameDescriptor(attempt.methods.releasePrepare, methods.releasePrepare)
++            || !this.#nativeExecutorSameDescriptor(attempt.methods.releaseCheck, methods.releaseCheck)) throw this.#nativeExecutorError();
+         if (attempt.managerOwner !== undefined) {
+           Reflect.apply(methods.check.value, manager, [attempt.managerOwner]);
+           const labels: unknown = Reflect.apply(methods.describe.value, manager, []);
+@@ -1090,7 +1260,9 @@
+         if (attempt.methods.prototype !== finalMethods.prototype
+             || !this.#nativeExecutorSameDescriptor(attempt.methods.reserve, finalMethods.reserve)
+             || !this.#nativeExecutorSameDescriptor(attempt.methods.check, finalMethods.check)
+-            || !this.#nativeExecutorSameDescriptor(attempt.methods.describe, finalMethods.describe)) throw this.#nativeExecutorError();
++            || !this.#nativeExecutorSameDescriptor(attempt.methods.describe, finalMethods.describe)
++            || !this.#nativeExecutorSameDescriptor(attempt.methods.releasePrepare, finalMethods.releasePrepare)
++            || !this.#nativeExecutorSameDescriptor(attempt.methods.releaseCheck, finalMethods.releaseCheck)) throw this.#nativeExecutorError();
+       }
+       if (!this.#nativeExecutorSameDescriptor(attempt.storeDescriptor, this.#nativeExecutorStoreDescriptor(attempt.store))
+           || !this.#nativeExecutorSameDescriptor(attempt.subscribeDescriptor, this.#nativeExecutorStoreDescriptor(attempt.store, "subscribe"))) throw this.#nativeExecutorError();

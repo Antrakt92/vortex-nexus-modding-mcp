@@ -1,0 +1,174 @@
+--- a/src/main/src/store/mainPersistence.ts
++++ b/src/main/src/store/mainPersistence.ts
+@@ -317,7 +317,7 @@
+   return startup.source;
+ }
+ function nativeExecutorMethod(source: NativeExecutorJournalSource,binding: NonNullable<ReturnType<typeof nativeStartupBinding>>,
+-  entry:'owned-zip-worker-client.mjs'|'owned-zip-relay-client.mjs'|'native-dispatch-contract.cjs',name:string): Function {
++  entry:'owned-zip-worker-client.mjs'|'owned-zip-relay-client.mjs'|'native-dispatch-contract.cjs'|'install-job-contract.cjs',name:string): Function {
+   nativeExecutorCheckSource(source);const before=nativeStartupClosure(binding);
+   const old=source.modules?.get(entry);
+   if(old!==undefined){if(old.name!==name)throw nativeGenesisError();return old.method;}
+@@ -340,7 +340,7 @@
+   plan:{context:{gameId:string};package:{expectedModId:string}}};
+ type NativePendingAttempt={owner:object;phase:'checking'|'prepared'|'held';mainReadyOwner:object;modOwner:object;frameOwner:object;
+   main?:ReduxPersistorIPC;startup?:NativeExecutorStartupAttempt;genesis?:NativeExecutorGenesisAttempt;
+-  request?:NativePendingRequest;relay?:object;anchor?:Readonly<{schema:string;rootId:string;inventorySHA256:string}>};
++  request?:NativePendingRequest;relay?:object;preparedReceipt?:Readonly<Record<string,unknown>>;anchor?:Readonly<{schema:string;rootId:string;inventorySHA256:string}>};
+ let nativePendingAttempt:NativePendingAttempt|undefined;
+ function nativePendingHold(attempt:NativePendingAttempt){
+   attempt.phase='held';if(attempt.startup!==undefined)attempt.startup.phase='held';
+@@ -441,6 +441,7 @@
+       ||ack.commitObserved!==true||ack.readbackVerified!==true||ack.effectsAllowed!==false||ack.installationPermit!==false||ack.powerLossPersistenceVerified!==false)throw nativePendingError();
+     const readback=await nativeHistoryAnchorRead.call(startup.backend);check();if(readback===null||!Buffer.from(readback).equals(nextBytes))throw nativePendingError();
+     nativeStartupClosure(binding);check();verifySuccessor();check();
++    attempt.preparedReceipt=Object.freeze({...r,binding:Object.freeze(r.binding as object),transition:Object.freeze(r.transition as object)});
+     const result=Object.freeze({schema:'native-executor-pending-preparation/1',owner:attempt.owner,operationId:request.operationId,nativeJobId:request.nativeJobId,
+       requestSHA256,rootId:next.rootId,inventorySHA256:next.inventorySHA256,effectsAllowed:false,installationPermit:false,nativeAdmission:false,powerLossPersistenceVerified:false});
+     attempt.anchor=next;startup.anchor=next;genesis.anchor=next;attempt.phase='prepared';return result;
+@@ -451,11 +452,11 @@
+ const nativeTransportReserve = ReduxPersistorIPC.prototype.reserveNativeModPersistence;
+ const nativeTransportPrepare = prepareNativeExecutorPending;
+ type NativeExecutorTransportAttempt = {
+-  owner:object;mainReadyOwner:object;phase:'preflighting'|'ready'|'reserving'|'reserved'|'preparing'|'prepared'|'held';checking:boolean;
++  owner:object;mainReadyOwner:object;phase:'preflighting'|'ready'|'reserving'|'reserved'|'preparing'|'prepared'|'executing'|'copied'|'registering'|'committed'|'held';checking:boolean;
+   requestBytes?:Buffer;archiveBytes?:Buffer;binding?:Readonly<NativeExecutorTransportBinding>;
+   ready?:NativeMainAttempt;startup?:NativeExecutorStartupAttempt;source?:NativeExecutorJournalSource;
+   closure?:ReturnType<typeof nativeStartupClosure>;modOwner?:object;reserveStarted:boolean;prepareStarted:boolean;
+-  frameOwner?:object;pendingBefore?:NativePendingAttempt;pending?:NativePendingAttempt;pendingOwner?:object;
++  frameOwner?:object;pendingBefore?:NativePendingAttempt;pending?:NativePendingAttempt;pendingOwner?:object;continuation?:NativeExecutorContinuation;
+ };
+ let nativeExecutorTransport:NativeExecutorTransportAttempt|undefined;
+ const nativeTransportError=()=>new Error('NATIVE_EXECUTOR_TRANSPORT_HELD');
+@@ -496,7 +497,14 @@
+       ||startup.binding===undefined||!['uninitialized','initialized'].includes(startup.phase)||binding===undefined||source===undefined||startup.source!==source||closure===undefined)throw nativeTransportError();
+     nativeExecutorCheckSource(source);
+     const observed=nativeStartupClosure(startup.binding);nativeStartupSame(closure.dirs,observed.dirs);nativeStartupSame(closure.files,observed.files);
+-    if(attempt.modOwner!==undefined)nativePendingCheckTarget.call(ready.main,attempt.modOwner,binding.gameId,binding.modId);
++    if(attempt.modOwner!==undefined){
++      if(attempt.phase==='registering')nativeContinuationRegistrationCheck.call(ready.main,attempt.modOwner);
++      else if(attempt.phase==='committed'){
++        const continuation=attempt.continuation;if(continuation===undefined||continuation.terminalOwner===undefined)throw nativeTransportError();
++        nativeContinuationTerminalCheck.call(ready.main,continuation.terminalOwner);
++      }else nativePendingCheckTarget.call(ready.main,attempt.modOwner,binding.gameId,binding.modId);
++    }
++    if(attempt.continuation!==undefined){nativeContinuationStable(attempt.continuation);if(attempt.continuation.proofBytes!==undefined)nativeContinuationSDK(attempt.continuation);}
+     if(attempt.frameOwner!==undefined)checkNativeExecutorFrame(attempt.frameOwner);
+     if(attempt.pending!==undefined){
+       if(nativeTransportMatchingPending(attempt)!==attempt.pending||attempt.pending.phase==='held')throw nativeTransportError();
+@@ -1050,3 +1058,115 @@
+ 
+   return result;
+ }
++
++// Internal continuation only. No IPC, adoption, release, terminal append or install permit.
++const nativeContinuationRegister=ReduxPersistorIPC.prototype.registerNativeTrackedMod;
++const nativeContinuationRegistrationCheck=ReduxPersistorIPC.prototype.checkNativeNewModRegistration;
++const nativeContinuationTerminalBegin=ReduxPersistorIPC.prototype.beginNativeExecutorTerminalWindow;
++const nativeContinuationTerminalCheck=ReduxPersistorIPC.prototype.checkNativeExecutorTerminalWindow;
++type NativeExecutorContinuation={relay:object;methods:Map<string,Function>;namespace:object;helpers:Map<string,Function>;
++  payloadDigest?:Function;prepared:Readonly<Record<string,unknown>>;anchor:Readonly<{schema:string;rootId:string;inventorySHA256:string}>;
++  proofBytes?:Buffer;registerStarted?:boolean;observed?:Readonly<Record<string,unknown>>;terminalOwner?:object};
++function nativeContinuationFunction(object:object,name:string):Function{
++  if(nativeStartupTypes.isProxy(object))throw nativeTransportError();const d=Object.getOwnPropertyDescriptor(object,name);
++  if(d===undefined||!Object.hasOwn(d,'value')||typeof d.value!=='function'||nativeStartupTypes.isProxy(d.value))throw nativeTransportError();return d.value;
++}
++function nativeContinuationStable(c:NativeExecutorContinuation):void{
++  for(const[name,method]of c.methods)if(nativeContinuationFunction(c.relay,name)!==method)throw nativeTransportError();
++  for(const[name,method]of c.helpers)if(nativeContinuationFunction(c.namespace,name)!==method)throw nativeTransportError();
++}
++function nativeContinuationCall(c:NativeExecutorContinuation,name:string,...args:unknown[]):unknown{
++  nativeContinuationStable(c);const method=c.methods.get(name);if(method===undefined)throw nativeTransportError();return Reflect.apply(method,c.relay,args);
++}
++function nativeContinuationSDK(c:NativeExecutorContinuation):object{
++  const status=nativeStartupData(nativeContinuationCall(c,'status'),['schema','binding','mode','relayLifetime','relayPid','startSHA256','startAttempted','startSent','cancelAttempted','handoffAttempted','releaseAttempted','controllerEnded','phase','relayTerminal','sdk','errorCode','stderrObserved','effectsAllowed','nativeInstallAccepted','persistenceVerified']);
++  const sdk=status.sdk;
++  if(sdk===null||typeof sdk!=='object'||nativeStartupTypes.isProxy(sdk)||status.mode!=='staging'||status.phase!=='copied'||status.startSent!==true
++      ||status.cancelAttempted!==false||status.releaseAttempted!==false||status.errorCode!==null||status.effectsAllowed!==false||status.nativeInstallAccepted!==false||status.persistenceVerified!==false)throw nativeTransportError();
++  const sdkLifetime=Object.getOwnPropertyDescriptor(sdk,'workerLifetime'),sdkPacket=Object.getOwnPropertyDescriptor(sdk,'packetSHA256');
++  if(sdkLifetime===undefined||!Object.hasOwn(sdkLifetime,'value')||sdkLifetime.value!==c.prepared.workerLifetime||sdkPacket===undefined||!Object.hasOwn(sdkPacket,'value')||sdkPacket.value!==c.prepared.packetSHA256)throw nativeTransportError();
++  for(const[k,v]of Object.entries({workerPid:c.prepared.workerPid,creationTime:c.prepared.creationTime})){const d=Object.getOwnPropertyDescriptor(sdk,k);if(d===undefined||!Object.hasOwn(d,'value')||d.value!==v)throw nativeTransportError();}
++  const terminal=status.relayTerminal;
++  if(terminal===null||typeof terminal!=='object'||nativeStartupTypes.isProxy(terminal))throw nativeTransportError();
++  for(const[k,v]of Object.entries({spawnObserved:true,exitObserved:false,closeObserved:false,childErrorObserved:false,childResourcesClosed:false,held:false})){const d=Object.getOwnPropertyDescriptor(terminal,k);if(d===undefined||!Object.hasOwn(d,'value')||d.value!==v)throw nativeTransportError();}
++  return sdk;
++}
++export async function copyNativeExecutorTransport(ticket:object):Promise<Readonly<Record<string,unknown>>>{
++  const attempt=nativeTransportTicket(ticket);
++  if(attempt.continuation!==undefined||attempt.phase!=='prepared'){nativeTransportHold(attempt);throw nativeTransportError();}
++  // Claim before every SDK method, source callback and await. Never refund this slot.
++  const pending=attempt.pending,ready=attempt.ready,startup=attempt.startup,source=attempt.source;
++  if(pending===undefined||ready===undefined||startup===undefined||source===undefined||pending.relay===undefined||pending.preparedReceipt===undefined||pending.anchor===undefined
++    ||attempt.modOwner===undefined||attempt.requestBytes===undefined){nativeTransportHold(attempt);throw nativeTransportError();}
++  const c:NativeExecutorContinuation={relay:pending.relay,methods:new Map(),namespace:{},helpers:new Map(),prepared:pending.preparedReceipt,anchor:pending.anchor};
++  attempt.continuation=c;attempt.phase='executing';
++  try{
++    nativeTransportCheck(attempt);
++    const row=source.modules?.get('owned-zip-relay-client.mjs');if(row===undefined)throw nativeTransportError();c.namespace=row.namespace;
++    for(const name of ['startPrepared','waitFor','handoff','copyProof','status'])c.methods.set(name,nativeContinuationFunction(c.relay,name));
++    for(const name of ['validateRelayCopyProof','relayCopyProofBytes'])c.helpers.set(name,nativeContinuationFunction(c.namespace,name));
++    if(startup.binding===undefined)throw nativeTransportError();c.payloadDigest=nativeExecutorMethod(source,startup.binding,'install-job-contract.cjs','installPayloadDigest');
++    nativeTransportCheck(attempt);
++    const raw=await nativeHistoryAnchorRead.call(startup.backend);nativeTransportCheck(attempt);
++    if(raw===null||!Buffer.from(raw).equals(Buffer.from(JSON.stringify(c.anchor))))throw nativeTransportError();
++    const rows=nativePendingInventory(source,c.anchor,true);nativeTransportCheck(attempt);
++    const binding=attempt.binding;if(binding===undefined)throw nativeTransportError();
++    const current=rows.filter(row=>row.operationId===binding.operationId);
++    if(current.length!==1||current[0]===undefined||current[0].state!=='unresolved'||current[0].nativeJobId!==binding.nativeJobId
++      ||current[0].requestSHA256!==binding.requestSHA256||current[0].workerLifetime!==c.prepared.workerLifetime||current[0].packetSHA256!==c.prepared.packetSHA256
++      ||rows.filter(row=>row.state==='unresolved').length!==1)throw nativeTransportError();
++    await nativeContinuationCall(c,'startPrepared');nativeTransportCheck(attempt);
++    await nativeContinuationCall(c,'waitFor','extracted');nativeTransportCheck(attempt);
++    await nativeContinuationCall(c,'handoff');nativeTransportCheck(attempt);
++    const proof=await nativeContinuationCall(c,'copyProof');nativeTransportCheck(attempt);
++    const sdk=nativeContinuationSDK(c);
++    const request=pending.request as NativePendingRequest & {plan:{context:{gameId:string;stagingPath:string};package:{downloadId:string;fileName:string;bytes:number;md5:string;sha256:string;expectedModId:string}}};
++    if(request===undefined)throw nativeTransportError();
++    const relayBinding=c.prepared.binding;
++    const validate=c.helpers.get('validateRelayCopyProof'),encode=c.helpers.get('relayCopyProofBytes');if(validate===undefined||encode===undefined)throw nativeTransportError();
++    Reflect.apply(validate,c.namespace,[proof,sdk,request,relayBinding]);nativeTransportCheck(attempt);
++    const proofBytes=Reflect.apply(encode,c.namespace,[proof]);if(!Buffer.isBuffer(proofBytes)||proofBytes.length>4194304)throw nativeTransportError();c.proofBytes=Buffer.from(proofBytes);
++    const destination=Object.getOwnPropertyDescriptor(proof as object,'destination');
++    if(destination===undefined||!Object.hasOwn(destination,'value'))throw nativeTransportError();
++    const target=nativeStartupData(destination.value,['parent','leaf','parentIdentity','directoryIdentity']);
++    if(typeof target.parent!=='string'||path.win32.resolve(target.parent).toLowerCase()!==path.win32.resolve(request.plan.context.stagingPath).toLowerCase()||target.leaf!==binding.modId)throw nativeTransportError();
++    attempt.phase='copied';nativeTransportCheck(attempt);
++    return Object.freeze({schema:'native-executor-copy-observed/1',operationId:binding.operationId,nativeJobId:binding.nativeJobId,requestSHA256:binding.requestSHA256,
++      copyProofSHA256:nativeStartupHash('sha256').update(c.proofBytes).digest('hex'),effectsAllowed:false,installationPermit:false,nativeAdmission:false});
++  }catch(primary){nativeTransportHold(attempt);throw primary;}
++}
++export async function registerNativeExecutorTransportCopied(ticket:object):Promise<Readonly<Record<string,unknown>>>{
++  const attempt=nativeTransportTicket(ticket),c=attempt.continuation;
++  if(c===undefined||c.registerStarted||attempt.phase!=='copied'){nativeTransportHold(attempt);throw nativeTransportError();}c.registerStarted=true;
++  try{
++    nativeTransportCheck(attempt);
++    const ready=attempt.ready,startup=attempt.startup,source=attempt.source,pending=attempt.pending,binding=attempt.binding;
++    if(ready===undefined||startup===undefined||source===undefined||pending===undefined||pending.request===undefined||binding===undefined||attempt.modOwner===undefined||c.proofBytes===undefined)throw nativeTransportError();
++    const raw=await nativeHistoryAnchorRead.call(startup.backend);nativeTransportCheck(attempt);
++    if(raw===null||!Buffer.from(raw).equals(Buffer.from(JSON.stringify(c.anchor))))throw nativeTransportError();
++    nativePendingInventory(source,c.anchor,true);nativeTransportCheck(attempt);
++    // Fetch the retained SDK cache again: copied bytes alone cannot outlive live custody.
++    const liveProof=await nativeContinuationCall(c,'copyProof');nativeTransportCheck(attempt);
++    const sdk=nativeContinuationSDK(c);
++    const validate=c.helpers.get('validateRelayCopyProof'),encode=c.helpers.get('relayCopyProofBytes');if(validate===undefined||encode===undefined)throw nativeTransportError();
++    Reflect.apply(validate,c.namespace,[liveProof,sdk,pending.request,c.prepared.binding]);nativeTransportCheck(attempt);
++    const currentBytes=Reflect.apply(encode,c.namespace,[liveProof]);if(!Buffer.isBuffer(currentBytes)||!currentBytes.equals(c.proofBytes))throw nativeTransportError();
++    const request=pending.request as NativePendingRequest & {plan:{context:{gameId:string};package:{downloadId:string;fileName:string;bytes:number;md5:string;sha256:string}}};
++    if(c.payloadDigest===undefined)throw nativeTransportError();const payloadSHA256=Reflect.apply(c.payloadDigest,undefined,[request.plan]);nativeTransportCheck(attempt);
++    if(typeof payloadSHA256!=='string'||!/^[a-f0-9]{64}$/.test(payloadSHA256))throw nativeTransportError();
++    const registration={schema:'native-tracked-mod-registration-request/2',operationId:binding.operationId,nativeJobId:binding.nativeJobId,requestSHA256:binding.requestSHA256,
++      planId:request.planId,gameId:binding.gameId,modId:binding.modId,installationPath:binding.modId,payloadSHA256,
++      archive:{id:request.plan.package.downloadId,state:'finished',game:[binding.gameId],localPath:request.plan.package.fileName,size:request.plan.package.bytes,fileMD5:request.plan.package.md5,archiveSHA256:request.plan.package.sha256}};
++    nativeTransportCheck(attempt);attempt.phase='registering';
++    const writing=nativeContinuationRegister.call(ready.main,attempt.modOwner,Buffer.from(JSON.stringify(registration)));
++    void writing.catch(()=>{});nativeTransportCheck(attempt);
++    const observed=await writing;nativeTransportCheck(attempt);
++    const data=nativeStartupData(observed,['schema','operationId','nativeJobId','requestSHA256','recordSHA256','recordJSON','fullRecordSHA256','commitObserved','readbackVerified','trackedAssociationVerified','trackedInstallComplete','effectsAllowed','installationPermit','powerLossPersistenceVerified']);
++    if(data.schema!=='native-tracked-mod-registration-observed/2'||data.operationId!==binding.operationId||data.nativeJobId!==binding.nativeJobId||data.requestSHA256!==binding.requestSHA256
++      ||typeof data.recordJSON!=='string'||Buffer.byteLength(data.recordJSON)>16384||typeof data.fullRecordSHA256!=='string'||nativeStartupHash('sha256').update(data.recordJSON).digest('hex')!==data.fullRecordSHA256
++      ||data.commitObserved!==true||data.readbackVerified!==true||data.trackedAssociationVerified!==true||data.trackedInstallComplete!==false||data.effectsAllowed!==false||data.installationPermit!==false||data.powerLossPersistenceVerified!==false)throw nativeTransportError();
++    c.observed=Object.freeze({...data});
++    c.terminalOwner=nativeContinuationTerminalBegin.call(ready.main,attempt.modOwner,binding.operationId,binding.nativeJobId,binding.requestSHA256,data.fullRecordSHA256);
++    attempt.phase='committed';nativeTransportCheck(attempt);return c.observed;
++  }catch(primary){nativeTransportHold(attempt);throw primary;}
++}

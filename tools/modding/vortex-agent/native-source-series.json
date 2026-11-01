@@ -82,7 +82,7 @@
     {
       "path": "src/main/src/store/mainPersistence.ts",
       "originalSHA256": "7d3e28cb829914fb092774eca3fc357645fa7ef508177d1a0e3b32eed58f05fe",
-      "finalSHA256": "7f58c8da84444bb8154001a3b17a3ba6b09e2cf7e40d7d8a4d7a6907e30c261f"
+      "finalSHA256": "6b22342f742fb0c5d3c7e9ed3a7814bed6472825db82255d343f7557ab372055"
     },
     {
       "path": "src/main/src/store/persistenceIPC.ts",
@@ -122,7 +122,7 @@
     {
       "path": "src/renderer/src/ExtensionManager.ts",
       "originalSHA256": "5d0de2194cf413938e61a398494196af07677dc6d0d014216ba3b25b5a211b95",
-      "finalSHA256": "f304ac0f7f5881dc6183c2000834101424bbc9376ab2da669beb9f61e640c81e"
+      "finalSHA256": "24be706d6039d2c70bba327f5452a2ec755ab406486d47f3cd452089b402b9e1"
     },
     {
       "path": "src/main/build.mjs",
@@ -1674,6 +1674,54 @@
       "requiredCompanionPatchSHA256": "9e7ee439acaa1fb18dd0b5e32b5c84bc9eb09b8c2e9663ee1724365baae3308d",
       "requiredCompanionOutputSHA256": "e7c81437d323538b36bb2fe965d49dcc115d787b65bc4aef77b210508c5aa904",
       "requiredCompanionPacket": null
+    },
+    {
+      "name": "native-main-executor-continuation",
+      "packet": "persistence",
+      "path": "src/main/src/store/mainPersistence.ts",
+      "manifestSHA256": "e9345387a4f01e5a273c7cbf5539d74a9fd0a2fb4d70bc1794ad769262847350",
+      "patchSHA256": "94bdbe4f92b3ebcd9d06cd0202da52eb97b2b43654e56c193a76c0c846aca335",
+      "inputSHA256": "7f58c8da84444bb8154001a3b17a3ba6b09e2cf7e40d7d8a4d7a6907e30c261f",
+      "outputSHA256": "6b22342f742fb0c5d3c7e9ed3a7814bed6472825db82255d343f7557ab372055",
+      "prerequisitePatch": "native-main-executor-transport.patch",
+      "prerequisitePatchSHA256": "b8d230190da14bc2155380d802d69587e3924157a24fdbbb20d6eb4a263d254c",
+      "requiredManagerPatchSHA256": null,
+      "requiredCompanionPatch": "native-main-executor-terminal-window.patch",
+      "requiredCompanionPatchSHA256": "93466fb7d9eda396ed8e9fd4d873c7ab6735b982f57ca1a894eb4d73b4eaa343",
+      "requiredCompanionOutputSHA256": "0079084dee06bed5b96b560fe576f4e0b8734ab3363fa6c9e89af8c7adff2b5d",
+      "requiredCompanionPacket": null,
+      "additionalCompanions": [
+        {
+          "packet": "persistence",
+          "name": "native-executor-transport-shared-ipc",
+          "patchSHA256": "ae27e5103066c674996accade952cee18f46d51b0ae16dbb58455e30fbdf66e0",
+          "outputSHA256": "cb76a3e04315bda9e6734b5d00f9d7be63eafd2f995f250611b5bf0a316dbd0c"
+        }
+      ]
+    },
+    {
+      "name": "native-renderer-executor-continuation",
+      "packet": "persistence",
+      "path": "src/renderer/src/ExtensionManager.ts",
+      "manifestSHA256": "64c33cb24dc1222c5fefad9f059c6d9c31a8a9c48ee95ff0c0abb099b1f94524",
+      "patchSHA256": "c0f72e9e67d7691aac5f0a4a4d0fe277df471e4cc4d7031b1eba6f8f011897bd",
+      "inputSHA256": "f304ac0f7f5881dc6183c2000834101424bbc9376ab2da669beb9f61e640c81e",
+      "outputSHA256": "24be706d6039d2c70bba327f5452a2ec755ab406486d47f3cd452089b402b9e1",
+      "prerequisitePatch": "native-renderer-executor-transport.patch",
+      "prerequisitePatchSHA256": "16e4de17fcc8087d11bc5926e90fc07befc01840c4084145a8a176509029b4f1",
+      "requiredManagerPatchSHA256": null,
+      "requiredCompanionPatch": "renderer-registration-release.patch",
+      "requiredCompanionPatchSHA256": "9627e58347f3c88c016fb1165163478899901a0cf17e5e5115f8da27cc47131b",
+      "requiredCompanionOutputSHA256": "36290d8a0a158bfd87f2024461bcf6a711913841f5f94048f9b20e139a8fca69",
+      "requiredCompanionPacket": null,
+      "additionalCompanions": [
+        {
+          "packet": "lifecycle",
+          "name": "native-manager-registration-release",
+          "patchSHA256": "a89507c72cf8c8d74c2cc9f63692b27c206654b9d6e7ea610465e9275bdca16a",
+          "outputSHA256": "38ceb37ac994f9da61e0a93b3be8e0e7618a9833b7e514e5aec710638653d667"
+        }
+      ]
     }
   ]
 }
