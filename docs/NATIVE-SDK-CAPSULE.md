@@ -226,3 +226,43 @@ the selected-KV result has SHA-256
 Runtime receipts and databases are deliberately excluded from this repository.
 This qualifies application bootstrap and persisted imports, not installation,
 cancellation, repeated-operation handoff, deployment or installed-host activation.
+
+## Isolated staging preparation — 1 November 2026
+
+The same isolated application later passed a readiness-only run through actual
+game setup and mod refresh. Its existing, empty staging directory lacked
+Vortex's staging tag. The preceding diagnostic run had reached refresh but
+expired before refresh completed.
+
+A separately reviewed fixture-only helper observed the genuine invalid-staging
+dialog. After native callback registration, it checked the fixed empty fixture,
+current context and unique dialog, then called Vortex's ordinary `closeDialog`
+with `Ignore`. The original Vortex continuation wrote the tag. The helper did
+not write it directly. This action is limited to the synthetic fixture; it is
+not a general automatic response to user staging errors.
+
+The actual source observations recorded missing tag, returned native dialog,
+requested native response, completed tag write and fulfilled refresh. The caller
+then reported ready. The supervisor separately observed normal closure, exit
+zero, no remaining owned processes and both output pipes closed at EOF, without
+recovery or forced termination. Its private result has SHA-256
+`a5f8372ccbfd41ac3a333bbacedef2b9de12d7c4aadfc23f00f4d2792905e31c`.
+
+This run used a separately pinned source variant with fixture diagnostics and
+isolation overlays. Main and Renderer typechecks and builds passed; inspection
+matched 26 selected Program inputs and 24 source-map entries. Fourteen admission
+tests passed. The public patch graph and installed Vortex were unchanged by this
+run. No installation, cancellation or successor request was made, and the public
+MCP installation command remains disabled.
+
+After closure, a fresh physical-copy query verified the same 20 selected values,
+no installation links, a null executor anchor and no native journal. It also read
+the persisted application instance independently. A separate ordinary-file check
+matched that instance to the source-created staging tag, its game and the retained
+directory identity. The original database's bytes and generations were unchanged;
+only its disposable copy was opened by the native database reader. The selected
+result has SHA-256
+`dcbf32d0a0bb79e0f1bd2ca0ee2bba94b1577ec635d7fe7502df392e475559c1`;
+the tag proof has SHA-256
+`0efb648d4aa22d8d3a61ba70a40242a9474118e46944366ddb93fadab49b9af4`.
+Earlier uncertain operation IDs and their failure records remain reserved.
