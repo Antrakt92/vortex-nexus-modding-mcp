@@ -1,0 +1,249 @@
+--- a/src/renderer/src/ExtensionManager.ts
++++ b/src/renderer/src/ExtensionManager.ts
+@@ -11,6 +11,8 @@
+ import { performance as nativeReadinessClock } from "perf_hooks";
+ import type { NativeMainReadinessObservation } from "@vortex/shared/ipc";
+ import type InstallManager from "./extensions/mod_management/InstallManager";
++import { reserveNativeRendererTarget, checkNativeRendererTarget } from "./reducers";
++import { acquireNativePersistenceFlushHold, checkNativePersistenceFlushHold } from "./store/persistDiffMiddleware";
+ import type { PreloadWindow } from "@vortex/shared/preload";
+ import PromiseBB from "bluebird";
+ import type { OpenDialogOptions, SaveDialogOptions } from "electron";
+@@ -727,7 +729,237 @@
+   ready: boolean;
+ }
+ 
++interface NativeRendererExecutorAdmission {
++  owner: object;
++  phase: "pending" | "ready" | "held";
++  gameId: string;
++  modId: string;
++  checking: boolean;
++  invalidated: Promise<void>;
++  invalidate: () => void;
++  load?: NativeRendererLoadAttempt;
++  store?: object;
++  storeDescriptor?: PropertyDescriptor;
++  subscribeDescriptor?: PropertyDescriptor;
++  unsubscribe?: () => void;
++  contextReading: boolean;
++  readyOwner?: object;
++  manager?: InstallManager;
++  methods?: {prototype: object; reserve: PropertyDescriptor; check: PropertyDescriptor; describe: PropertyDescriptor};
++  managerOwner?: object;
++  targetOwner?: object;
++  flushOwner?: object;
++  flushFlight?: Promise<object>;
++  profileId?: string;
++  managerScopeId?: string;
++  rendererGeneration?: string;
++}
++
+ class ExtensionManager {
++  #mNativeExecutorAdmission: NativeRendererExecutorAdmission | undefined;
++
++  #nativeExecutorHeld(attempt: NativeRendererExecutorAdmission): boolean { return attempt.phase === "held"; }
++
++  #holdNativeExecutorAttempt(attempt: NativeRendererExecutorAdmission): void {
++    attempt.phase = "held";
++    attempt.invalidate();
++  }
++
++  #awaitNativeExecutorAttempt<T>(attempt: NativeRendererExecutorAdmission, work: Promise<T>): Promise<T> {
++    // Abandon only this observer. The actual load/ACK and its acquired owners
++    // remain live; Promise.race also observes any later underlying rejection.
++    return Promise.race([work, attempt.invalidated.then(() => { throw this.#nativeExecutorError(); })]);
++  }
++
++  #nativeExecutorOwner(value: unknown): object {
++    if(value === null || typeof value !== "object" || nativeReadinessTypes.isProxy(value)
++      || !Object.isFrozen(value) || Reflect.ownKeys(value).length !== 0) throw this.#nativeExecutorError();
++    return value;
++  }
++
++  #nativeExecutorError(): Error { return new Error("NATIVE_RENDERER_EXECUTOR_ADMISSION_HELD"); }
++
++  #nativeExecutorOwn(value: unknown, key: string): unknown {
++    if (value === null || typeof value !== "object" || nativeReadinessTypes.isProxy(value) || Array.isArray(value)) throw this.#nativeExecutorError();
++    const descriptor = Object.getOwnPropertyDescriptor(value, key);
++    if (descriptor === undefined || !Object.hasOwn(descriptor, "value")) throw this.#nativeExecutorError();
++    return descriptor.value;
++  }
++
++  #nativeExecutorStoreDescriptor(store: object, key: "getState" | "subscribe" = "getState"): PropertyDescriptor {
++    if (nativeReadinessTypes.isProxy(store) || Array.isArray(store)) throw this.#nativeExecutorError();
++    const prototype = Object.getPrototypeOf(store);
++    if (prototype !== null && nativeReadinessTypes.isProxy(prototype)) throw this.#nativeExecutorError();
++    const descriptor = Object.getOwnPropertyDescriptor(store, key);
++    if (descriptor === undefined || !Object.hasOwn(descriptor, "value") || typeof descriptor.value !== "function"
++        || nativeReadinessTypes.isProxy(descriptor.value)) throw this.#nativeExecutorError();
++    return descriptor;
++  }
++
++  #nativeExecutorSameDescriptor(a: PropertyDescriptor, b: PropertyDescriptor): boolean {
++    return a.value === b.value && a.writable === b.writable && a.enumerable === b.enumerable && a.configurable === b.configurable;
++  }
++
++  #nativeExecutorMethods(manager: InstallManager) {
++    if (manager === null || typeof manager !== "object" || nativeReadinessTypes.isProxy(manager)) throw this.#nativeExecutorError();
++    const prototype: unknown = Object.getPrototypeOf(manager);
++    if (prototype === null || typeof prototype !== "object" || nativeReadinessTypes.isProxy(prototype)) throw this.#nativeExecutorError();
++    const read = (key: string) => {
++      if (Object.hasOwn(manager, key)) throw this.#nativeExecutorError();
++      const descriptor = Object.getOwnPropertyDescriptor(prototype, key);
++      if (descriptor === undefined || !Object.hasOwn(descriptor, "value") || typeof descriptor.value !== "function"
++          || nativeReadinessTypes.isProxy(descriptor.value)) throw this.#nativeExecutorError();
++      return Object.freeze({...descriptor});
++    };
++    return {prototype, reserve: read("reserveNativeInstallExclusion"), check: read("checkNativeInstallExclusion"), describe: read("getNativeInstallExclusion")};
++  }
++
++  #nativeExecutorProfile(attempt: NativeRendererExecutorAdmission): void {
++    if (attempt.contextReading || attempt.store === undefined || attempt.storeDescriptor === undefined) {
++      this.#holdNativeExecutorAttempt(attempt); throw this.#nativeExecutorError();
++    }
++    attempt.contextReading = true;
++    try {
++      if (!this.#nativeExecutorSameDescriptor(attempt.storeDescriptor, this.#nativeExecutorStoreDescriptor(attempt.store))) throw this.#nativeExecutorError();
++      const state: unknown = Reflect.apply(attempt.storeDescriptor.value, attempt.store, []);
++      if (!this.#nativeExecutorSameDescriptor(attempt.storeDescriptor, this.#nativeExecutorStoreDescriptor(attempt.store))) throw this.#nativeExecutorError();
++      const profileId = this.#nativeExecutorOwn(this.#nativeExecutorOwn(this.#nativeExecutorOwn(state, "settings"), "profiles"), "activeProfileId");
++      if (typeof profileId !== "string" || !/^[A-Za-z0-9_.-]{1,128}$/.test(profileId)
++          || ["__proto__", "constructor", "prototype"].includes(profileId)) throw this.#nativeExecutorError();
++      const profile = this.#nativeExecutorOwn(this.#nativeExecutorOwn(this.#nativeExecutorOwn(state, "persistent"), "profiles"), profileId);
++      if (this.#nativeExecutorOwn(profile, "gameId") !== attempt.gameId || (attempt.profileId !== undefined && attempt.profileId !== profileId)
++          || this.#nativeExecutorHeld(attempt)) throw this.#nativeExecutorError();
++      attempt.profileId = profileId;
++    } catch (primary) { this.#holdNativeExecutorAttempt(attempt); throw primary; }
++    finally { attempt.contextReading = false; }
++  }
++
++  #checkNativeExecutorAttempt(attempt: NativeRendererExecutorAdmission): void {
++    if (this.#mNativeExecutorAdmission !== attempt || this.#nativeExecutorHeld(attempt) || attempt.checking) {
++      this.#holdNativeExecutorAttempt(attempt); throw this.#nativeExecutorError();
++    }
++    attempt.checking = true;
++    try {
++      if (attempt.load === undefined || this.mNativeRendererLoad !== attempt.load || attempt.store === undefined
++          || attempt.storeDescriptor === undefined || attempt.load.store !== attempt.store) throw this.#nativeExecutorError();
++      this.checkNativeRendererLoadAttempt(attempt.load);
++      if (!this.#nativeExecutorSameDescriptor(attempt.storeDescriptor, this.#nativeExecutorStoreDescriptor(attempt.store))
++          || attempt.subscribeDescriptor === undefined
++          || !this.#nativeExecutorSameDescriptor(attempt.subscribeDescriptor, this.#nativeExecutorStoreDescriptor(attempt.store, "subscribe"))) throw this.#nativeExecutorError();
++      this.#nativeExecutorProfile(attempt);
++      if (attempt.readyOwner !== undefined) {
++        this.checkNativeRendererManagerReady(attempt.readyOwner, attempt.store);
++        const manager = this.getNativeRendererManagerInstance(attempt.readyOwner, attempt.store);
++        const methods = this.#nativeExecutorMethods(manager);
++        if (this.#nativeExecutorHeld(attempt)) throw this.#nativeExecutorError();
++        if (attempt.manager === undefined) { attempt.manager = manager; attempt.methods = methods; }
++        if (attempt.manager !== manager || attempt.methods === undefined || attempt.methods.prototype !== methods.prototype
++            || !this.#nativeExecutorSameDescriptor(attempt.methods.reserve, methods.reserve)
++            || !this.#nativeExecutorSameDescriptor(attempt.methods.check, methods.check)
++            || !this.#nativeExecutorSameDescriptor(attempt.methods.describe, methods.describe)) throw this.#nativeExecutorError();
++        if (attempt.managerOwner !== undefined) {
++          Reflect.apply(methods.check.value, manager, [attempt.managerOwner]);
++          const labels: unknown = Reflect.apply(methods.describe.value, manager, []);
++          const scope = this.#nativeExecutorOwn(labels, "managerScopeId"), generation = this.#nativeExecutorOwn(labels, "rendererGeneration");
++          if (typeof scope !== "string" || !/^manager-[A-Za-z0-9_-]{1,64}-[1-9][0-9]{0,15}$/.test(scope)
++              || typeof generation !== "string" || !/^renderer_[a-f0-9]{32}$/.test(generation)
++              || this.#nativeExecutorOwn(labels, "exclusiveHeld") !== true || this.#nativeExecutorOwn(labels, "legacyCalls") !== 0
++              || this.#nativeExecutorOwn(labels, "effectsAllowed") !== false || this.#nativeExecutorOwn(labels, "globalIdleVerified") !== false
++              || (attempt.managerScopeId !== undefined && attempt.managerScopeId !== scope)
++              || (attempt.rendererGeneration !== undefined && attempt.rendererGeneration !== generation)) throw this.#nativeExecutorError();
++          attempt.managerScopeId = scope; attempt.rendererGeneration = generation;
++        }
++      }
++      if (attempt.targetOwner !== undefined) checkNativeRendererTarget(attempt.targetOwner);
++      if (attempt.flushOwner !== undefined) checkNativePersistenceFlushHold(attempt.flushOwner);
++      if (attempt.readyOwner !== undefined) {
++        this.checkNativeRendererManagerReady(attempt.readyOwner, attempt.store);
++        if (this.getNativeRendererManagerInstance(attempt.readyOwner, attempt.store) !== attempt.manager
++            || attempt.manager === undefined || attempt.methods === undefined) throw this.#nativeExecutorError();
++        const finalMethods = this.#nativeExecutorMethods(attempt.manager);
++        if (attempt.methods.prototype !== finalMethods.prototype
++            || !this.#nativeExecutorSameDescriptor(attempt.methods.reserve, finalMethods.reserve)
++            || !this.#nativeExecutorSameDescriptor(attempt.methods.check, finalMethods.check)
++            || !this.#nativeExecutorSameDescriptor(attempt.methods.describe, finalMethods.describe)) throw this.#nativeExecutorError();
++      }
++      if (!this.#nativeExecutorSameDescriptor(attempt.storeDescriptor, this.#nativeExecutorStoreDescriptor(attempt.store))
++          || !this.#nativeExecutorSameDescriptor(attempt.subscribeDescriptor, this.#nativeExecutorStoreDescriptor(attempt.store, "subscribe"))) throw this.#nativeExecutorError();
++      this.checkNativeRendererLoadAttempt(attempt.load);
++      if (this.#mNativeExecutorAdmission !== attempt || this.#nativeExecutorHeld(attempt)) throw this.#nativeExecutorError();
++    } catch (primary) { this.#holdNativeExecutorAttempt(attempt); throw primary; }
++    finally { attempt.checking = false; }
++  }
++
++  /** Internal owner acquisition only. Neither readiness DTOs nor this token permit START. */
++  public async acquireNativeRendererExecutorAdmission(gameId: string, modId: string): Promise<object> {
++    if (this === null || typeof this !== "object" || nativeReadinessTypes.isProxy(this) || !(#mNativeExecutorAdmission in this)) throw new Error("NATIVE_RENDERER_EXECUTOR_ADMISSION_HELD");
++    const previous = this.#mNativeExecutorAdmission;
++    if (previous !== undefined) { this.#holdNativeExecutorAttempt(previous); throw this.#nativeExecutorError(); }
++    let invalidate = () => {};
++    const invalidated = new Promise<void>(resolve => { invalidate = resolve; });
++    const attempt: NativeRendererExecutorAdmission = {owner: Object.freeze({}), phase: "pending", gameId, modId, checking: false, contextReading: false, invalidated, invalidate};
++    this.#mNativeExecutorAdmission = attempt;
++    try {
++      const valid = (value: string) => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value)
++        && !["__proto__", "constructor", "prototype"].includes(value);
++      if (!valid(gameId) || !valid(modId)) throw this.#nativeExecutorError();
++      const load = this.mNativeRendererLoad;
++      if (load === undefined || load.store === null || typeof load.store !== "object") throw this.#nativeExecutorError();
++      attempt.load = load; attempt.store = load.store;
++      attempt.storeDescriptor = Object.freeze({...this.#nativeExecutorStoreDescriptor(attempt.store)});
++      attempt.subscribeDescriptor = Object.freeze({...this.#nativeExecutorStoreDescriptor(attempt.store, "subscribe")});
++      this.#checkNativeExecutorAttempt(attempt);
++      const unsubscribe: unknown = Reflect.apply(attempt.subscribeDescriptor.value, attempt.store, [() => {
++        if (this.#mNativeExecutorAdmission !== attempt || this.#nativeExecutorHeld(attempt)) return;
++        // Redux listeners run inside middleware dispatch: sample context only.
++        try { this.#nativeExecutorProfile(attempt); }
++        catch { this.#holdNativeExecutorAttempt(attempt); }
++      }]);
++      if (typeof unsubscribe !== "function" || nativeReadinessTypes.isProxy(unsubscribe)) throw this.#nativeExecutorError();
++      attempt.unsubscribe = unsubscribe as () => void;
++      this.#checkNativeExecutorAttempt(attempt);
++      const readiness = this.waitForNativeRendererManagerReady(attempt.store);
++      void readiness.catch(() => {});
++      this.#checkNativeExecutorAttempt(attempt);
++      attempt.readyOwner = this.#nativeExecutorOwner(await this.#awaitNativeExecutorAttempt(attempt, readiness));
++      this.#checkNativeExecutorAttempt(attempt);
++      if (attempt.manager === undefined || attempt.methods === undefined) throw this.#nativeExecutorError();
++      attempt.managerOwner = this.#nativeExecutorOwner(Reflect.apply(attempt.methods.reserve.value, attempt.manager, []));
++      this.#checkNativeExecutorAttempt(attempt);
++      attempt.targetOwner = this.#nativeExecutorOwner(reserveNativeRendererTarget(gameId, modId));
++      this.#checkNativeExecutorAttempt(attempt);
++      const holding = acquireNativePersistenceFlushHold().then(owner => { attempt.flushOwner = this.#nativeExecutorOwner(owner); return owner; });
++      attempt.flushFlight = holding;
++      void holding.catch(() => {});
++      this.#checkNativeExecutorAttempt(attempt);
++      await this.#awaitNativeExecutorAttempt(attempt, holding);
++      this.#checkNativeExecutorAttempt(attempt);
++      attempt.phase = "ready";
++      return attempt.owner;
++    } catch (primary) { this.#holdNativeExecutorAttempt(attempt); throw primary; }
++  }
++
++  public checkNativeRendererExecutorAdmission(owner: object): void {
++    if (this === null || typeof this !== "object" || nativeReadinessTypes.isProxy(this) || !(#mNativeExecutorAdmission in this)) throw new Error("NATIVE_RENDERER_EXECUTOR_ADMISSION_HELD");
++    const attempt = this.#mNativeExecutorAdmission;
++    if (attempt === undefined || attempt.owner !== owner) throw this.#nativeExecutorError();
++    if (attempt.phase !== "ready") { this.#holdNativeExecutorAttempt(attempt); throw this.#nativeExecutorError(); }
++    this.#checkNativeExecutorAttempt(attempt);
++  }
++
++  public getNativeRendererExecutorAdmissionProjection(owner: object) {
++    this.checkNativeRendererExecutorAdmission(owner);
++    const attempt = this.#mNativeExecutorAdmission;
++    if (attempt === undefined) throw this.#nativeExecutorError();
++    const {profileId,managerScopeId,rendererGeneration} = attempt;
++    if(typeof profileId !== "string" || typeof managerScopeId !== "string" || typeof rendererGeneration !== "string") throw this.#nativeExecutorError();
++    const result = Object.freeze({schema: "native-renderer-executor-admission/1", gameId: attempt.gameId, modId: attempt.modId,
++      profileId, managerScopeId, rendererGeneration,
++      effectsAllowed: false, installationPermit: false});
++    this.checkNativeRendererExecutorAdmission(owner);
++    return result;
++  }
++
+   private mNativeStaticManager: NativeStaticManagerBinding | undefined;
+   private mNativeRendererManager: NativeRendererManagerAttempt | undefined;
+   private mNativeManagerChecking = false;

@@ -96,7 +96,7 @@ test('fixed packet is checked, but an unpinned original can never assemble', () 
 });
 
 test('pinned series closes all fixed nodes, exact source chains and cross-file manager dependencies', () => {
-  assert.equal(series.patches.length, 83); assert.equal(series.files.length, 25);
+  assert.equal(series.patches.length, 87); assert.equal(series.files.length, 25);
   assert.equal(series.schema, 'native-source-series/2');
   assert.deepEqual([...series.files.map(row => row.path)].sort(), [...NATIVE_SOURCE_PATHS].sort());
   const done = new Map(), current = new Map(series.files.map(row => [row.path, row.originalSHA256]));
@@ -301,6 +301,50 @@ function changeManifest(copy, graph, name, update) {
   const bytes = Buffer.from(JSON.stringify(value, null, 2)+'\n');
   fs.writeFileSync(file, bytes); row.manifestSHA256 = sha(bytes);
 }
+
+test('additional companion lists are closed, bounded and matched to the pinned manifest', async t => {
+  const name = series.patches.find(row => row.additionalCompanions?.length)?.name;
+  assert(name, 'current multi-source consumer must declare its extra dependency');
+  for (const mode of ['missing-row', 'missing-manifest', 'unknown-packet', 'extra-field', 'duplicate', 'oversize']) {
+    const copy = clonePacket(t);
+    resealFixture(copy, graph => changeManifest(copy, graph, name, (manifest, row) => {
+      if (mode === 'missing-row') delete row.additionalCompanions;
+      else if (mode === 'missing-manifest') delete manifest.additionalCompanions;
+      else {
+        const value = structuredClone(row.additionalCompanions);
+        if (mode === 'unknown-packet') value[0].packet = '../outside';
+        if (mode === 'extra-field') value[0].root = 'C:/outside';
+        if (mode === 'duplicate') value.push({...value[0]});
+        if (mode === 'oversize') while (value.length < 9) value.push({...value[0]});
+        manifest.additionalCompanions = value; row.additionalCompanions = value;
+      }
+    }));
+    const assemble = await copy.load();
+    assert.throws(() => assemble(dummy()), /^Error: NATIVE_SOURCE_SERIES_GRAPH$/);
+  }
+});
+
+integration('additional companions require an earlier exact intermediate and remain frozen in the receipt', async t => {
+  const result = assembleNativeSources(originals());
+  const current = series.patches.find(row => row.additionalCompanions?.length);
+  const receipt = result.receipt.patches.find(row => row.name === current.name);
+  assert(Object.isFrozen(receipt.additionalCompanions));
+  assert(Object.isFrozen(receipt.additionalCompanions[0]));
+  assert.throws(() => { receipt.additionalCompanions[0].name = 'foreign'; }, TypeError);
+  for (const mode of ['wrong-hash', 'wrong-output', 'later-self']) {
+    const copy = clonePacket(t);
+    resealFixture(copy, graph => changeManifest(copy, graph, current.name, (manifest, row) => {
+      const value = structuredClone(row.additionalCompanions);
+      if (mode === 'wrong-hash') value[0].patchSHA256 = 'a'.repeat(64);
+      if (mode === 'wrong-output') value[0].outputSHA256 = 'b'.repeat(64);
+      if (mode === 'later-self') Object.assign(value[0], {packet: row.packet, name: row.name,
+        patchSHA256: row.patchSHA256, outputSHA256: row.outputSHA256});
+      manifest.additionalCompanions = value; row.additionalCompanions = value;
+    }));
+    const assemble = await copy.load();
+    assert.throws(() => assemble(originals()), /^Error: NATIVE_SOURCE_SERIES_GRAPH$/);
+  }
+});
 
 test('second fixed packet rejects missing/extra/drift and test-only intake before original reads', async t => {
   for (const mode of ['missing','extra','drift','test-only']) {

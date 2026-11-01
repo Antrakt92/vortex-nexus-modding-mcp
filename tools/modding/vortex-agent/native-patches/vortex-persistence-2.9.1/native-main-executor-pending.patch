@@ -1,0 +1,239 @@
+--- a/src/main/src/store/mainPersistence.ts
++++ b/src/main/src/store/mainPersistence.ts
+@@ -1,4 +1,5 @@
+ import * as path from "node:path";
++import { checkNativeExecutorFrame, holdNativeExecutorFrame } from "./persistenceIPC";
+ import * as nativeStartupFS from "node:fs";
+ import { createHash as nativeStartupHash } from "node:crypto";
+ import { createRequire } from "node:module";
+@@ -124,7 +125,7 @@
+     // Node24 CJS require(ESM) loads only this fixed synchronous closure. Never
+     // reuse an earlier CommonJS cache entry or retry through another loader.
+     reason='SDK_LOAD';for(const name of nativeStartupNames)if(Object.hasOwn(nativeStartupRequire.cache,path.join(binding.sdk,name)))throw nativeStartupError();
+-    const module:unknown=nativeStartupRequire(path.join(binding.sdk,'native-executor-journal.mjs'));current();
++    const module:unknown=nativeStartupRequire(path.join(binding.sdk,'native-executor-journal.mjs'));const loadedCache=nativeExecutorCache(binding);current();
+     if(module===null||typeof module!=='object'||nativeStartupTypes.isProxy(module))throw nativeStartupError();
+     const descriptor=Object.getOwnPropertyDescriptor(module,'createNativeExecutorJournal');
+     if(descriptor===undefined||!Object.hasOwn(descriptor,'value')||typeof descriptor.value!=='function'||nativeStartupTypes.isProxy(descriptor.value))throw nativeStartupError();
+@@ -135,7 +136,7 @@
+     const observed:unknown=inventory.value({expectedRootId:anchor.rootId,expectedInventorySHA256:anchor.inventorySHA256});current();
+     if(observed===null||typeof observed!=='object'||nativeStartupTypes.isProxy(observed))throw nativeStartupError();
+     for(const[k,want]of [['schema','native-executor-inventory/1'],['complete',true],['historySealVerified',true],['startupHoldRequired',false],['observedRootId',anchor.rootId],['observedInventorySHA256',anchor.inventorySHA256]] as const){const d=Object.getOwnPropertyDescriptor(observed,k);if(d===undefined||!Object.hasOwn(d,'value')||d.value!==want)throw nativeStartupError();}
+-    reason='SOURCE_CLOSURE';const final=nativeStartupClosure(binding);nativeStartupSame(before.dirs,final.dirs);nativeStartupSame(before.files,final.files);nativeStartupSame(root.pins,nativeStartupAncestry(binding.journal).pins);current();attempt.source=nativeExecutorCapture(module,journal);attempt.anchor=anchor;current();return finish('initialized');
++    reason='SOURCE_CLOSURE';const final=nativeStartupClosure(binding);nativeStartupSame(before.dirs,final.dirs);nativeStartupSame(before.files,final.files);nativeStartupSame(root.pins,nativeStartupAncestry(binding.journal).pins);current();attempt.source=nativeExecutorCapture(module,journal);attempt.source.cache=loadedCache;nativeExecutorCheckSource(attempt.source);attempt.anchor=anchor;current();return finish('initialized');
+   }catch{const held=attempt.phase==='held';attempt.phase='held';throw nativeStartupError(held?'REENTRY':reason);}
+ }
+ 
+@@ -144,7 +145,8 @@
+ const nativeGenesisHoldReservation = ReduxPersistorIPC.prototype.holdNativeModPersistenceReservation;
+ type NativeExecutorJournalSource = { namespace: object; factory: (options: {root: string}) => unknown;
+   journal: object; inventory: (options: {expectedRootId: string; expectedInventorySHA256: string}) => unknown;
+-  provision: () => unknown };
++  provision: () => unknown; cache?: Map<string, {entry: unknown; exports: unknown} | null>;
++  modules?: Map<string, {namespace: object; method: Function; name: string}> };
+ type NativeExecutorStartupAttempt = {backend: LevelPersist; phase: NativeStartupPhase;
+   binding?: NonNullable<ReturnType<typeof nativeStartupBinding>>; anchor?: Readonly<{schema: string; rootId: string; inventorySHA256: string}>;
+   source?: NativeExecutorJournalSource};
+@@ -168,15 +170,17 @@
+ }
+ function nativeExecutorCheckSource(source: NativeExecutorJournalSource): void {
+   const current=nativeExecutorCapture(source.namespace,source.journal);
++  if(source.cache!==undefined)nativeExecutorCheckCache(source);
++  if(source.modules!==undefined)for(const row of source.modules.values()){const descriptor=Object.getOwnPropertyDescriptor(row.namespace,row.name);if(descriptor===undefined||!Object.hasOwn(descriptor,"value")||descriptor.value!==row.method)throw nativeGenesisError();}
+   if(current.factory!==source.factory||current.inventory!==source.inventory||current.provision!==source.provision)throw nativeGenesisError();
+ }
+ function nativeExecutorColdJournal(binding: NonNullable<ReturnType<typeof nativeStartupBinding>>): NativeExecutorJournalSource {
+   for(const name of nativeStartupNames)if(Object.hasOwn(nativeStartupRequire.cache,path.join(binding.sdk,name)))throw nativeGenesisError();
+-  const namespace:unknown=nativeStartupRequire(path.join(binding.sdk,'native-executor-journal.mjs'));
++  const namespace:unknown=nativeStartupRequire(path.join(binding.sdk,'native-executor-journal.mjs'));const loadedCache=nativeExecutorCache(binding);
+   if(namespace===null||typeof namespace!=='object'||nativeStartupTypes.isProxy(namespace))throw nativeGenesisError();
+   const factory=Object.getOwnPropertyDescriptor(namespace,'createNativeExecutorJournal');
+   if(factory===undefined||!Object.hasOwn(factory,'value')||typeof factory.value!=='function'||nativeStartupTypes.isProxy(factory.value))throw nativeGenesisError();
+-  return nativeExecutorCapture(namespace,factory.value({root:binding.journal}));
++  const source=nativeExecutorCapture(namespace,factory.value({root:binding.journal}));source.cache=loadedCache;nativeExecutorCheckSource(source);return source;
+ }
+ function nativeExecutorClosedCensus(source: NativeExecutorJournalSource, anchor: {rootId:string;inventorySHA256:string}, empty: boolean): void {
+   nativeExecutorCheckSource(source);
+@@ -242,8 +246,8 @@
+       if(JSON.stringify(anchor)!==JSON.stringify(startup.anchor))throw nativeGenesisError();
+       nativeExecutorClosedCensus(source,anchor,false);check();
+     }else{
+-      if(initial!==null||source!==undefined)throw nativeGenesisError();
+-      source=nativeExecutorColdJournal(binding);check();
++      if(initial!==null)throw nativeGenesisError();
++      source=nativeExecutorEnsureJournal(startup);check();
+       const loaded=nativeStartupClosure(binding);nativeStartupSame(before.dirs,loaded.dirs);nativeStartupSame(before.files,loaded.files);check();
+       const proof=source.provision.call(source.journal);check();nativeExecutorCheckSource(source);
+       if(proof===null||typeof proof!=='object'||nativeStartupTypes.isProxy(proof)||!Object.isFrozen(proof))throw nativeGenesisError();
+@@ -277,6 +281,171 @@
+   }
+ }
+ 
++
++// Only this verified loader may add fixed SDK entries to the retained cache set.
++function nativeExecutorCache(binding: NonNullable<ReturnType<typeof nativeStartupBinding>>) {
++  const cache = nativeStartupRequire.cache;
++  if(cache===null||typeof cache!=='object'||nativeStartupTypes.isProxy(cache))throw nativeGenesisError();
++  const found=new Map<string,{entry:unknown;exports:unknown}|null>();
++  for(const name of nativeStartupNames){
++    const file=path.join(binding.sdk,name),d=Object.getOwnPropertyDescriptor(cache,file);
++    if(d===undefined){found.set(file,null);continue;}
++    if(!Object.hasOwn(d,'value')||d.value===null||typeof d.value!=='object'||nativeStartupTypes.isProxy(d.value))throw nativeGenesisError();
++    const e=Object.getOwnPropertyDescriptor(d.value,'exports');
++    if(e===undefined||!Object.hasOwn(e,'value'))throw nativeGenesisError();
++    found.set(file,{entry:d.value,exports:e.value});
++  }
++  return found;
++}
++function nativeExecutorCheckCache(source: NativeExecutorJournalSource) {
++  if(source.cache===undefined)throw nativeGenesisError();
++  for(const[file,want]of source.cache){
++    const d=Object.getOwnPropertyDescriptor(nativeStartupRequire.cache,file);
++    if(want===null){if(d!==undefined)throw nativeGenesisError();continue;}
++    if(d===undefined||!Object.hasOwn(d,'value')||d.value!==want.entry)throw nativeGenesisError();
++    const e=Object.getOwnPropertyDescriptor(want.entry as object,'exports');
++    if(e===undefined||!Object.hasOwn(e,'value')||e.value!==want.exports)throw nativeGenesisError();
++  }
++}
++function nativeExecutorEnsureJournal(startup: NativeExecutorStartupAttempt): NativeExecutorJournalSource {
++  const binding=startup.binding;if(binding===undefined)throw nativeGenesisError();
++  const before=nativeStartupClosure(binding);
++  if(startup.source===undefined)startup.source=nativeExecutorColdJournal(binding);
++  else nativeExecutorCheckSource(startup.source);
++  const after=nativeStartupClosure(binding);nativeStartupSame(before.dirs,after.dirs);nativeStartupSame(before.files,after.files);
++  return startup.source;
++}
++function nativeExecutorMethod(source: NativeExecutorJournalSource,binding: NonNullable<ReturnType<typeof nativeStartupBinding>>,
++  entry:'owned-zip-worker-client.mjs'|'owned-zip-relay-client.mjs'|'native-dispatch-contract.cjs',name:string): Function {
++  nativeExecutorCheckSource(source);const before=nativeStartupClosure(binding);
++  const old=source.modules?.get(entry);
++  if(old!==undefined){if(old.name!==name)throw nativeGenesisError();return old.method;}
++  const namespace:unknown=nativeStartupRequire(path.join(binding.sdk,entry));
++  const loadedCache=nativeExecutorCache(binding);
++  if(namespace===null||typeof namespace!=='object'||nativeStartupTypes.isProxy(namespace))throw nativeGenesisError();
++  const descriptor=Object.getOwnPropertyDescriptor(namespace,name);
++  if(descriptor===undefined||!Object.hasOwn(descriptor,'value')||typeof descriptor.value!=='function'||nativeStartupTypes.isProxy(descriptor.value))throw nativeGenesisError();
++  const after=nativeStartupClosure(binding);nativeStartupSame(before.dirs,after.dirs);nativeStartupSame(before.files,after.files);
++  // Existing entries may not be replaced by a nested require. Only new entries
++  // materialized by this exact, source-checked load are admitted.
++  nativeExecutorCheckCache({...source,cache:loadedCache});const current=loadedCache;
++  for(const[file,want]of source.cache??[]){if(want!==null){const have=current.get(file);if(have===null||have===undefined||have.entry!==want.entry||have.exports!==want.exports)throw nativeGenesisError();}}
++  source.cache=current;source.modules??=new Map();source.modules.set(entry,{namespace,method:descriptor.value,name});
++  nativeExecutorCheckSource(source);return descriptor.value;
++}
++const nativePendingCheckTarget=ReduxPersistorIPC.prototype.checkNativeModPersistenceTarget;
++const nativePendingError=()=>new Error('NATIVE_EXECUTOR_PENDING_HOLD');
++type NativePendingRequest={operationId:string;nativeJobId:string;rendererGeneration:string;planId:string;
++  plan:{context:{gameId:string};package:{expectedModId:string}}};
++type NativePendingAttempt={owner:object;phase:'checking'|'prepared'|'held';mainReadyOwner:object;modOwner:object;frameOwner:object;
++  main?:ReduxPersistorIPC;startup?:NativeExecutorStartupAttempt;genesis?:NativeExecutorGenesisAttempt;
++  request?:NativePendingRequest;relay?:object;anchor?:Readonly<{schema:string;rootId:string;inventorySHA256:string}>};
++let nativePendingAttempt:NativePendingAttempt|undefined;
++function nativePendingHold(attempt:NativePendingAttempt){
++  attempt.phase='held';if(attempt.startup!==undefined)attempt.startup.phase='held';
++  if(attempt.genesis!==undefined)attempt.genesis.phase='held';
++  if(attempt.main!==undefined)try{nativeGenesisHoldReservation.call(attempt.main,attempt.modOwner);}catch{/* Preserve primary. */}
++  try{holdNativeExecutorFrame(attempt.frameOwner);}catch{/* Preserve primary. */}
++}
++function nativePendingInventory(source:NativeExecutorJournalSource,anchor:{rootId:string;inventorySHA256:string},pending:boolean){
++  nativeExecutorCheckSource(source);
++  const raw=source.inventory.call(source.journal,{expectedRootId:anchor.rootId,expectedInventorySHA256:anchor.inventorySHA256});
++  nativeExecutorCheckSource(source);
++  if(raw===null||typeof raw!=='object'||nativeStartupTypes.isProxy(raw))throw nativePendingError();
++  const want={schema:'native-executor-inventory/1',complete:true,observedRootId:anchor.rootId,observedInventorySHA256:anchor.inventorySHA256,
++    rootIdentityVerified:true,historySealVerified:true,startupHoldRequired:pending,effectsAllowed:false,installationPermit:false,canReplay:false};
++  for(const[k,v]of Object.entries(want)){const d=Object.getOwnPropertyDescriptor(raw,k);if(d===undefined||!Object.hasOwn(d,'value')||d.value!==v)throw nativePendingError();}
++  const d=Object.getOwnPropertyDescriptor(raw,'records');
++  if(d===undefined||!Object.hasOwn(d,'value')||!Array.isArray(d.value)||nativeStartupTypes.isProxy(d.value)||d.value.length>1024)throw nativePendingError();
++  const rows:Record<string,unknown>[]=[];
++  for(let i=0;i<d.value.length;i++){
++    const item=Object.getOwnPropertyDescriptor(d.value,String(i));if(item===undefined||!Object.hasOwn(item,'value'))throw nativePendingError();
++    const row=nativeStartupData(item.value,['operationId','nativeJobId','requestSHA256','packetSHA256','workerLifetime','state','reason','evidenceSHA256']);
++    if(row.state!=='historical_closed'&&!(pending&&row.state==='unresolved'))throw nativePendingError();rows.push(row);
++  }
++  return rows;
++}
++/** Internal preparation only: no START, renderer permission, transport or refund. */
++export async function prepareNativeExecutorPending(mainReadyOwner:object,modOwner:object,frameOwner:object,requestBytes:Uint8Array,archiveBytes:Uint8Array){
++  if(nativePendingAttempt!==undefined){nativePendingHold(nativePendingAttempt);throw nativePendingError();}
++  const attempt:NativePendingAttempt={owner:Object.freeze({}),phase:'checking',mainReadyOwner,modOwner,frameOwner};nativePendingAttempt=attempt;
++  const phaseValid=()=>nativePendingAttempt===attempt&&attempt.phase==='checking';
++  const check=()=>{
++    if(!phaseValid())throw nativePendingError();
++    checkNativeMainPersistenceReady(mainReadyOwner);
++    const ready=nativeMainAttempt,startup=attempt.startup;
++    if(ready===undefined||ready.main!==attempt.main||startup===undefined||nativeStartupAttempt!==startup||ready.backend!==startup.backend
++      ||!['uninitialized','initialized'].includes(startup.phase))throw nativePendingError();
++    nativeGenesisCheckReservation.call(ready.main,modOwner);
++    if(attempt.request!==undefined)nativePendingCheckTarget.call(ready.main,modOwner,attempt.request.plan.context.gameId,attempt.request.plan.package.expectedModId);
++    checkNativeExecutorFrame(frameOwner);
++    if(!phaseValid()||nativeMainAttempt!==ready||nativeStartupAttempt!==startup)throw nativePendingError();
++    if(attempt.genesis!==undefined&&(nativeGenesisAttempt!==attempt.genesis||attempt.genesis.phase!=='ready'
++      ||attempt.genesis.mainOwner!==mainReadyOwner||attempt.genesis.reservationOwner!==modOwner))throw nativePendingError();
++  };
++  try{
++    checkNativeMainPersistenceReady(mainReadyOwner);
++    const ready=nativeMainAttempt,startup=nativeStartupAttempt;
++    if(ready===undefined||startup===undefined||ready.backend!==startup.backend||startup.binding===undefined)throw nativePendingError();
++    attempt.main=ready.main;attempt.startup=startup;check();
++    const binding=startup.binding,source=nativeExecutorEnsureJournal(startup);check();
++    const snapshot=nativeExecutorMethod(source,binding,'owned-zip-worker-client.mjs','snapshotOwnedStagingZipInputs');check();
++    const inputs=nativeStartupData(snapshot(requestBytes,archiveBytes),['request','archive']);check();
++    attempt.request=inputs.request as NativePendingRequest;check();
++    const request=attempt.request,requestCopy=Buffer.from(JSON.stringify(inputs.request)),archiveCopy=Buffer.from(JSON.stringify(inputs.archive));
++    const digest=nativeExecutorMethod(source,binding,'native-dispatch-contract.cjs','dispatchRequestDigest');
++    const requestSHA256:unknown=digest(requestCopy);if(typeof requestSHA256!=='string'||!/^[a-f0-9]{64}$/.test(requestSHA256))throw nativePendingError();check();
++    if(nativeGenesisAttempt===undefined){await initializeNativeExecutorHistory(mainReadyOwner,modOwner);check();}
++    const genesis=nativeGenesisAttempt;
++    if(genesis===undefined||genesis.phase!=='ready'||genesis.mainOwner!==mainReadyOwner||genesis.reservationOwner!==modOwner||genesis.startup!==startup||genesis.anchor===undefined)throw nativePendingError();
++    attempt.genesis=genesis;check();const previous=genesis.anchor;
++    const raw=await nativeHistoryAnchorRead.call(startup.backend);check();
++    const previousBytes=Buffer.from(JSON.stringify(previous));if(raw===null||!Buffer.from(raw).equals(previousBytes))throw nativePendingError();
++    const prior=nativePendingInventory(source,previous,false);check();
++    const factory=nativeExecutorMethod(source,binding,'owned-zip-relay-client.mjs','createBoundOwnedZipRelay');check();
++    const runtime=Buffer.from(JSON.stringify({schema:'native-executor-runtime-binding/1',workspaceRoot:binding.workspaceRoot,
++      relayNodeSHA256:'5c976096e04e5c2c1f091938926234cc9fbebfe9787ddd149351b3b0ecc707b5',sourceSHA256:binding.sources}));
++    const relay:unknown=factory(requestCopy,archiveCopy,runtime);check();nativeExecutorCheckSource(source);
++    if(relay===null||typeof relay!=='object'||nativeStartupTypes.isProxy(relay)||!Object.isFrozen(relay))throw nativePendingError();
++    attempt.relay=relay;
++    const prepare=Object.getOwnPropertyDescriptor(relay,'prepare');
++    if(prepare===undefined||!Object.hasOwn(prepare,'value')||typeof prepare.value!=='function'||nativeStartupTypes.isProxy(prepare.value))throw nativePendingError();
++    const receipt:unknown=await prepare.value.call(relay,previousBytes);check();nativeExecutorCheckSource(source);
++    const r=nativeStartupData(receipt,['schema','binding','workerLifetime','workerPid','creationTime','packetSHA256','transition']);
++    const rb=nativeStartupData(r.binding,['operationId','nativeJobId','requestSHA256','rendererGeneration']);
++    if(r.schema!=='owned-zip-worker-prepared/1'||rb.operationId!==request.operationId||rb.nativeJobId!==request.nativeJobId
++      ||rb.requestSHA256!==requestSHA256||rb.rendererGeneration!==request.rendererGeneration
++      ||typeof r.workerLifetime!=='string'||!/^worker_[a-f0-9]{32}$/.test(r.workerLifetime)||!Number.isSafeInteger(r.workerPid)||(r.workerPid as number)<=0
++      ||typeof r.creationTime!=='string'||!/^[1-9][0-9]{0,19}$/.test(r.creationTime)||typeof r.packetSHA256!=='string'||!/^[a-f0-9]{64}$/.test(r.packetSHA256))throw nativePendingError();
++    const transition=nativeStartupData(r.transition,['schema','rootId','previousInventorySHA256','inventorySHA256','operationId','nativeJobId','requestSHA256','packetSHA256','workerLifetime']);
++    if(transition.schema!=='native-executor-pending-transition/1'||transition.rootId!==previous.rootId||transition.previousInventorySHA256!==previous.inventorySHA256
++      ||typeof transition.inventorySHA256!=='string'||!/^[a-f0-9]{64}$/.test(transition.inventorySHA256)
++      ||transition.operationId!==request.operationId||transition.nativeJobId!==request.nativeJobId||transition.requestSHA256!==requestSHA256
++      ||transition.packetSHA256!==r.packetSHA256||transition.workerLifetime!==r.workerLifetime)throw nativePendingError();
++    const next=nativeHistoryAnchorSnapshot(Buffer.from(JSON.stringify({schema:'native-executor-anchor/1',rootId:previous.rootId,inventorySHA256:transition.inventorySHA256})));
++    const verifySuccessor=()=>{
++      const rows=nativePendingInventory(source,next,true);check();
++      if(rows.length!==prior.length+1)throw nativePendingError();
++      for(const row of prior){const found=rows.find(other=>other.operationId===row.operationId);if(found===undefined||JSON.stringify(found)!==JSON.stringify(row))throw nativePendingError();}
++      const added=rows.find(row=>row.operationId===request.operationId);
++      if(added===undefined||added.state!=='unresolved'||added.reason!=='terminal_missing'||added.nativeJobId!==request.nativeJobId
++        ||added.requestSHA256!==requestSHA256||added.packetSHA256!==r.packetSHA256||added.workerLifetime!==r.workerLifetime||added.evidenceSHA256!==null)throw nativePendingError();
++    };
++    verifySuccessor();check();
++    const nextBytes=Buffer.from(JSON.stringify(next));
++    const acknowledgement=await nativeGenesisWriteAnchor.call(ready.main,modOwner,previousBytes,nextBytes);check();
++    const ack=nativeStartupData(acknowledgement,['schema','previousSHA256','anchorSHA256','rootId','inventorySHA256','commitObserved','readbackVerified','effectsAllowed','installationPermit','powerLossPersistenceVerified']);
++    if(ack.schema!=='native-executor-anchor-write/1'||ack.previousSHA256!==nativeStartupHash('sha256').update(previousBytes).digest('hex')
++      ||ack.anchorSHA256!==nativeStartupHash('sha256').update(nextBytes).digest('hex')||ack.rootId!==next.rootId||ack.inventorySHA256!==next.inventorySHA256
++      ||ack.commitObserved!==true||ack.readbackVerified!==true||ack.effectsAllowed!==false||ack.installationPermit!==false||ack.powerLossPersistenceVerified!==false)throw nativePendingError();
++    const readback=await nativeHistoryAnchorRead.call(startup.backend);check();if(readback===null||!Buffer.from(readback).equals(nextBytes))throw nativePendingError();
++    nativeStartupClosure(binding);check();verifySuccessor();check();
++    const result=Object.freeze({schema:'native-executor-pending-preparation/1',owner:attempt.owner,operationId:request.operationId,nativeJobId:request.nativeJobId,
++      requestSHA256,rootId:next.rootId,inventorySHA256:next.inventorySHA256,effectsAllowed:false,installationPermit:false,nativeAdmission:false,powerLossPersistenceVerified:false});
++    attempt.anchor=next;startup.anchor=next;genesis.anchor=next;attempt.phase='prepared';return result;
++  }catch(primary){nativePendingHold(attempt);throw primary;}
++}
++
+ let mainPersistor: ReduxPersistorIPC | undefined;
+ let levelPersist: LevelPersist | undefined;
+ let queryRegistry: QueryRegistry | undefined;

@@ -112,6 +112,46 @@ function archiveValue(bytes, request) {
   return value;
 }
 
+function validateNativePayload(request) {
+  need(Object.keys(request.plan.package.payload).every(name => /^[A-Za-z0-9_./ -]+$/.test(name)
+    && name.split('/').length <= 32 && name.split('/').every(nativeComponent)), 'UNSUPPORTED_PAYLOAD');
+}
+function validateStagingFamily(request) {
+  const identifier = value => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(value)
+    && !['__proto__','constructor','prototype'].includes(value.toLowerCase());
+  need(identifier(request.plan.package.expectedModId) && identifier(request.plan.package.downloadId), 'UNSUPPORTED_REGISTRATION_ID');
+  validateNativePayload(request);
+  // This backend creates under staging. Game roots retain generic plan checks;
+  // this pure metadata boundary does not inspect or write the game directory.
+  need(nativeRoot(request.plan.context.stagingPath), 'UNSUPPORTED_STAGING_ROOT');
+}
+function checkArchiveParent(request, archive) {
+  const canonical = value => path.win32.resolve(value).replaceAll('\\', '/').toLowerCase();
+  need(canonical(archive.parent) === canonical(request.plan.context.downloadPath), 'ARCHIVE_CONTEXT_MISMATCH');
+}
+
+/** Pure first-family metadata snapshot, not held-byte SHA/MD5 or IO authority. */
+export function snapshotOwnedStagingZipInputs(requestBytes, archiveBindingBytes) {
+  const copy = (bytes, maximum) => {
+    try {
+      need(isUint8Array(bytes), 'INVALID_INPUTS');
+      const typed = Object.getPrototypeOf(Uint8Array.prototype);
+      const size = Object.getOwnPropertyDescriptor(typed, 'byteLength').get.call(bytes);
+      const backing = Object.getOwnPropertyDescriptor(typed, 'buffer').get.call(bytes);
+      need(size <= maximum && !isSharedArrayBuffer(backing), 'INVALID_INPUTS');
+      const detached = new Uint8Array(size); Uint8Array.prototype.set.call(detached, bytes);
+      need(!(detached[0] === 0xef && detached[1] === 0xbb && detached[2] === 0xbf), 'INVALID_INPUTS');
+      return detached;
+    } catch {throw Error('OWNED_ZIP_WORKER_INVALID_INPUTS');}
+  };
+  const request = dispatch.parseDispatchRequest(copy(requestBytes, dispatch.LIMITS.bytes));
+  validateStagingFamily(request);
+  const archive = archiveValue(copy(archiveBindingBytes, 8192), request);
+  checkArchiveParent(request, archive);
+  Object.freeze(archive.parentIdentity); Object.freeze(archive.identity); Object.freeze(archive);
+  return Object.freeze({request, archive});
+}
+
 export function createOwnedZipWorker(requestBytes, archiveBindingBytes) {
   return createWorker(requestBytes, archiveBindingBytes, false);
 }
@@ -120,19 +160,13 @@ export function createOwnedStagingZipWorker(requestBytes, archiveBindingBytes) {
 }
 function createWorker(requestBytes, archiveBindingBytes, staging) {
   const request = dispatch.parseDispatchRequest(requestBytes);
-  if (staging) {
-    const identifier = value => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(value)
-      && !['__proto__','constructor','prototype'].includes(value.toLowerCase());
-    need(identifier(request.plan.package.expectedModId) && identifier(request.plan.package.downloadId), 'UNSUPPORTED_REGISTRATION_ID');
-  }
-  need(Object.keys(request.plan.package.payload).every(name => /^[A-Za-z0-9_./ -]+$/.test(name)
-    && name.split('/').length <= 32 && name.split('/').every(nativeComponent)), 'UNSUPPORTED_PAYLOAD');
+  if (staging) validateStagingFamily(request);
+  else validateNativePayload(request);
   const requestSHA256 = dispatch.dispatchRequestDigest(Buffer.from(JSON.stringify(request)));
   const archive = archiveValue(archiveBindingBytes, request);
   let archiveParentPins = null;
   function checkArchiveContext() {
-    const canonical = value => path.win32.resolve(value).replaceAll('\\','/').toLowerCase();
-    need(canonical(archive.parent) === canonical(request.plan.context.downloadPath), 'ARCHIVE_CONTEXT_MISMATCH');
+    checkArchiveParent(request, archive);
     const current = scopeIO.ancestry(archive.parent);
     need(current, 'ARCHIVE_CONTEXT_MISMATCH');
     if (archiveParentPins !== null) scopeIO.sameAncestry(archive.parent, archiveParentPins);
