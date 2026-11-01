@@ -86,5 +86,6 @@ test('stdio lists and remotely forwards resident native preflight without a loca
   assert.deepEqual(result.deploymentTargets.map(row=>row.typeId),['','own_alias']);
   assert.equal(result.deploymentTargets[0].path,root);assert.equal(result.appVersion.value,'2.9.1');
   assert.equal(result.shutdownPermit,false);
+  assert.equal(result.staging.available,true);assert.equal(result.staging.readinessVerified,false);
   assert.equal(calls.filter(([method,params])=>method==='tools/call'&&params.name==='read_native_preflight').length,1);
 });

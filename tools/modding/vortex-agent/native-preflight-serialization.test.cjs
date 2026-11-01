@@ -9,14 +9,14 @@ function sample() {
       downloadPath:path.resolve('own-downloads'),filesystemIds:{gamePath:'1:2',stagingPath:'1:3',downloadPath:'1:4'}},
     appVersion:{available:true,value:'2.9.1'},deploymentTargets:[{typeId:'',path:path.resolve('own-game'),sameAsDefault:true},
       {typeId:'own_alias',path:path.resolve('own-game'),sameAsDefault:true}],
-    updater:{available:true,state:'idle',sequence:7},status:'ok',snapshotAtomic:false,nativeEffects:false,
+    updater:{available:true,state:'idle',sequence:7},staging:{available:true,tagStatus:'missing',code:'NATIVE_PREFLIGHT_STAGING_TAG_MISSING',nativeInitializationRequired:true,readinessVerified:false},status:'ok',snapshotAtomic:false,nativeEffects:false,
     shutdownPermit:false,sourceAdmissionVerified:false};
 }
 const api = (credential = 'own-private-credential', userInfo = {}) => ({getState:() => ({confidential:{apiKey:credential},persistent:{nexus:{userInfo}}})});
 
 test('preflight exact operational fields and empty default target survive account-name collisions', () => {
   const value=sample();
-  const account={name:'own',version:'2.9.1',profile:'profile-a',label:'native-preflight/1',id:'idle'};
+  const account={name:'own',version:'2.9.1',profile:'profile-a',label:'native-preflight/1',id:'idle',tag:'missing'};
   assert.deepEqual(safe(value,api(undefined,account),'read_native_preflight'),value);
   assert.equal(safe(value,api(),'read_native_preflight').deploymentTargets[0].typeId,'');
 });
@@ -29,10 +29,15 @@ test('partial native version/updater observations preserve finite codes without 
 });
 
 test('credential overlap rejects operational values instead of truncating them', () => {
-  for(const credential of ['2.9.1','own_alias','profile-a','own-game','NATIVE_PREFLIGHT_UPDATER_UNAVAILABLE']){
+  for(const credential of ['2.9.1','own_alias','profile-a','own-game','NATIVE_PREFLIGHT_UPDATER_UNAVAILABLE','missing','NATIVE_PREFLIGHT_STAGING_TAG_MISSING']){
     const value=sample();if(credential==='NATIVE_PREFLIGHT_UPDATER_UNAVAILABLE')value.updater={available:false,code:credential};
     assert.throws(()=>safe(value,api(credential),'read_native_preflight'),/OPERATIONAL_SECRET_OVERLAP/);
   }
+});
+
+test('staging observations preserve only fixed statuses and finite codes',()=>{
+ for(const code of ['UNAVAILABLE','UNSAFE','CHANGED']){const value=sample();value.staging={available:false,tagStatus:'unknown',code:'NATIVE_PREFLIGHT_STAGING_TAG_'+code,nativeInitializationRequired:null,readinessVerified:false};assert.deepEqual(safe(value,api(),'read_native_preflight'),value);}
+ for(const field of ['tagStatus','code']){const value=sample();value.staging[field]='https://private.invalid/detail';assert.throws(()=>safe(value,api(),'read_native_preflight'),/OPERATIONAL_VALUE_NOT_CURATED/);}
 });
 
 test('preflight empty-ID exception does not weaken other fields or ordinary tools', () => {

@@ -20,6 +20,8 @@ function operational(kind, trail) {
     }
     if (trail.length === 2 && trail[0] === 'appVersion' && trail[1] === 'value') return 'nativeAppVersion';
     if (trail.length === 2 && ['appVersion', 'updater'].includes(trail[0]) && trail[1] === 'code') return 'nativePreflightCode';
+    if (trail.length === 2 && trail[0] === 'staging' && trail[1] === 'code') return 'nativeStagingCode';
+    if (trail.length === 2 && trail[0] === 'staging' && trail[1] === 'tagStatus') return 'nativeStagingStatus';
     if (trail.length === 2 && trail[0] === 'updater' && trail[1] === 'state') return 'nativeUpdaterState';
     if (trail.length === 3 && trail[0] === 'deploymentTargets' && /^\d+$/.test(trail[1])) {
       if (trail[2] === 'typeId') return 'nativeTypeId';
@@ -84,6 +86,8 @@ function validOperational(type, value) {
   if (type === 'nativeAppVersion') return value.length <= 128 && /^\d{1,4}(?:\.\d{1,6}){2,3}(?:-[0-9A-Za-z][0-9A-Za-z.-]{0,63})?(?:\+[0-9A-Za-z][0-9A-Za-z.-]{0,31})?$/.test(value);
   if (type === 'nativeTypeId') return /^[A-Za-z0-9_-]{0,128}$/.test(value) && !['__proto__', 'constructor', 'prototype'].includes(value);
   if (type === 'nativePreflightCode') return /^NATIVE_PREFLIGHT_(?:APP_VERSION|UPDATER)_(?:TIMEOUT|INVALID|UNAVAILABLE)$/.test(value);
+  if (type === 'nativeStagingCode') return /^NATIVE_PREFLIGHT_STAGING_TAG_(?:MISSING|UNAVAILABLE|UNSAFE|CHANGED)$/.test(value);
+  if (type === 'nativeStagingStatus') return ['missing','present','unknown'].includes(value);
   if (type === 'nativeUpdaterState') return ['disabled', 'idle', 'checking', 'available', 'downgrade-offered', 'downloading', 'staged', 'error'].includes(value);
   if (type === 'protocol') return value === 'vortex-agent/1';
   if (type === 'operation') return OPERATIONS.has(value);
