@@ -126,9 +126,10 @@ async function fixture(t){
     Buffer.from(JSON.stringify(value.archive)),Buffer.from(JSON.stringify(binding)));
   assert.equal(fs.existsSync(path.join(workspace,'tools')),false);
   return{root,workspace,value,request,relay,journal,anchor,times,built,
+    inertObserver:capsule.modules['owned-zip-relay-client.mjs'].observeRelayInertCancellation,
     assertCaptured(){assert.equal(children.size,1);for(const record of children.values())assert(record.identity,record.captureError??'No fixture process identity');},
     async step(label,fn){const before=performance.now();const result=await fn();times[label+'Ms']=performance.now()-before;return result;},
-    save(outcome){fs.writeFileSync(path.join(root,'CAPSULE-RESULT.json'),JSON.stringify({schema:'owned-capsule-copy-fixture/1',outcome,
+    save(outcome,inertCancellation=null){fs.writeFileSync(path.join(root,'CAPSULE-RESULT.json'),JSON.stringify({schema:'owned-capsule-copy-fixture/1',outcome,inertCancellation,
       artifactSHA256:built.sha256,requestSHA256:dispatch.dispatchRequestDigest(Buffer.from(JSON.stringify(request))),
       bindingSHA256:sha(JSON.stringify(binding)),sourcePins,
       processIdentity:[...children.values()].map(r=>({identity:r.identity,captureError:r.captureError})),
@@ -151,6 +152,7 @@ ownTest('real bound capsule extracts and copies an own ZIP, verifies proof and j
   assert.equal(released.sdk.workerTerminal.childResourcesClosed,true);assert.equal(released.relayTerminal.childResourcesClosed,true);
   assert.equal(released.sdk.workerTerminal.exitSucceeded,true);assert.equal(released.relayTerminal.exitSucceeded,true);
   assert.equal(released.nativeInstallAccepted,false);assert.equal(fs.existsSync(path.join(f.workspace,'tools')),false);
+  assert.throws(()=>f.inertObserver(f.relay),/INERT_CANCELLATION_UNPROVEN/);
   // SDK filesystem success is not a Vortex commit/adoption or terminal-history permit.
   assert.equal(f.journal.inventory().unresolvedCount,1);
   f.save('copied_and_closed_without_vortex_registration');
@@ -162,10 +164,25 @@ ownTest('prepared capsule cancellation closes the inert worker and preserves pen
   f.assertCaptured();
   assert.equal(f.relay.status().sdk.startSent,false);
   assert.equal(fs.existsSync(target),false);
-  await bounded(f.relay.cancel());const released=await bounded(f.relay.release());
+  assert.throws(()=>f.inertObserver(f.relay),/INERT_CANCELLATION_UNPROVEN/);
+  await bounded(f.relay.cancel());
+  assert.throws(()=>f.inertObserver(f.relay),/INERT_CANCELLATION_UNPROVEN/);
+  const released=await bounded(f.relay.release());
   assert.equal(released.relayTerminal.childResourcesClosed,true);assert.equal(released.sdk.workerTerminal.childResourcesClosed,true);
   assert.equal(released.sdk.startSent,false);assert.equal(fs.existsSync(target),false);
   assert.equal(fs.existsSync(path.join(f.workspace,'local-state/owned-zip-worker-work')),false);
+  const observation=f.inertObserver(f.relay);
+  assert.equal(observation.schema,'owned-zip-relay-inert-cancellation/1');assert(Object.isFrozen(observation));
+  assert(Object.isFrozen(observation.binding));assert(Object.isFrozen(observation.workerTerminal.pipes.stdin));
+  assert.equal(observation.cancelledBeforeStart,true);assert.equal(observation.explicitStartAttempted,false);
+  assert.equal(observation.pythonStartSent,false);assert.equal(observation.destinationAcquired,false);
+  assert.equal(observation.binding.operationId,f.request.operationId);assert.equal(observation.relayPid,released.relayPid);
+  assert.equal(observation.workerLifetime,released.sdk.workerLifetime);assert.equal(observation.workerPid,released.sdk.workerPid);
+  assert.equal(observation.packetSHA256,released.sdk.packetSHA256);
+  assert.equal(observation.relayTerminal.exitSucceeded,true);assert.equal(observation.workerTerminal.exitSucceeded,true);
+  assert.equal(observation.nativeAdmission,false);assert.equal(observation.installationPermit,false);
+  assert.throws(()=>f.inertObserver({}),/INERT_CANCELLATION_OWNER/);
+  assert.throws(()=>f.inertObserver(f.relay,{}),/INERT_CANCELLATION_ARGUMENTS/);
   assert.equal(f.journal.inventory().unresolvedCount,1);
-  f.save('inert_cancel_closed_without_registration');
+  f.save('inert_cancel_closed_without_registration',observation);
 });

@@ -1,0 +1,28 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/main/src/store/ReduxPersistorIPC.ts",
+  "originalSourceSHA256": "2a86c8e57e643172e8babf3474bd2e697a1cf8b3f3e3f3ea1f44934781a737e3",
+  "inputSHA256": "0079084dee06bed5b96b560fe576f4e0b8734ab3363fa6c9e89af8c7adff2b5d",
+  "outputSHA256": "1acf238012cbb57f1f457fb12a9eb04c293a2dedf643d9b70c7bd633e95abf93",
+  "patchSHA256": "1683e2361021962f479d5a085b965a9c2770d1955bc98ae22b8ce1b872cabbbf",
+  "prerequisitePatch": "native-main-executor-terminal-window.patch",
+  "prerequisitePatchSHA256": "93466fb7d9eda396ed8e9fd4d873c7ab6735b982f57ca1a894eb4d73b4eaa343",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "effectsAllowed": false,
+  "installationPermit": false,
+  "nativeAdmission": false,
+  "powerLossPersistenceVerified": false,
+  "additionalCompanions": [
+    {
+      "packet": "persistence",
+      "name": "native-backend-unregistered-release",
+      "patchSHA256": "1332d28662aece843048cb29e6e9651255ce83c6b3276c02e93d1f79f4f64223",
+      "outputSHA256": "11ca91f241329d33332a083c7538449c8cd5181aaa04247993646c1488a6662a"
+    }
+  ]
+}

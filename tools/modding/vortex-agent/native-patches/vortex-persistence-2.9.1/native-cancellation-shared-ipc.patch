@@ -1,0 +1,116 @@
+--- a/src/shared/src/types/ipc.ts
++++ b/src/shared/src/types/ipc.ts
+@@ -203,6 +203,87 @@
+   nativeAdmission: false;
+   trackedInstallComplete: false;
+   powerLossPersistenceVerified: false;
++}
++
++/** Prepared no-START cancellation is a separate outcome, never installation. */
++export interface NativeExecutorRendererCancellation {
++  schema: "native-executor-renderer-cancellation/1";
++  transportId: string;
++  cancellationId: string;
++  operationId: string;
++  nativeJobId: string;
++  requestSHA256: string;
++  state: "prepared" | "checked" | "finalized";
++  targetAbsent: true;
++  effectsAllowed: false;
++  installationPermit: false;
++  nativeAdmission: false;
++}
++export interface NativeExecutorCancellationChallenge extends NativeExecutorTransportBinding {
++  schema: "native-executor-cancellation-challenge/1";
++  transportId: string;
++  cancellationId: string;
++  challengeId: string;
++  sequence: 1 | 2 | 3 | 4 | 5;
++  stage: "prepare-inert-release" | "check-inert-after-close" | "check-inert-before-main-release" | "finalize-inert-release" | "hold";
++  payloadJSON: string | null;
++}
++export interface NativeExecutorCancellationResponse {
++  schema: "native-executor-cancellation-response/1";
++  transportId: string;
++  cancellationId: string;
++  challengeId: string;
++  sequence: NativeExecutorCancellationChallenge["sequence"];
++  stage: NativeExecutorCancellationChallenge["stage"];
++  requestSHA256: string;
++  requestBytesSHA256: string;
++  archiveBytesSHA256: string;
++  state: "prepared" | "checked" | "finalized" | "held" | "failed";
++  observation: NativeExecutorRendererCancellation | null;
++  errorCode: "NATIVE_EXECUTOR_RENDERER_FAILED" | null;
++}
++export interface NativeExecutorCancellationInvalidation {
++  schema: "native-executor-cancellation-invalidated/1";
++  transportId: string;
++  cancellationId: string;
++  operationId: string;
++  nativeJobId: string;
++  requestSHA256: string;
++  requestBytesSHA256: string;
++  archiveBytesSHA256: string;
++  reasonCode: "NATIVE_EXECUTOR_RENDERER_FAILED";
++}
++export interface NativeExecutorCancellationResult {
++  schema: "native-executor-cancellation-result/1";
++  transportId: string;
++  cancellationId: string;
++  operationId: string;
++  nativeJobId: string;
++  requestSHA256: string;
++  requestBytesSHA256: string;
++  archiveBytesSHA256: string;
++  rootId: string;
++  inventorySHA256: string;
++  outcome: "prepared_no_start_cancelled_worker_closed";
++  mainReleased: true;
++  rendererReleased: true;
++  effectsAllowed: false;
++  installationPermit: false;
++  nativeAdmission: false;
++  powerLossPersistenceVerified: false;
++}
++/** Historical handoff ACK only, never fresh admission. */
++export interface NativeExecutorCancellationSuccessor {
++  schema: "native-executor-cancellation-successor/1";
++  transportId: string;
++  cancellationId: string;
++  operationId: string;
++  nativeJobId: string;
++  requestSHA256: string;
++  ready: true;
++  effectsAllowed: false;
++  installationPermit: false;
++  nativeAdmission: false;
+ }
+ 
+ export interface AppInitMetadata {
+@@ -418,6 +499,8 @@
+ 
+ /** Type containing all known channels used by renderer processes to send messages to the main process */
+ export interface RendererChannels extends RendererCallbackChannels {
++  "persist:native-executor-cancellation-response": (value: NativeExecutorCancellationResponse) => void;
++  "persist:native-executor-cancellation-invalidated": (value: NativeExecutorCancellationInvalidation) => void;
+   "persist:native-executor-execution-response": (value: NativeExecutorExecutionResponse) => void;
+   "persist:native-executor-execution-invalidated": (value: NativeExecutorExecutionInvalidation) => void;
+   "persist:native-executor-response": (response: NativeExecutorResponse) => void;
+@@ -482,6 +565,7 @@
+ 
+ /** Type containing all known channels used by the main process to send messages to a renderer process */
+ export interface MainChannels extends MainCallbackChannels {
++  "persist:native-executor-cancellation-challenge": (value: NativeExecutorCancellationChallenge) => void;
+   "persist:native-executor-execution-challenge": (value: NativeExecutorExecutionChallenge) => void;
+   "persist:native-executor-challenge": (challenge: NativeExecutorChallenge) => void;
+   // NOTE(erri120): Parameters must be serializable and return values must be void.
+@@ -566,6 +650,8 @@
+   /** Wait for the exact submitted batches and earlier accepted persistence work. */
+   "persist:diffs-acknowledged": (batches: PersistenceBatch[]) => Promise<void>;
+   "persist:native-executor-successor": (transportId: string, executionId: string) => Promise<NativeExecutorSuccessor>;
++  "persist:native-executor-cancel": (transportId: string) => Promise<NativeExecutorCancellationResult>;
++  "persist:native-executor-cancellation-successor": (transportId: string, cancellationId: string) => Promise<NativeExecutorCancellationSuccessor>;
+   "persist:native-executor-execute": (transportId: string) => Promise<NativeExecutorExecutionResult>;
+   "persist:native-executor-prepare": (requestBytes: Uint8Array, archiveBytes: Uint8Array) => Promise<NativeExecutorPreparation>;
+   "persist:native-main-readiness": (requestId: string) => Promise<NativeMainReadinessObservation>;

@@ -1,0 +1,34 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/main/src/store/persistenceIPC.ts",
+  "originalSourceSHA256": "a570597ae00396259d1ebbb37c7fe7ddb0a01ff3dcecd231cabde1059e9723ae",
+  "inputSHA256": "4d9ee91bf5995613ab96ce6b13ebf4fa850aa80ded57bdb904e75b653a4de5e6",
+  "outputSHA256": "2121519b5b71ae2b2fec2ee970d2e3b9b988399fa22bf2254d3ce4fd2172ce0a",
+  "patchSHA256": "b3cba7c50b5db5ca0f478a29e39f16217d147c9ba7b38a15edb666d3816e83ad",
+  "prerequisitePatch": "native-executor-successor-ipc.patch",
+  "prerequisitePatchSHA256": "5225b386045418f9b72a4b2b577a1a7cfec489877e139a290a79a8f8b18bcad4",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "effectsAllowed": false,
+  "installationPermit": false,
+  "nativeAdmission": false,
+  "powerLossPersistenceVerified": false,
+  "additionalCompanions": [
+    {
+      "packet": "persistence",
+      "name": "native-main-executor-cancellation",
+      "patchSHA256": "871aafeb7500de3c1c76a855a40dcfcd1357d1b52e412802aa3c57f7d23bd623",
+      "outputSHA256": "8b63710b57bde4e09c97add7ae1bc4ab81efb74c6f9d046df646213ae6882adb"
+    },
+    {
+      "packet": "persistence",
+      "name": "native-cancellation-shared-ipc",
+      "patchSHA256": "05e2bb65ac2a83f89d89815f0fce54a0d9f767efa1c58dd371a1d75ecb6a2358",
+      "outputSHA256": "65afe26807ab78bbf8a9921aacd3cc9ff798fd69178b2b76d4771d215761bf3e"
+    }
+  ]
+}

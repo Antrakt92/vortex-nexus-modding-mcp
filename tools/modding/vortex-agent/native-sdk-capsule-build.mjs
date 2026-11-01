@@ -15,7 +15,7 @@ const BUILTINS = new Set(['node:fs','node:path','node:crypto','node:util','node:
 const ADAPTED_SOURCE_PINS = Object.freeze({
   'paths.cjs':'d641537a2d03728c0212461d2e2e1b6ca22403b4e6cbed08f2730dcd234057ba',
   'paths-core.cjs':'b9c0fb32786134996f4ac8af68f22d29bb82b4bd4ed99abbff93c0b25b3ba032',
-  'owned-zip-relay-client.mjs':'1a6f89eaa7a15e744e955182fd771de7cfecc7fe1f9b4f504956fb67498fc0e6',
+  'owned-zip-relay-client.mjs':'78c6e449ab80a24308e0b9aa46a843fa5548f6bb5350ca0ddee7763de4e45ad7',
   'owned-zip-worker-client.mjs':'0786be18d373f33d6dd236e55f9947be502e6d3b90b9a63618f3abf1d574f613',
 });
 function replaceOnce(text, before, after) {

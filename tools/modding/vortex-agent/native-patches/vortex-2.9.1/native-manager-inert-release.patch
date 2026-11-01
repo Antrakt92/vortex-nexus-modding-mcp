@@ -1,0 +1,106 @@
+--- a/src/renderer/src/extensions/mod_management/InstallManager.ts
++++ b/src/renderer/src/extensions/mod_management/InstallManager.ts
+@@ -76,7 +76,7 @@
+   dismissNotification,
+ } from "../../actions/notifications";
+ import { log } from "../../logging";
+-import { prepareNativeRendererTargetRelease, checkNativeRendererTargetRelease,
++import { prepareNativeRendererTargetInertRelease, checkNativeRendererTargetInertRelease, armNativeRendererTargetInertRelease, failNativeRendererTargetInertRelease, prepareNativeRendererTargetRelease, checkNativeRendererTargetRelease,
+   armNativeRendererTargetRelease, failNativeRendererTargetRelease } from "../../reducers";
+ import type { ICollectionModInstallInfo } from "../../types/collections/ICollectionInstallSession";
+ import type { ICheckbox, IDialogResult } from "../../types/IDialog";
+@@ -580,6 +580,9 @@
+   private mNativeRegistrationRelease: { owner: object; exclusionOwner: object; rootTicket?: object;
+     phase: "preparing" | "prepared" | "finalizing" | "released" | "held" } | undefined;
+   private mNativeRegistrationReleaseDepth = 0;
++  private mNativeInertRelease: { owner: object; exclusionOwner: object; rootTicket?: object;
++    phase: "preparing" | "prepared" | "finalizing" | "released" | "held" } | undefined;
++  private mNativeInertReleaseDepth = 0;
+ 
+   public getNativeInstallExclusion() {
+     return {
+@@ -631,8 +634,84 @@
+   }
+ 
+   /** Internal local finalization only; future coordinator must obtain main release ACK first. */
++  public prepareNativeInertRelease(exclusionOwner: object, rootOwner: object, flushOwner: object): object {
++    if (InstallManager.mNativeExclusiveOwner !== exclusionOwner || InstallManager.mNativeExclusiveManager !== this) throw new ProcessCanceled("Native release owner mismatch");
++    if (this.mNativeRegistrationRelease !== undefined) { this.failNativeRegistrationRelease(); throw new ProcessCanceled("Native release held"); }
++    if (this.mNativeInertRelease !== undefined || this.mNativeInertReleaseDepth !== 0) {
++      this.failNativeInertRelease(); throw new ProcessCanceled("Native release held");
++    }
++    const record = { owner: Object.freeze({}), exclusionOwner, rootTicket: undefined as object | undefined,
++      phase: "preparing" as "preparing" | "prepared" | "finalizing" | "released" | "held" };
++    this.mNativeInertRelease = record;
++    ++this.mNativeInertReleaseDepth;
++    try {
++      record.rootTicket = prepareNativeRendererTargetInertRelease(rootOwner, flushOwner);
++      this.checkNativeInstallExclusion(exclusionOwner);
++      if (InstallManager.mNativeLegacyCalls.size !== 0 || InstallManager.nativeLegacyStatePending()) throw new ProcessCanceled("Native release busy");
++      if (this.mNativeInertRelease !== record || this.nativeInertReleaseHeld() || InstallManager.mNativeExclusiveOwner !== exclusionOwner
++          || InstallManager.mNativeExclusiveManager !== this) throw new ProcessCanceled("Native release held");
++      record.phase = "prepared";
++    } catch (error) { this.failNativeInertRelease(); throw error; }
++    finally { --this.mNativeInertReleaseDepth; }
++    this.checkNativeInertRelease(record.owner);
++    return record.owner;
++  }
++  private nativeInertReleaseHeld(): boolean { return this.mNativeInertRelease?.phase === "held"; }
++  private failNativeInertRelease(): void {
++    const record = this.mNativeInertRelease;
++    if (record !== undefined) {
++      record.phase = "held";
++      if (record.rootTicket !== undefined) failNativeRendererTargetInertRelease(record.rootTicket);
++    }
++  }
++  public checkNativeInertRelease(ticket: object): void {
++    const record = this.mNativeInertRelease;
++    if (record === undefined || record.owner !== ticket) throw new ProcessCanceled("Native release owner mismatch");
++    if (this.mNativeInertReleaseDepth !== 0) { this.failNativeInertRelease(); throw new ProcessCanceled("Native release reentry"); }
++    ++this.mNativeInertReleaseDepth;
++    try {
++      if (record.phase !== "prepared" && record.phase !== "finalizing") throw new ProcessCanceled("Native release held");
++      this.checkNativeInstallExclusion(record.exclusionOwner);
++      if (InstallManager.mNativeLegacyCalls.size !== 0 || InstallManager.nativeLegacyStatePending() || record.rootTicket === undefined) throw new ProcessCanceled("Native release busy");
++      checkNativeRendererTargetInertRelease(record.rootTicket);
++      if (this.mNativeInertRelease !== record || this.nativeInertReleaseHeld()
++          || InstallManager.mNativeExclusiveOwner !== record.exclusionOwner || InstallManager.mNativeExclusiveManager !== this) throw new ProcessCanceled("Native release held");
++    } catch (error) { this.failNativeInertRelease(); throw error; }
++    finally { --this.mNativeInertReleaseDepth; }
++  }
++  public finalizeNativeInertRelease(ticket: object): void {
++    this.checkNativeInertRelease(ticket);
++    const record = this.mNativeInertRelease;
++    if (record === undefined || record.rootTicket === undefined || record.phase !== "prepared") throw new ProcessCanceled("Native release held");
++    try {
++      record.phase = "finalizing";
++      const root = armNativeRendererTargetInertRelease(record.rootTicket);
++      this.checkNativeInertRelease(ticket);
++      root.check();
++      if (this.nativeInertReleaseHeld() || InstallManager.mNativeExclusiveOwner !== record.exclusionOwner
++          || InstallManager.mNativeExclusiveManager !== this || InstallManager.mNativeLegacyCalls.size !== 0) throw new ProcessCanceled("Native release held");
++      // These exact private data slots are assigned on the callback-free unwind.
++      // Refuse non-writable/accessor/drifted slots before any nested gate opens.
++      const writable = (object: object, key: string, value: unknown) => {
++        const descriptor = Object.getOwnPropertyDescriptor(object, key);
++        return descriptor !== undefined && "value" in descriptor && descriptor.writable === true && descriptor.value === value;
++      };
++      if (!writable(InstallManager, "mNativeExclusiveOwner", record.exclusionOwner)
++          || !writable(InstallManager, "mNativeExclusiveManager", this)
++          || !writable(this, "mNativeInertRelease", record)
++          || !writable(record, "phase", "finalizing")) throw new ProcessCanceled("Native release fields held");
++      // Source-created finalizers have no user/native callbacks after this point.
++      root.finish();
++      record.phase = "released";
++      InstallManager.mNativeExclusiveOwner = undefined; InstallManager.mNativeExclusiveManager = undefined;
++      this.mNativeInertRelease = undefined;
++    } catch (error) { this.failNativeInertRelease(); throw error; }
++  }
++
++  /** Internal local finalization only; future coordinator must obtain main release ACK first. */
+   public prepareNativeRegistrationRelease(exclusionOwner: object, rootOwner: object, flushOwner: object): object {
+     if (InstallManager.mNativeExclusiveOwner !== exclusionOwner || InstallManager.mNativeExclusiveManager !== this) throw new ProcessCanceled("Native release owner mismatch");
++    if (this.mNativeInertRelease !== undefined) { this.failNativeInertRelease(); throw new ProcessCanceled("Native release held"); }
+     if (this.mNativeRegistrationRelease !== undefined || this.mNativeRegistrationReleaseDepth !== 0) {
+       this.failNativeRegistrationRelease(); throw new ProcessCanceled("Native release held");
+     }

@@ -1,0 +1,354 @@
+--- a/src/main/src/store/persistenceIPC.ts
++++ b/src/main/src/store/persistenceIPC.ts
+@@ -13,13 +13,13 @@
+  * 3. Main process applies operations to LevelDB via ReduxPersistorIPC
+  */
+ 
+-import type { DiffOperation, NativeMainReadinessObservation, NativeExecutorChallenge, NativeExecutorPreparation, NativeExecutorExecutionChallenge, NativeExecutorExecutionResponse, NativeExecutorExecutionResult, NativeExecutorSuccessor } from "@vortex/shared/ipc";
++import type { DiffOperation, NativeMainReadinessObservation, NativeExecutorChallenge, NativeExecutorPreparation, NativeExecutorExecutionChallenge, NativeExecutorExecutionResponse, NativeExecutorExecutionResult, NativeExecutorSuccessor, NativeExecutorCancellationChallenge, NativeExecutorCancellationResult, NativeExecutorCancellationSuccessor } from "@vortex/shared/ipc";
+ import type { PersistedHive, PersistedState } from "@vortex/shared/state";
+ import { ipcMain, type WebContents } from "electron";
+ 
+ import { betterIpcMain } from "../ipc";
+ import { log } from "../logging";
+-import { registerAllPersistedHives, getMainPersistor, waitForNativeMainPersistenceReady, checkNativeMainPersistenceReady, preflightNativeExecutorTransport, getNativeExecutorTransportBinding, checkNativeExecutorTransport, holdNativeExecutorTransport, reserveNativeExecutorTransport, prepareNativeExecutorTransportPending, copyNativeExecutorTransport, registerNativeExecutorTransportCopied, closeNativeExecutorTransportWorker, sealNativeExecutorTransportTerminal, releaseNativeExecutorTransport, getNativeExecutorTransportMainRelease, prepareNativeExecutorSuccessor } from "./mainPersistence";
++import { registerAllPersistedHives, getMainPersistor, waitForNativeMainPersistenceReady, checkNativeMainPersistenceReady, preflightNativeExecutorTransport, getNativeExecutorTransportBinding, checkNativeExecutorTransport, holdNativeExecutorTransport, reserveNativeExecutorTransport, prepareNativeExecutorTransportPending, copyNativeExecutorTransport, registerNativeExecutorTransportCopied, closeNativeExecutorTransportWorker, sealNativeExecutorTransportTerminal, releaseNativeExecutorTransport, getNativeExecutorTransportMainRelease, prepareNativeExecutorSuccessor, cancelNativeExecutorTransportPrepared, sealNativeExecutorTransportCancellation, releaseNativeExecutorTransportCancellation, getNativeExecutorTransportCancellationRelease, prepareNativeExecutorCancellationSuccessor } from "./mainPersistence";
+ import type ReduxPersistorIPC from "./ReduxPersistorIPC";
+ 
+ let acknowledgementOwner: WebContents | undefined;
+@@ -117,7 +117,7 @@
+ type NativeTransportBinding = {operationId:string;nativeJobId:string;requestSHA256:string;requestBytesSHA256:string;archiveBytesSHA256:string;gameId:string;modId:string;profileId:string;managerScope:string;rendererGeneration:string};
+ interface NativeTransportAttempt {
+   event:Electron.IpcMainInvokeEvent;phase:"checking"|"prepared"|"held"; checking:boolean; deadline:number; transportId:string;
+-  frameOwner?:object; ticket?:object; owner?:WebContents; frame?:Electron.WebFrameMain; binding?:NativeTransportBinding;
++  frameOwner?:object; ticket?:object; owner?:WebContents; frame?:Electron.WebFrameMain; binding?:NativeTransportBinding; preparedAnchor?:Readonly<{rootId:string;inventorySHA256:string}>;
+   contacted:boolean;holdSent:boolean;frameHeld?:boolean;ticketHeld?:boolean;invalidate:()=>void;invalidated:Promise<void>;
+   challenge?:{value:NativeExecutorChallenge;resolve:()=>void;reject:(error:Error)=>void};
+ }
+@@ -154,6 +154,7 @@
+   return Object.freeze({schema:"native-executor-challenge/1",transportId:a.transportId,challengeId:nativeTransportNonce("challenge"),round,stage,...b});
+ }
+ function nativeTransportHold(a:NativeTransportAttempt):void {
++  if(nativeCancellationAttempt?.transport===a&&nativeCancellationAttempt.authenticated){nativeCancellationHold(nativeCancellationAttempt);return;}
+   if(nativeExecutionAttempt?.transport===a){nativeExecutionHold(nativeExecutionAttempt);return;}
+   a.phase="held";
+   if(a.frameOwner!==undefined&&!a.frameHeld)try{a.frameHeld=true;holdNativeExecutorFrame(a.frameOwner);}catch{/* Retain original failure. */}
+@@ -178,6 +179,7 @@
+   const value=await Promise.race([work,a.invalidated.then(()=>{throw nativeTransportError();})]);nativeTransportCheck(a);return value;
+ }
+ function nativeTransportRespond(event:Electron.IpcMainEvent,...args:unknown[]):void {
++  if(nativeSuccessorRetiredMessage(args))return;
+   const a=nativeTransportAttempt,pending=a?.challenge;if(a===undefined||a.phase!=="checking"||pending===undefined)return;
+   try{
+     // Exact object/frame pointers; generic callback helper's sender.id is insufficient.
+@@ -239,6 +241,7 @@
+       ||typeof result.rootId!=="string"||!/^[0-9]+:[0-9]+$/.test(result.rootId)||result.rootId.length>100
+       ||typeof result.inventorySHA256!=="string"||!/^[a-f0-9]{64}$/.test(result.inventorySHA256)
+       ||result.effectsAllowed!==false||result.installationPermit!==false||result.nativeAdmission!==false||result.powerLossPersistenceVerified!==false)throw nativeTransportError();
++    a.preparedAnchor=Object.freeze({rootId:result.rootId as string,inventorySHA256:result.inventorySHA256 as string});
+     await nativeTransportAwait(a,nativeTransportRound(a,3));nativeTransportCheck(a);
+     const observation:NativeExecutorPreparation=Object.freeze({schema:"native-executor-transport-preparation/1",transportId:a.transportId,
+       operationId:b.operationId,nativeJobId:b.nativeJobId,requestSHA256:b.requestSHA256,requestBytesSHA256:b.requestBytesSHA256,archiveBytesSHA256:b.archiveBytesSHA256,
+@@ -327,6 +330,7 @@
+   return Object.freeze(d);
+ }
+ function nativeExecutionRespond(event:Electron.IpcMainEvent,...args:unknown[]):void {
++  if(nativeSuccessorRetiredMessage(args))return;
+   const a=nativeExecutionAttempt,pending=a?.challenge;if(a===undefined||a.phase!=="running"||!nativeExecutionAuthentic(event,a.transport))return;
+   try{
+     if(args.length!==1)throw nativeTransportError();
+@@ -344,6 +348,7 @@
+   }catch(primary){nativeExecutionHold(a,primary,true);}
+ }
+ function nativeExecutionInvalidate(event:Electron.IpcMainEvent,...args:unknown[]):void {
++  if(nativeSuccessorRetiredMessage(args))return;
+   const a=nativeExecutionAttempt;if(a===undefined||a.phase!=="running"||!nativeExecutionAuthentic(event,a.transport))return;
+   try{
+     if(args.length!==1)throw nativeTransportError();
+@@ -371,6 +376,8 @@
+ async function nativeExecutionInvoke(event:Electron.IpcMainInvokeEvent,...args:unknown[]):Promise<NativeExecutorExecutionResult>{
+   if(args.length===1&&typeof args[0]==="string"&&nativeSuccessorRetiredTransport(args[0]))throw nativeTransportError();
+   nativeSuccessorReentry(event);
++  const cancelling=nativeCancellationAttempt;
++  if(cancelling!==undefined){if(cancelling.phase!=='completed'&&nativeCancellationSameEvent(event,cancelling))nativeCancellationHold(cancelling);throw nativeTransportError();}
+   const previous=nativeExecutionAttempt;
+   if(previous!==undefined){if(previous.phase!=="completed"&&(event===previous.event||nativeExecutionAuthentic(event,previous.transport)))nativeExecutionHold(previous);throw nativeTransportError();}
+   const t=nativeTransportAttempt;
+@@ -414,6 +421,7 @@
+     nativeExecutorFrameInvalidation?.();
+     nativeTransportInvalidation?.();
+     nativeExecutionInvalidation?.();
++    nativeCancellationInvalidation?.();
+     nativeReadInvalidation?.();
+   };
+   try {
+@@ -452,7 +460,8 @@
+  * @param persistor - The ReduxPersistorIPC instance to use for persistence
+  */
+ interface NativeSuccessorHistory {
+-  readonly ack: Readonly<NativeExecutorSuccessor>;
++  readonly kind:"installed"|"cancelled";
++  readonly ack: Readonly<NativeExecutorSuccessor|NativeExecutorCancellationSuccessor>;
+   readonly owner: WebContents; readonly frame: Electron.WebFrameMain;
+   readonly persistor: ReduxPersistorIPC; readonly epoch: number;
+   readonly identity: Readonly<NativeExecutorFrameIdentity>;
+@@ -477,6 +486,12 @@
+     const row=Reflect.apply(nativeSuccessorMapGet,nativeSuccessorPreparePairs,[key]) as NativeSuccessorHistory|undefined;
+     return row?.phase==="retired";
+   } catch { return false; } // Existing current-attempt validation/duplicate policy still applies.
++}
++// Retired input must be filtered before native event getters/current guards.
++function nativeSuccessorRetiredMessage(args:unknown[]):boolean {
++  if(args.length!==1)return false;const value=args[0];
++  if(value===null||typeof value!=="object"||nativeTransportTypes.isProxy(value))return false;
++  try{const d=Object.getOwnPropertyDescriptor(value,"transportId");return d!==undefined&&Object.hasOwn(d,"value")&&typeof d.value==="string"&&nativeSuccessorRetiredTransport(d.value);}catch{return false;}
+ }
+ function nativeSuccessorAuthentic(event: Electron.IpcMainInvokeEvent, row: NativeSuccessorHistory): boolean {
+   try { return event.sender === row.owner && event.senderFrame === row.frame; } catch { return false; }
+@@ -525,7 +540,7 @@
+   const key = valid ? (args[0] as string) + ":" + (args[1] as string) : "";
+   const historical = valid ? Reflect.apply(nativeSuccessorMapGet,nativeSuccessorHistory,[key]) as NativeSuccessorHistory | undefined : undefined;
+   if (historical?.phase === "retired") {
+-    if (nativeSuccessorHistoricalReading || historical.ack.transportId !== args[0] || historical.ack.executionId !== args[1]) throw nativeTransportError();
++    if (nativeSuccessorHistoricalReading || historical.kind!=="installed" || historical.ack.schema!=="native-executor-successor/1" || historical.ack.transportId !== args[0] || historical.ack.executionId !== args[1]) throw nativeTransportError();
+     nativeSuccessorHistoricalReading = true;
+     try {
+       const first=nativeSuccessorSample(event,historical),second=nativeSuccessorSample(event,historical);
+@@ -536,7 +551,7 @@
+   nativeSuccessorReentry(event);
+   if (!valid || historical !== undefined) throw nativeTransportError();
+   const t=nativeTransportAttempt,a=nativeExecutionAttempt,f=nativeExecutorFrameRecord;
+-  if (t===undefined || a===undefined || f===undefined
++  if (t===undefined || a===undefined || f===undefined || nativeCancellationAttempt!==undefined
+       || a.transport!==t || a.phase!=="completed" || a.checking || a.challenge!==undefined
+       || t.phase!=="prepared" || t.checking || t.challenge!==undefined || a.result===undefined
+       || t.transportId!==args[0] || a.executionId!==args[1] || !a.mainReleased
+@@ -550,7 +565,7 @@
+       || result.installationPermit!==false || result.nativeAdmission!==false) throw nativeTransportError();
+   const ack:Readonly<NativeExecutorSuccessor>=Object.freeze({schema:"native-executor-successor/1",transportId:t.transportId,executionId:a.executionId,
+     operationId:b.operationId,nativeJobId:b.nativeJobId,requestSHA256:b.requestSHA256,ready:true,effectsAllowed:false,installationPermit:false,nativeAdmission:false});
+-  const row:NativeSuccessorHistory={ack,owner:f.owner,frame:f.frame,persistor:f.persistor,epoch:f.epoch,identity:Object.freeze({...f.identity}),
++  const row:NativeSuccessorHistory={kind:"installed",ack,owner:f.owner,frame:f.frame,persistor:f.persistor,epoch:f.epoch,identity:Object.freeze({...f.identity}),
+     requestBytesSHA256:b.requestBytesSHA256,archiveBytesSHA256:b.archiveBytesSHA256,phase:"preparing"};
+   // Allocate history and claim reentry before any Main/frame callback.
+   const active={row,token:f.token,event,authenticating:true};nativeSuccessorActive=active;
+@@ -583,7 +598,211 @@
+   }
+ }
+ 
++// Fixed no-START cancellation lane; no caller proof, method, owner or path enters Main.
++interface NativeCancellationAttempt {
++  transport:NativeTransportAttempt;event:Electron.IpcMainInvokeEvent;cancellationId:string;
++  phase:'running'|'held'|'completed';checking:boolean;deadline:number;
++  authenticating:boolean;authenticated:boolean;duplicateAuthenticating:boolean;
++  invalidated:Promise<void>;invalidate:()=>void;primarySet:boolean;primary?:unknown;
++  mainReleased:boolean;holdSent:boolean;frameHeld:boolean;ticketHeld:boolean;holdStarted:boolean;releaseSampled:boolean;
++  responses:Set<string>;challenge?:{value:NativeExecutorCancellationChallenge;resolve:(v:Record<string,unknown>)=>void;reject:(error:unknown)=>void};
++  closed?:Readonly<Record<string,unknown>>;transition?:Readonly<Record<string,unknown>>;release?:Readonly<Record<string,unknown>>;
++  result?:Readonly<NativeExecutorCancellationResult>;
++}
++let nativeCancellationAttempt:NativeCancellationAttempt|undefined;
++let nativeCancellationInvalidation:(()=>void)|undefined;
++let nativeCancellationListenersInstalled=false;
++const nativeCancellationStages=['prepare-inert-release','check-inert-after-close','check-inert-before-main-release','finalize-inert-release','hold'] as const;
++function nativeCancellationAuthentic(event:Electron.IpcMainEvent|Electron.IpcMainInvokeEvent,t:NativeTransportAttempt):boolean {
++  return !nativeTransportTypes.isProxy(event)&&nativeExecutionAuthentic(event,t);
++}
++// Before authentication (or during another event getter), avoid recursive getters.
++function nativeCancellationSameEvent(event:Electron.IpcMainEvent|Electron.IpcMainInvokeEvent,a:NativeCancellationAttempt):boolean {
++  if(event===a.event)return true;if(nativeTransportTypes.isProxy(event))return false;
++  if(a.authenticating||a.duplicateAuthenticating){
++    try{const sender=Object.getOwnPropertyDescriptor(event,'sender'),frame=Object.getOwnPropertyDescriptor(event,'senderFrame');
++      return sender!==undefined&&frame!==undefined&&'value'in sender&&'value'in frame&&a.transport.owner!==undefined&&a.transport.frame!==undefined
++        &&sender.value===a.transport.owner&&frame.value===a.transport.frame;
++    }catch{return false;}
++  }
++  a.duplicateAuthenticating=true;try{return nativeCancellationAuthentic(event,a.transport);}finally{a.duplicateAuthenticating=false;}
++}
++function nativeCancellationChallenge(a:NativeCancellationAttempt,sequence:NativeExecutorCancellationChallenge['sequence'],payloadJSON:string|null=null):NativeExecutorCancellationChallenge {
++  const b=a.transport.binding,stage=nativeCancellationStages[sequence-1];if(b===undefined||stage===undefined)throw nativeTransportError();
++  return Object.freeze({schema:'native-executor-cancellation-challenge/1',transportId:a.transport.transportId,cancellationId:a.cancellationId,
++    challengeId:nativeTransportNonce('challenge'),sequence,stage,payloadJSON,...b});
++}
++function nativeCancellationRelease(a:NativeCancellationAttempt,raw:unknown):Readonly<Record<string,unknown>> {
++  const d=nativeTransportData(raw,['schema','operationId','nativeJobId','requestSHA256','rootId','inventorySHA256','released','effectsAllowed','installationPermit','nativeAdmission']);
++  const b=a.transport.binding,c=a.transition;
++  if(b===undefined||c===undefined||d.schema!=='native-executor-cancellation-release/1'||d.operationId!==b.operationId||d.nativeJobId!==b.nativeJobId
++    ||d.requestSHA256!==b.requestSHA256||d.rootId!==c.rootId||d.inventorySHA256!==c.inventorySHA256||d.released!==true
++    ||d.effectsAllowed!==false||d.installationPermit!==false||d.nativeAdmission!==false)throw nativeTransportError();return Object.freeze(d);
++}
++function nativeCancellationHold(a:NativeCancellationAttempt,primary?:unknown,retain=false):void {
++  if(a.phase==='completed')return;
++  if(retain&&!a.primarySet){a.primarySet=true;a.primary=primary;}
++  a.phase='held';a.invalidate();
++  // A provisional foreign event must not hold an authenticated prepared operation.
++  // Genuine initial-event reentry poisons the provisional row; after successful
++  // authentication its outer catch applies the actual source holds exactly once.
++  if(a.authenticating||!a.authenticated||a.holdStarted)return;a.holdStarted=true;a.transport.phase='held';
++  if(!a.mainReleased&&!a.releaseSampled&&a.transition!==undefined&&a.transport.ticket!==undefined){
++    a.releaseSampled=true;try{const raw=getNativeExecutorTransportCancellationRelease(a.transport.ticket);
++      if(raw!==null){a.release=nativeCancellationRelease(a,raw);a.mainReleased=true;}}catch{/* Preserve the original failure, including null/undefined. */}
++  }
++  const pending=a.challenge;a.challenge=undefined;pending?.reject(a.primarySet?a.primary:nativeTransportError());
++  if(!a.frameHeld&&a.transport.frameOwner!==undefined){a.frameHeld=true;try{holdNativeExecutorFrame(a.transport.frameOwner);}catch{/* Original outcome remains. */}}
++  if(!a.mainReleased&&!a.ticketHeld&&a.transport.ticket!==undefined){a.ticketHeld=true;try{holdNativeExecutorTransport(a.transport.ticket);}catch{/* Never refund. */}}
++  if(!a.holdSent&&a.transport.owner!==undefined){a.holdSent=true;try{betterIpcMain.send(a.transport.owner,'persist:native-executor-cancellation-challenge',nativeCancellationChallenge(a,5));}catch{/* Unknown delivery remains held. */}}
++}
++function nativeCancellationCheck(a:NativeCancellationAttempt):void {
++  if(a.checking){nativeCancellationHold(a);throw nativeTransportError();}a.checking=true;
++  try{
++    const current=()=>nativeCancellationAttempt===a&&a.phase==='running'&&a.authenticated&&!a.authenticating
++      &&nativeTransportAttempt===a.transport&&nativeExecutionAttempt===undefined&&performance.now()<a.deadline;
++    if(!current()||a.transport.frameOwner===undefined||a.transport.ticket===undefined||a.transport.phase!=='prepared')throw nativeTransportError();
++    checkNativeExecutorFrame(a.transport.frameOwner);checkNativeExecutorTransport(a.transport.ticket);
++    if(!current())throw nativeTransportError();
++  }catch(primary){nativeCancellationHold(a,primary,true);throw primary;}finally{a.checking=false;}
++}
++async function nativeCancellationAwait<T>(a:NativeCancellationAttempt,work:Promise<T>):Promise<T> {
++  void work.catch(()=>{});const value=await Promise.race([work,a.invalidated.then(()=>{throw a.primarySet?a.primary:nativeTransportError();})]);
++  nativeCancellationCheck(a);return value;
++}
++function nativeCancellationObservation(a:NativeCancellationAttempt,c:NativeExecutorCancellationChallenge,raw:unknown):Record<string,unknown> {
++  const b=a.transport.binding,d=nativeTransportData(raw,['schema','transportId','cancellationId','operationId','nativeJobId','requestSHA256','state','targetAbsent','effectsAllowed','installationPermit','nativeAdmission']);
++  if(b===undefined||d.schema!=='native-executor-renderer-cancellation/1'||d.transportId!==a.transport.transportId||d.cancellationId!==a.cancellationId
++    ||d.operationId!==b.operationId||d.nativeJobId!==b.nativeJobId||d.requestSHA256!==b.requestSHA256||d.state!==(c.sequence===1?'prepared':c.sequence===4?'finalized':'checked')
++    ||d.targetAbsent!==true||d.effectsAllowed!==false||d.installationPermit!==false||d.nativeAdmission!==false)throw nativeTransportError();return Object.freeze(d);
++}
++function nativeCancellationRespond(event:Electron.IpcMainEvent,...args:unknown[]):void {
++  if(nativeSuccessorRetiredMessage(args))return;
++  const a=nativeCancellationAttempt,pending=a?.challenge;if(a===undefined||a.phase!=='running'||!a.authenticated||!nativeCancellationAuthentic(event,a.transport))return;
++  try{
++    if(args.length!==1)throw nativeTransportError();
++    const d=nativeTransportData(args[0],['schema','transportId','cancellationId','challengeId','sequence','stage','requestSHA256','requestBytesSHA256','archiveBytesSHA256','state','observation','errorCode']);
++    if(d.transportId!==a.transport.transportId||d.cancellationId!==a.cancellationId)return;
++    if(typeof d.challengeId==='string'&&a.responses.has(d.challengeId))throw nativeTransportError();if(pending===undefined)return;const c=pending.value;
++    if(d.challengeId!==c.challengeId)return;
++    for(const key of ['sequence','stage','requestSHA256','requestBytesSHA256','archiveBytesSHA256'] as const)if(d[key]!==c[key])throw nativeTransportError();
++    if(d.schema!=='native-executor-cancellation-response/1'||d.errorCode!==null||d.state!==(c.sequence===1?'prepared':c.sequence===4?'finalized':'checked'))throw nativeTransportError();
++    nativeCancellationCheck(a);const observation=nativeCancellationObservation(a,c,d.observation);nativeCancellationCheck(a);
++    if(a.challenge!==pending)throw nativeTransportError();a.responses.add(c.challengeId);a.challenge=undefined;pending.resolve(observation);
++  }catch(primary){nativeCancellationHold(a,primary,true);}
++}
++function nativeCancellationInvalidate(event:Electron.IpcMainEvent,...args:unknown[]):void {
++  if(nativeSuccessorRetiredMessage(args))return;
++  const a=nativeCancellationAttempt;if(a===undefined||a.phase!=='running'||!a.authenticated||!nativeCancellationAuthentic(event,a.transport))return;
++  try{
++    if(args.length!==1)throw nativeTransportError();const b=a.transport.binding;
++    const d=nativeTransportData(args[0],['schema','transportId','cancellationId','operationId','nativeJobId','requestSHA256','requestBytesSHA256','archiveBytesSHA256','reasonCode']);
++    if(b===undefined||d.transportId!==a.transport.transportId||d.cancellationId!==a.cancellationId)return;
++    if(d.schema!=='native-executor-cancellation-invalidated/1'||d.reasonCode!=='NATIVE_EXECUTOR_RENDERER_FAILED')throw nativeTransportError();
++    for(const key of ['operationId','nativeJobId','requestSHA256','requestBytesSHA256','archiveBytesSHA256'] as const)if(d[key]!==b[key])throw nativeTransportError();
++    nativeCancellationHold(a,nativeTransportError(),true);
++  }catch(primary){nativeCancellationHold(a,primary,true);}
++}
++function nativeCancellationRound(a:NativeCancellationAttempt,sequence:1|2|3|4,payloadJSON:string|null=null):Promise<Record<string,unknown>> {
++  nativeCancellationCheck(a);if(a.challenge!==undefined||a.transport.owner===undefined)throw nativeTransportError();
++  if(payloadJSON!==null&&(sequence!==4||Buffer.byteLength(payloadJSON)>8192)||sequence===4&&payloadJSON===null)throw nativeTransportError();
++  const value=nativeCancellationChallenge(a,sequence,payloadJSON),work=new Promise<Record<string,unknown>>((resolve,reject)=>{a.challenge={value,resolve,reject};});void work.catch(()=>{});
++  try{betterIpcMain.send(a.transport.owner,'persist:native-executor-cancellation-challenge',value);nativeCancellationCheck(a);}catch(primary){nativeCancellationHold(a,primary,true);}
++  return nativeCancellationAwait(a,work);
++}
++function nativeCancellationClosed(a:NativeCancellationAttempt,raw:unknown):Readonly<Record<string,unknown>> {
++  const d=nativeTransportData(raw,['schema','operationId','nativeJobId','requestSHA256','packetSHA256','workerLifetime','inertCancelObservationSHA256','effectsAllowed','installationPermit','nativeAdmission']),b=a.transport.binding;
++  if(b===undefined||d.schema!=='native-executor-inert-cancel-closed/1'||d.operationId!==b.operationId||d.nativeJobId!==b.nativeJobId||d.requestSHA256!==b.requestSHA256
++    ||typeof d.packetSHA256!=='string'||!/^[a-f0-9]{64}$/.test(d.packetSHA256)||typeof d.inertCancelObservationSHA256!=='string'||!/^[a-f0-9]{64}$/.test(d.inertCancelObservationSHA256)
++    ||typeof d.workerLifetime!=='string'||!/^worker_[a-f0-9]{32}$/.test(d.workerLifetime)||d.effectsAllowed!==false||d.installationPermit!==false||d.nativeAdmission!==false)throw nativeTransportError();
++  return Object.freeze(d);
++}
++function nativeCancellationTransition(a:NativeCancellationAttempt,raw:unknown):Readonly<Record<string,unknown>> {
++  const d=nativeTransportData(raw,['schema','rootId','previousInventorySHA256','inventorySHA256','operationId','nativeJobId','requestSHA256','packetSHA256','workerLifetime','evidenceSHA256']),b=a.transport.binding,closed=a.closed,B=a.transport.preparedAnchor;
++  if(b===undefined||closed===undefined||B===undefined||d.schema!=='native-executor-terminal-transition/1'||d.rootId!==B.rootId||d.previousInventorySHA256!==B.inventorySHA256
++    ||typeof d.inventorySHA256!=='string'||!/^[a-f0-9]{64}$/.test(d.inventorySHA256)||d.inventorySHA256===B.inventorySHA256||typeof d.evidenceSHA256!=='string'||!/^[a-f0-9]{64}$/.test(d.evidenceSHA256)
++    ||d.operationId!==b.operationId||d.nativeJobId!==b.nativeJobId||d.requestSHA256!==b.requestSHA256||d.packetSHA256!==closed.packetSHA256||d.workerLifetime!==closed.workerLifetime)throw nativeTransportError();return Object.freeze(d);
++}
++async function nativeCancellationInvoke(event:Electron.IpcMainInvokeEvent,...args:unknown[]):Promise<NativeExecutorCancellationResult> {
++  if(args.length===1&&typeof args[0]==='string'&&nativeSuccessorRetiredTransport(args[0]))throw nativeTransportError();nativeSuccessorReentry(event);
++  const previous=nativeCancellationAttempt;
++  if(previous!==undefined){if(previous.phase!=='completed'&&nativeCancellationSameEvent(event,previous))nativeCancellationHold(previous);throw nativeTransportError();}
++  const executing=nativeExecutionAttempt;
++  if(executing!==undefined){if(executing.phase!=='completed'&&(event===executing.event||nativeExecutionAuthentic(event,executing.transport)))nativeExecutionHold(executing);throw nativeTransportError();}
++  const t=nativeTransportAttempt;if(t===undefined)throw nativeTransportError();let invalidate!:()=>void;
++  // Provisional claim is before random/native metadata callbacks, auth and await.
++  const a:NativeCancellationAttempt={transport:t,event,cancellationId:'',phase:'running',checking:false,deadline:performance.now()+120000,
++    authenticating:true,authenticated:false,duplicateAuthenticating:false,invalidated:new Promise<void>(resolve=>{invalidate=resolve;}),invalidate:()=>invalidate(),
++    primarySet:false,mainReleased:false,holdSent:false,frameHeld:false,ticketHeld:false,holdStarted:false,releaseSampled:false,responses:new Set()};
++  nativeCancellationAttempt=a;let timer:ReturnType<typeof setTimeout>|undefined;
++  try{
++    const authentic=nativeCancellationAuthentic(event,t);a.authenticating=false;
++    if(!authentic){if(nativeCancellationAttempt===a)nativeCancellationAttempt=undefined;throw nativeTransportError();}a.authenticated=true;
++    nativeCancellationInvalidation=()=>nativeCancellationHold(a);a.cancellationId=nativeTransportNonce('cancellation');
++    if(args.length!==1||args[0]!==t.transportId||t.phase!=='prepared'||t.ticket===undefined||t.binding===undefined||t.preparedAnchor===undefined)throw nativeTransportError();
++    nativeCancellationCheck(a);timer=setTimeout(()=>nativeCancellationHold(a,nativeTransportError(),true),Math.max(0,a.deadline-performance.now()));
++    await nativeCancellationRound(a,1);
++    a.closed=nativeCancellationClosed(a,await nativeCancellationAwait(a,Promise.resolve(cancelNativeExecutorTransportPrepared(t.ticket))));nativeCancellationCheck(a);
++    await nativeCancellationRound(a,2);
++    a.transition=nativeCancellationTransition(a,await nativeCancellationAwait(a,Promise.resolve(sealNativeExecutorTransportCancellation(t.ticket))));nativeCancellationCheck(a);
++    await nativeCancellationRound(a,3);nativeCancellationCheck(a);
++    const raw=releaseNativeExecutorTransportCancellation(t.ticket);a.release=nativeCancellationRelease(a,raw);a.mainReleased=true;nativeCancellationCheck(a);
++    await nativeCancellationRound(a,4,JSON.stringify(a.release));nativeCancellationCheck(a);
++    const b=t.binding,c=a.transition;
++    const result:Readonly<NativeExecutorCancellationResult>=Object.freeze({schema:'native-executor-cancellation-result/1',transportId:t.transportId,cancellationId:a.cancellationId,
++      operationId:b.operationId,nativeJobId:b.nativeJobId,requestSHA256:b.requestSHA256,requestBytesSHA256:b.requestBytesSHA256,archiveBytesSHA256:b.archiveBytesSHA256,
++      rootId:c.rootId as string,inventorySHA256:c.inventorySHA256 as string,outcome:'prepared_no_start_cancelled_worker_closed',mainReleased:true,rendererReleased:true,
++      effectsAllowed:false,installationPermit:false,nativeAdmission:false,powerLossPersistenceVerified:false});a.result=result;a.phase='completed';return result;
++  }catch(primary){a.authenticating=false;if(a.authenticated)nativeCancellationHold(a,primary,true);else if(nativeCancellationAttempt===a)nativeCancellationAttempt=undefined;
++    throw a.primarySet?a.primary:primary;}finally{if(timer!==undefined)clearTimeout(timer);}
++}
++
++function nativeCancellationSuccessorInvoke(event:Electron.IpcMainInvokeEvent,...args:unknown[]):NativeExecutorCancellationSuccessor {
++  const valid=args.length===2&&typeof args[0]==='string'&&typeof args[1]==='string'&&args[0].length<=256&&args[1].length<=256;
++  const key=valid?(args[0] as string)+':'+(args[1] as string):'';
++  const historical=valid?Reflect.apply(nativeSuccessorMapGet,nativeSuccessorHistory,[key]) as NativeSuccessorHistory|undefined:undefined;
++  // History lookup precedes current provisional guards for BOTH outcome kinds.
++  if(historical?.phase==='retired'){
++    if(nativeSuccessorHistoricalReading||historical.kind!=='cancelled'||historical.ack.schema!=='native-executor-cancellation-successor/1'
++      ||historical.ack.transportId!==args[0]||historical.ack.cancellationId!==args[1])throw nativeTransportError();
++    nativeSuccessorHistoricalReading=true;try{const first=nativeSuccessorSample(event,historical),second=nativeSuccessorSample(event,historical);
++      if(!nativeExecutorFrameSame(first,second)||historical.phase!=='retired')throw nativeTransportError();return historical.ack;
++    }finally{nativeSuccessorHistoricalReading=false;}
++  }
++  nativeSuccessorReentry(event);if(!valid||historical!==undefined)throw nativeTransportError();
++  const t=nativeTransportAttempt,a=nativeCancellationAttempt,f=nativeExecutorFrameRecord;
++  if(t===undefined||a===undefined||f===undefined||nativeExecutionAttempt!==undefined||a.transport!==t||a.phase!=='completed'||a.checking||a.challenge!==undefined||a.result===undefined
++    ||t.phase!=='prepared'||t.checking||t.challenge!==undefined||t.transportId!==args[0]||a.cancellationId!==args[1]||!a.mainReleased
++    ||t.ticket===undefined||t.frameOwner!==f.token||f.phase!=='reserved'||f.checking||f.owner===undefined||f.frame===undefined||f.persistor===undefined||f.identity===undefined
++    ||t.binding===undefined||nativeSuccessorHistory.size>=4096)throw nativeTransportError();
++  const result=a.result,b=t.binding;
++  if(result.transportId!==t.transportId||result.cancellationId!==a.cancellationId||result.operationId!==b.operationId||result.nativeJobId!==b.nativeJobId||result.requestSHA256!==b.requestSHA256
++    ||result.outcome!=='prepared_no_start_cancelled_worker_closed'||result.mainReleased!==true||result.rendererReleased!==true||result.effectsAllowed!==false||result.installationPermit!==false||result.nativeAdmission!==false)throw nativeTransportError();
++  const ack:Readonly<NativeExecutorCancellationSuccessor>=Object.freeze({schema:'native-executor-cancellation-successor/1',transportId:t.transportId,cancellationId:a.cancellationId,
++    operationId:b.operationId,nativeJobId:b.nativeJobId,requestSHA256:b.requestSHA256,ready:true,effectsAllowed:false,installationPermit:false,nativeAdmission:false});
++  const row:NativeSuccessorHistory={kind:'cancelled',ack,owner:f.owner,frame:f.frame,persistor:f.persistor,epoch:f.epoch,identity:Object.freeze({...f.identity}),
++    requestBytesSHA256:b.requestBytesSHA256,archiveBytesSHA256:b.archiveBytesSHA256,phase:'preparing'};
++  const active={row,token:f.token,event,authenticating:true};nativeSuccessorActive=active;let authentic=false;
++  try{
++    authentic=nativeSuccessorAuthentic(event,row);active.authenticating=false;
++    if(!authentic){nativeSuccessorActive=undefined;throw nativeTransportError();}if(row.phase!=='preparing')throw nativeTransportError();
++    Reflect.apply(nativeSuccessorMapSet,nativeSuccessorHistory,[key,row]);Reflect.apply(nativeSuccessorMapSet,nativeSuccessorTransports,[t.transportId,row]);
++    Reflect.apply(nativeSuccessorMapSet,nativeSuccessorPreparePairs,[row.requestBytesSHA256+':'+row.archiveBytesSHA256,row]);
++    nativeSuccessorSample(event,row);checkNativeExecutorFrame(f.token);const finalize=prepareNativeExecutorCancellationSuccessor(t.ticket);
++    nativeSuccessorSample(event,row);checkNativeExecutorFrame(f.token);
++    if(nativeSuccessorActive!==active||row.phase!=='preparing'||nativeTransportAttempt!==t||nativeCancellationAttempt!==a||nativeExecutorFrameRecord!==f
++      ||a.phase!=='completed'||a.result!==result||t.binding!==b||f.phase!=='reserved')throw nativeTransportError();
++    finalize();
++    // Callback-free retirement tail; all allocation and all Main/frame checks are finished.
++    row.phase='retired';nativeTransportAttempt=undefined;nativeCancellationAttempt=undefined;nativeExecutorFrameRecord=undefined;
++    nativeTransportInvalidation=undefined;nativeCancellationInvalidation=undefined;nativeExecutorFrameInvalidation=undefined;nativeSuccessorActive=undefined;return ack;
++  }catch(primary){row.phase='held';if(authentic)try{holdNativeExecutorFrame(f.token);}catch{/* Preserve first failure. */}nativeSuccessorActive=undefined;throw primary;}
++}
++
+ export function setupPersistenceIPC(persistor: ReduxPersistorIPC): void {
++  betterIpcMain.handle("persist:native-executor-cancel",nativeCancellationInvoke);
++  betterIpcMain.handle("persist:native-executor-cancellation-successor",nativeCancellationSuccessorInvoke);
++  if(!nativeCancellationListenersInstalled){nativeCancellationListenersInstalled=true;ipcMain.on("persist:native-executor-cancellation-response",nativeCancellationRespond);ipcMain.on("persist:native-executor-cancellation-invalidated",nativeCancellationInvalidate);}
+   betterIpcMain.handle("persist:native-executor-successor",nativeSuccessorInvoke);
+   if(!nativeExecutionListenersInstalled){nativeExecutionListenersInstalled=true;ipcMain.on("persist:native-executor-execution-response",nativeExecutionRespond);ipcMain.on("persist:native-executor-execution-invalidated",nativeExecutionInvalidate);}
+   betterIpcMain.handle("persist:native-executor-execute",nativeExecutionInvoke);
+@@ -595,6 +814,7 @@
+     nativeExecutorFrameInvalidation?.();
+     nativeTransportInvalidation?.();
+     nativeExecutionInvalidation?.();
++    nativeCancellationInvalidation?.();
+   }
+   // One retained main readiness observation, one bounded active reader. Timeout
+   // abandons only this read; the actual main initialization is never cancelled.

@@ -1,0 +1,28 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/renderer/src/reducers/index.ts",
+  "originalSourceSHA256": "e59a69384003bade4d1216ee28a8347b38d27291f9b3688c82dc488c168a4e22",
+  "inputSHA256": "36290d8a0a158bfd87f2024461bcf6a711913841f5f94048f9b20e139a8fca69",
+  "outputSHA256": "987a9529c672b683ec01c3e8fae9440a58c8a646943b67531a0d2bfc9e4cd3d7",
+  "patchSHA256": "d3812f3a454f3b028683ca6c844a6dbf07130f8b55816f147852ca617a836d49",
+  "prerequisitePatch": "renderer-registration-release.patch",
+  "prerequisitePatchSHA256": "9627e58347f3c88c016fb1165163478899901a0cf17e5e5115f8da27cc47131b",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "effectsAllowed": false,
+  "installationPermit": false,
+  "nativeAdmission": false,
+  "powerLossPersistenceVerified": false,
+  "additionalCompanions": [
+    {
+      "packet": "persistence",
+      "name": "native-renderer-inert-flush-release",
+      "patchSHA256": "4a978aae276e0f5e31d6473fe955fb176ed493498561a0d0699dbc1abed9ada5",
+      "outputSHA256": "7316a95aa075c758b52218c65998d576b217d57ab391aecd73e7466f55234bb9"
+    }
+  ]
+}

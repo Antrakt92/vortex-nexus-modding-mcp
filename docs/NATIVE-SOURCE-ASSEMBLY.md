@@ -1,6 +1,6 @@
 # Assemble the reviewed Vortex source patches
 
-`native-source-series.mjs` applies the fixed sequence of 111 reviewed patches to
+`native-source-series.mjs` applies the fixed sequence of 122 reviewed patches to
 25 original files from Vortex `v2.9.1`, commit
 `c80326367cbe6d96621ad6cf4a5488ef49bac110`. It replaces manually composing separate
 patch chains before compilation. It does not change an installed application or
@@ -34,8 +34,8 @@ final source hashes, patch/manifest hashes and cross-file prerequisites must
 match the pinned series. Patch application requires exact offsets and context;
 it has no fuzzy matching or hash-refresh mode.
 
-The fixed graph combines the 33-patch mod-management/transfer packet with the
-78-patch persistence packet. The latter includes renderer target admission and
+The fixed graph combines the 34-patch mod-management/transfer packet with the
+88-patch persistence packet. The latter includes renderer target admission and
 acknowledged diffs, main/preload/shared IPC, backend reservations and managed SQL
 ownership, the main build's runtime binding and startup history classification.
 Both runtime packet directories have separate closed inventories;
@@ -772,3 +772,32 @@ The final affected-source matrix passed 524 tests without skips. Those source
 tests include explicit SQL/process/Electron facades; they do not establish
 installed-host loading or a physical complete installation. Public MCP native
 installation remains disabled.
+
+## Prepared cancellation (122 patches)
+
+The current graph adds cancellation before extraction and a separate handoff
+after known cancellation. It retains the same 25 original sources, with 34
+lifecycle and 88 persistence patches. The packet inventories are 68 and 176
+files. The 96 KiB manifest cap and all source/dependency checks are unchanged;
+omitted optional null fields normalize to their previous meaning.
+
+The [cancellation contract](NATIVE-EXECUTOR-CANCELLATION.md) describes worker
+closure, terminal v3, anchor readback and unregistered Main/Renderer release.
+Exact assembly and the combined source tests passed. This generation also
+passed fresh Shared/Main/Preload/Renderer typechecks and builds, 52 upstream Main
+tests without skips, and inspection of all 25 selected Program sources and 23
+runtime-map entries. All six runtime outputs were rebuilt. The eight configs and
+lockfile were unchanged; Electron stayed cold. A new fifteen-source SDK clone
+and capsule contain the changed journal and relay; the earlier clone is preserved.
+
+Qualification receipt:
+`local-state/native-inert-cancel/root/qualification122/QUALIFICATION.json`,
+SHA-256 `1bb5f176fe120fcc289701074f92a9992bf34f2bb0631bf99353a03af823b18c`.
+Installed-host acceptance and the public MCP installation command remain
+separate checks. This qualification does not prove a physical complete install
+or cancellation in an installed host.
+
+The affected-source matrix passed 603 tests without skips. Five separate SDK
+fixture cases also passed, including real Node/Python ZIP copy and prepared
+cancellation with joined process/pipe closure. Those physical cases use their
+own synthetic workspaces; they do not prove the full application flow in Vortex.

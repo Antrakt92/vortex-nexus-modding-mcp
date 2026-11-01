@@ -51,8 +51,10 @@ or release. Historical replies still require the original frame, epoch and
 persistor. Late retired execution IDs and exact retired prepare-byte digests
 cannot consume the next operation.
 
-Unfinished, held, cancelled or uncertain operations are ineligible. Nothing clears
-their evidence to permit a retry. If Main released but Renderer refused, that
+Unfinished, held or uncertain operations are ineligible. A known cancellation
+before extraction follows its separate [handoff](NATIVE-EXECUTOR-CANCELLATION.md)
+and cannot satisfy the installed-success predicates above. Neither path clears
+unknown evidence to permit a retry. If Main released but Renderer refused, that
 split remains recorded and a successor is unavailable.
 
 ## Verification boundary
@@ -64,7 +66,7 @@ writes, lost acknowledgements and stale requests. SQL, Electron delivery and
 physical process observations are explicit test facades. The separate
 [physical capsule tests](NATIVE-SDK-CAPSULE.md) cover synthetic ZIP copy/closure.
 Neither establishes a complete installation inside an installed Vortex host.
-The current application build passed the separate
+The earlier installed-success source cohort passed the separate
 [111-patch qualification](NATIVE-SOURCE-ASSEMBLY.md#sequential-operations-111-patches).
 
 With the reviewed source/dependency and capsule compiler inputs configured:

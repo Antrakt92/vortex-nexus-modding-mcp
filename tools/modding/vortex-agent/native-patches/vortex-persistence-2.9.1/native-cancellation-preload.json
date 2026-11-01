@@ -1,0 +1,28 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/preload/src/index.ts",
+  "originalSourceSHA256": "9f49d7900fedc1aaeac771711644bc2e1fcd71f77640bb43c4959a52f2093e42",
+  "inputSHA256": "34786958d20f60d2518ae9ba0a5c1008c95f0e9d04ee5dc8b54f92453ee8b6ef",
+  "outputSHA256": "5b30d381bd254b9856be8286b56b32abf4c28a7d746b46636dd6b41ac2b45ab2",
+  "patchSHA256": "fc657875cd29c835aa30dfe84d163b2ac7e1c026e4f44ac4325b13abee07636a",
+  "prerequisitePatch": "native-executor-successor-preload.patch",
+  "prerequisitePatchSHA256": "696ed1e4b953013ac29fe35ff2202d753b551e2b4e999dc41c48fe789749a6fd",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "effectsAllowed": false,
+  "installationPermit": false,
+  "nativeAdmission": false,
+  "powerLossPersistenceVerified": false,
+  "additionalCompanions": [
+    {
+      "packet": "persistence",
+      "name": "native-cancellation-shared-preload",
+      "patchSHA256": "3a55708a5c76f2ef3131364cc7d1ae01b2d1c60d593190fde79aaac0f2d39db5",
+      "outputSHA256": "b593053a10b6f447b460bf68ed6d2bba291f536e4ca6ae0c593b6b8933a1b108"
+    }
+  ]
+}
