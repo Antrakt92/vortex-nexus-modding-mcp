@@ -1,0 +1,185 @@
+--- a/src/renderer/src/extensions/mod_management/InstallManager.ts
++++ b/src/renderer/src/extensions/mod_management/InstallManager.ts
+@@ -4,6 +4,7 @@
+ 
+ import { randomBytes } from "crypto";
+ import { types as utilTypes } from "util";
++import { performance as nativeActivationClock } from "perf_hooks";
+ import * as os from "os";
+ import * as path from "path";
+ 
+@@ -541,7 +542,165 @@
+  *
+  * @class InstallManager
+  */
++interface NativeGameActivation {
++  owner: object; store: IExtensionApi["store"]; gameId: string; profileId: string; generation: number;
++  phase: "awaiting" | "scheduled" | "ready" | "held"; checking: boolean;
++  getState?: PropertyDescriptor; subscribe?: PropertyDescriptor; unsubscribe?: () => void;
++  setupObserved: boolean; setupDone: boolean; refreshObserved: boolean; refreshDone: boolean;
++  completion: Promise<void>; settle: () => void; waiting?: Promise<object>; timer?: ReturnType<typeof setTimeout>;
++}
++
+ class InstallManager {
++  private static mNativeActivation: NativeGameActivation | undefined;
++  private static mNativeActivationGeneration = 0;
++  private static mNativeActivationChanging = false;
++  private static holdNativeGameActivationRecord(r: NativeGameActivation): void {
++    r.phase = "held"; if(r.timer!==undefined){clearTimeout(r.timer);r.timer=undefined;} r.settle();
++  }
++  private static nativeActivationOwn(value: unknown, key: string): unknown {
++    if (value === null || typeof value !== "object" || utilTypes.isProxy(value)) throw new Error("NATIVE_GAME_ACTIVATION_HELD");
++    const d = Object.getOwnPropertyDescriptor(value, key);
++    if (d === undefined || !Object.hasOwn(d,"value")) throw new Error("NATIVE_GAME_ACTIVATION_HELD");
++    return d.value;
++  }
++  private static nativeActivationDescriptor(store: unknown, key: "getState" | "subscribe"): PropertyDescriptor {
++    if (store === null || typeof store !== "object" || utilTypes.isProxy(store)) throw new Error("NATIVE_GAME_ACTIVATION_HELD");
++    const d = Object.getOwnPropertyDescriptor(store,key);
++    if (d === undefined || !Object.hasOwn(d,"value") || typeof d.value !== "function" || utilTypes.isProxy(d.value)) throw new Error("NATIVE_GAME_ACTIVATION_HELD");
++    return d;
++  }
++  private static nativeActivationSame(a: PropertyDescriptor | undefined,b: PropertyDescriptor): boolean {
++    return a !== undefined && a.value === b.value && a.writable === b.writable && a.enumerable === b.enumerable && a.configurable === b.configurable;
++  }
++  private static checkNativeActivationRecord(r: NativeGameActivation): void {
++    if (InstallManager.mNativeActivation !== r || r.phase === "held" || r.checking) {
++      InstallManager.holdNativeGameActivationRecord(r); throw new Error("NATIVE_GAME_ACTIVATION_HELD");
++    }
++    r.checking = true;
++    try {
++      if (!InstallManager.nativeActivationSame(r.getState,InstallManager.nativeActivationDescriptor(r.store,"getState"))
++          || !InstallManager.nativeActivationSame(r.subscribe,InstallManager.nativeActivationDescriptor(r.store,"subscribe"))) throw new Error();
++      const getState=r.getState; if(getState===undefined)throw new Error();
++      const state: unknown = Reflect.apply(getState.value,r.store,[]);
++      const own = InstallManager.nativeActivationOwn;
++      const profileId = own(own(own(state,"settings"),"profiles"),"activeProfileId");
++      const profile = own(own(own(state,"persistent"),"profiles"),r.profileId);
++      if (profileId !== r.profileId || own(profile,"gameId") !== r.gameId
++          || !InstallManager.nativeActivationSame(r.getState,InstallManager.nativeActivationDescriptor(r.store,"getState"))
++          || !InstallManager.nativeActivationSame(r.subscribe,InstallManager.nativeActivationDescriptor(r.store,"subscribe"))
++          || InstallManager.mNativeActivation !== r || InstallManager.nativeActivationHeld(r)) throw new Error();
++    } catch { InstallManager.holdNativeGameActivationRecord(r); throw new Error("NATIVE_GAME_ACTIVATION_HELD"); }
++    finally { r.checking = false; }
++  }
++  private static nativeActivationHeld(r: NativeGameActivation): boolean { return r.phase === "held"; }
++  private static nativeActivationReady(r: NativeGameActivation): void {
++    InstallManager.checkNativeActivationRecord(r);
++    if(r.setupDone&&!r.refreshObserved){InstallManager.holdNativeGameActivationRecord(r);throw new Error("NATIVE_GAME_ACTIVATION_HELD");}
++    if (r.setupDone && r.refreshDone) { r.phase = "ready"; r.settle(); }
++  }
++  private static createNativeGameActivation(store: IExtensionApi["store"],phase: "awaiting" | "scheduled",expected?:readonly[string,string]): NativeGameActivation {
++    const previous=InstallManager.mNativeActivation;
++    if(InstallManager.mNativeActivationChanging||previous?.checking){
++      if(previous!==undefined)InstallManager.holdNativeGameActivationRecord(previous);
++      throw new Error("NATIVE_GAME_ACTIVATION_HELD");
++    }
++    InstallManager.mNativeActivationChanging=true;
++    let settle=()=>{};const completion=new Promise<void>(resolve=>{settle=resolve});
++    const r:NativeGameActivation={owner:Object.freeze({}),store,gameId:"",profileId:"",generation:++InstallManager.mNativeActivationGeneration,
++      phase,checking:false,setupObserved:false,setupDone:false,refreshObserved:false,refreshDone:false,completion,settle};
++    InstallManager.mNativeActivation=r;
++    try{
++      if(!Number.isSafeInteger(r.generation)||r.generation>4096)throw new Error();
++      if(previous!==undefined){InstallManager.holdNativeGameActivationRecord(previous);if(previous.unsubscribe!==undefined){const off=previous.unsubscribe;previous.unsubscribe=undefined;off();}}
++      r.getState=InstallManager.nativeActivationDescriptor(store,"getState");r.subscribe=InstallManager.nativeActivationDescriptor(store,"subscribe");
++      r.checking=true;
++      try{
++        const state:unknown=Reflect.apply(r.getState.value,store,[]),own=InstallManager.nativeActivationOwn;
++        const profileId=own(own(own(state,"settings"),"profiles"),"activeProfileId");
++        if(typeof profileId!=="string"||profileId.length===0)throw new Error();
++        const gameId=own(own(own(own(state,"persistent"),"profiles"),profileId),"gameId");
++        if(typeof gameId!=="string"||gameId.length===0||InstallManager.nativeActivationHeld(r))throw new Error();
++        r.profileId=profileId;r.gameId=gameId;
++        // Readiness binds opaque source IDs; final native admission retains its own exact supported-family validators.
++        if(expected!==undefined&&(expected[0]!==gameId||expected[1]!==profileId))throw new Error();
++      }finally{r.checking=false}
++      InstallManager.checkNativeActivationRecord(r);
++      const subscribe=r.subscribe;if(subscribe===undefined)throw new Error();
++      const off:unknown=Reflect.apply(subscribe.value,store,[()=>{try{InstallManager.checkNativeActivationRecord(r)}catch{/* sticky; completion already settled */}}]);
++      if(typeof off!=="function"||utilTypes.isProxy(off))throw new Error();r.unsubscribe=off as ()=>void;
++      InstallManager.checkNativeActivationRecord(r);
++    }catch{InstallManager.holdNativeGameActivationRecord(r)}finally{InstallManager.mNativeActivationChanging=false}
++    return r;
++  }
++  /** Matching genuine source begin binds an already waiting startup record; no event/selector success is inferred. */
++  public static beginNativeGameActivation(store:IExtensionApi["store"],gameId:string,profileId:string):object{
++    const previous=InstallManager.mNativeActivation;
++    if(InstallManager.mNativeActivationChanging||previous?.checking){if(previous!==undefined)InstallManager.holdNativeGameActivationRecord(previous);throw new Error("NATIVE_GAME_ACTIVATION_HELD")}
++    if(previous!==undefined&&previous.phase==="awaiting"&&previous.store===store){
++      if(previous.gameId!==gameId||previous.profileId!==profileId){InstallManager.holdNativeGameActivationRecord(previous)}
++      else{InstallManager.checkNativeActivationRecord(previous);previous.phase="scheduled";return previous.owner;}
++    }
++    return InstallManager.createNativeGameActivation(store,"scheduled",[gameId,profileId]).owner;
++  }
++  public static failNativeGameActivation(owner: object): void {
++    const r=InstallManager.mNativeActivation;
++    if(r===undefined||r.owner!==owner)throw new Error("NATIVE_GAME_ACTIVATION_REFUSED");
++    InstallManager.holdNativeGameActivationRecord(r);
++  }
++  public static observeNativeGameActivation(owner: object, work: PromiseLike<void>): void {
++    const r=InstallManager.mNativeActivation;
++    if(r===undefined||owner!==r.owner)throw new Error("NATIVE_GAME_ACTIVATION_REFUSED");
++    try {
++      InstallManager.checkNativeActivationRecord(r);
++      if(r.phase!=="scheduled"||r.setupObserved)throw new Error();r.setupObserved=true;
++      // Observe the exact pre-notification-catch setup/setGameMode Promise.
++      void Promise.resolve(work).then(()=>{try{InstallManager.checkNativeActivationRecord(r);r.setupDone=true;InstallManager.nativeActivationReady(r)}catch{InstallManager.holdNativeGameActivationRecord(r)}},()=>InstallManager.holdNativeGameActivationRecord(r));
++    }catch{InstallManager.holdNativeGameActivationRecord(r)}
++  }
++  public static trackNativeGameActivationRefresh<T>(store: IExtensionApi["store"],gameId: string,action:()=>T|PromiseLike<T>): Promise<T> {
++    const r=InstallManager.mNativeActivation;
++    // Preserve ordinary refresh behavior even when no source activation can qualify.
++    if(r===undefined||r.store!==store||r.gameId!==gameId||r.phase==="awaiting")return nativeActivationTrackLifecycle(action);
++    let eligible=false;
++    try { InstallManager.checkNativeActivationRecord(r);if(r.refreshObserved)throw new Error();r.refreshObserved=true;eligible=true; }
++    catch { InstallManager.holdNativeGameActivationRecord(r); }
++    let tracked: Promise<T>;
++    try { tracked=nativeActivationTrackLifecycle(action); }
++    catch(primary){InstallManager.holdNativeGameActivationRecord(r);throw primary}
++    if(!eligible)return tracked;
++    // Successful fulfillment occurs only after exact trackNativeLifecycleCall owner deletion.
++    return tracked.then(value=>{try{InstallManager.checkNativeActivationRecord(r);r.refreshDone=true;InstallManager.nativeActivationReady(r)}catch{InstallManager.holdNativeGameActivationRecord(r)}return value},primary=>{InstallManager.holdNativeGameActivationRecord(r);throw primary});
++  }
++
++  public waitNativeGameActivationReady(store:unknown):Promise<object>{
++    if(!InstallManager.mNativeManagers.has(this)||store===null||typeof store!=="object"||utilTypes.isProxy(store))return Promise.reject(new Error("NATIVE_GAME_ACTIVATION_REFUSED"));
++    let r=InstallManager.mNativeActivation;
++    if(r===undefined){try{r=InstallManager.createNativeGameActivation(store as IExtensionApi["store"],"awaiting")}catch(primary){return Promise.reject(primary)}}
++    if(r.store!==store)return Promise.reject(new Error("NATIVE_GAME_ACTIVATION_REFUSED"));
++    try{InstallManager.checkNativeActivationRecord(r)}catch(primary){return Promise.reject(primary)}
++    if(r.waiting!==undefined)return r.waiting;
++    const record=r,expiresAt=nativeActivationClock.now()+30000;
++    record.timer=setTimeout(()=>{
++      // Bound this source readiness observation only. Never cancel setup/refresh/legacy ownership.
++      InstallManager.holdNativeGameActivationRecord(record);
++      const off=record.unsubscribe;record.unsubscribe=undefined;
++      if(off!==undefined){try{off()}catch{/* record already held; no new permission */}}
++    },30000);
++    record.waiting=record.completion.then(()=>{
++      if(record.timer!==undefined){clearTimeout(record.timer);record.timer=undefined;}
++      if(nativeActivationClock.now()>=expiresAt){InstallManager.holdNativeGameActivationRecord(record);throw new Error("NATIVE_GAME_ACTIVATION_HELD")}
++      nativeActivationCheckReady.call(this,record.owner,store);return record.owner;
++    });
++    return record.waiting;
++  }
++  public checkNativeGameActivationReady(owner: object,store: unknown): void {
++    const r=InstallManager.mNativeActivation;
++    if(!InstallManager.mNativeManagers.has(this)||r===undefined||r.owner!==owner||r.store!==store)throw new Error("NATIVE_GAME_ACTIVATION_REFUSED");
++    InstallManager.checkNativeActivationRecord(r);
++    if(r.phase!=="ready"||!r.setupDone||!r.refreshDone)throw new Error("NATIVE_GAME_ACTIVATION_HELD");
++  }
++
++
+   // Exported so other features that fire their own install fan-out (e.g. health check's bulk
+   // install actions) can size their own queue against the same, already-tuned budget instead of
+   // picking an unrelated number.
+@@ -8781,3 +8940,8 @@
+ }
+ 
+ export default InstallManager;
++
++const nativeActivationTrackLifecycle = InstallManager.trackNativeLifecycleCall;
++
++// Capture before extension callbacks can replace public prototype methods.
++const nativeActivationCheckReady = InstallManager.prototype.checkNativeGameActivationReady;

@@ -1,0 +1,21 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/renderer/src/extensions/mod_management/InstallManager.ts",
+  "originalSourceSHA256": "577d56a8728052069f850face9bb57437dbf2886bd41409fe6a66cfefc08ed33",
+  "inputSHA256": "fa286ebca414fc3368de7ef7b50a71a7c5327768098c42f8aabda1a4e7d1bdad",
+  "outputSHA256": "dc5409b22d01df8c0913d8b0d0bc52ca519d5ba7979a68f31514503faad10741",
+  "patchSHA256": "caa9daff75ca4bcfe6b37f1c0d84332cec10f7f8e06ed2d58addaad6223407bd",
+  "prerequisitePatch": "native-manager-inert-release.patch",
+  "prerequisitePatchSHA256": "00c4050a245027f66b721c86f3491ef7e94aee03f1e36da4d2382e221294ebcd",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "nativeTerminalGuarantee": false,
+  "globalIdleGuarantee": false,
+  "effectsAllowed": false,
+  "installationPermit": false,
+  "nativeAdmission": false
+}

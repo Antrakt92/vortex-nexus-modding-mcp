@@ -1,0 +1,18 @@
+--- a/src/renderer/src/extensions/mod_management/index.ts
++++ b/src/renderer/src/extensions/mod_management/index.ts
+@@ -2539,3 +2539,15 @@
+ }
+ 
+ export default init;
++
++// Captured during actual static module initialization, before extension callbacks.
++const nativeActivationWaitFixed = InstallManager.prototype.waitNativeGameActivationReady;
++const nativeActivationCheckFixed = InstallManager.prototype.checkNativeGameActivationReady;
++export function waitForNativeGameActivationReady(managerOwner: object,store: IExtensionApi["store"]): Promise<object> {
++  const manager=getNativeManagerStartupInstance(managerOwner,store);
++  return nativeActivationWaitFixed.call(manager,store);
++}
++export function checkNativeGameActivationReady(owner: object,managerOwner: object,store: IExtensionApi["store"]): void {
++  const manager=getNativeManagerStartupInstance(managerOwner,store);
++  nativeActivationCheckFixed.call(manager,owner,store);
++}

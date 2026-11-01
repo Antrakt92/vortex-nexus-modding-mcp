@@ -1,0 +1,102 @@
+--- a/src/renderer/src/ExtensionManager.ts
++++ b/src/renderer/src/ExtensionManager.ts
+@@ -715,6 +715,8 @@
+   wait?: (store: unknown) => Promise<object>;
+   check?: (owner: object, store: unknown) => void;
+   instance?: (owner: object, store: unknown) => InstallManager;
++  activationWait?: (managerOwner: object,store: unknown)=>Promise<object>;
++  activationCheck?: (owner: object,managerOwner: object,store: unknown)=>void;
+   held: boolean;
+   checking: boolean;
+ }
+@@ -782,6 +784,7 @@
+ }
+ interface NativeExecutorRendererRequest {
+   route: NativeExecutorRendererTransport;
++  activation?: {store: object; readyOwner: object; moduleOwner: object; binding: NativeStaticManagerBinding; owner?: object; checking: boolean};
+   request: Uint8Array;
+   archive: Uint8Array;
+   requestBytesSHA256: string;
+@@ -1539,6 +1542,21 @@
+     return d.value;
+   }
+ 
++  private checkNativeActivationRequest(request: NativeExecutorRendererRequest): void {
++    const a=request.activation;if(a===undefined)return;
++    if(a.checking){this.#holdNativeTransport(request);throw this.#nativeTransportError()}a.checking=true;
++    try{
++      this.checkNativeRendererManagerReady(a.readyOwner,a.store);
++      this.checkNativeStaticManager(a.binding);
++      const managerAttempt=this.mNativeRendererManager;
++      if(managerAttempt===undefined||managerAttempt.binding!==a.binding||managerAttempt.managerOwner!==a.moduleOwner)throw this.#nativeTransportError();
++      const check=a.binding.activationCheck;if(check===undefined)throw this.#nativeTransportError();
++      if(a.owner!==undefined)check(a.owner,a.moduleOwner,a.store);
++      this.checkNativeStaticManager(a.binding);
++      if(request.held||request.activation!==a||this.#mNativeExecutorRequest!==request)throw this.#nativeTransportError();
++    }catch(primary){this.#holdNativeTransport(request);throw primary}finally{a.checking=false}
++  }
++
+   #checkNativeTransport(route: NativeExecutorRendererTransport, request?: NativeExecutorRendererRequest): void {
+     try {
+       if (this.#mNativeExecutorTransport !== route || route.held || route.registering
+@@ -1559,6 +1577,7 @@
+           || ExtensionManager.prototype.acquireNativeRendererExecutorAdmission !== route.acquire
+           || ExtensionManager.prototype.checkNativeRendererExecutorAdmission !== route.check
+           || ExtensionManager.prototype.getNativeRendererExecutorAdmissionProjection !== route.project) throw this.#nativeTransportError();
++      if(request!==undefined)this.checkNativeActivationRequest(request);
+       if (this.#mNativeExecutorTransport !== route || route.held || (request !== undefined && request.held)) throw this.#nativeTransportError();
+     } catch (primary) { this.#holdNativeTransport(request); throw primary; }
+   }
+@@ -1699,6 +1718,31 @@
+       request.requestBytesSHA256 = nativeExecutorTransportHash("sha256").update(request.request).digest("hex");
+       request.archiveBytesSHA256 = nativeExecutorTransportHash("sha256").update(request.archive).digest("hex");
+       this.#checkNativeTransport(route, request);
++      const store=route.load.store;
++      if(store===null||typeof store!=="object"||nativeReadinessTypes.isProxy(store))throw this.#nativeTransportError();
++      const expiresAt=nativeReadinessClock.now()+30000;
++      let timer: ReturnType<typeof setTimeout>|undefined;
++      const readiness=(async()=>{
++        const readyOwner=await this.waitForNativeRendererManagerReady(store);
++        this.#checkNativeTransport(route,request);
++        if(nativeReadinessClock.now()>=expiresAt)throw this.#nativeTransportError();
++        this.checkNativeRendererManagerReady(readyOwner,store);
++        const managerAttempt=this.mNativeRendererManager,binding=this.mNativeStaticManager;
++        if(managerAttempt===undefined||binding===undefined||managerAttempt.binding!==binding||managerAttempt.managerOwner===undefined)throw this.#nativeTransportError();
++        this.checkNativeStaticManager(binding);
++        const wait=binding.activationWait;if(wait===undefined)throw this.#nativeTransportError();
++        const activation={store,readyOwner,moduleOwner:managerAttempt.managerOwner,binding,owner:undefined as object|undefined,checking:false};
++        request.activation=activation;
++        const owner:unknown=await wait(activation.moduleOwner,store);
++        this.#checkNativeTransport(route,request);
++        if(nativeReadinessClock.now()>=expiresAt||owner===null||typeof owner!=="object"||nativeReadinessTypes.isProxy(owner))throw this.#nativeTransportError();
++        activation.owner=owner;
++        this.#checkNativeTransport(route,request);
++      })();
++      try{await Promise.race([readiness,new Promise<never>((_resolve,reject)=>{timer=setTimeout(()=>reject(this.#nativeTransportError()),30000)})]);}
++      finally{if(timer!==undefined)clearTimeout(timer)}
++      this.#checkNativeTransport(route,request);
++      if(nativeReadinessClock.now()>=expiresAt)throw this.#nativeTransportError();
+       const result: unknown = await Reflect.apply(route.prepare, route.persist, [request.request, request.archive]);
+       this.#checkNativeTransport(route, request);
+       this.#nativeTransportProjection(request);
+@@ -1972,6 +2016,8 @@
+           || this.nativeManagerExport(binding.module, "waitForNativeManagerStartupReady") !== binding.wait
+           || this.nativeManagerExport(binding.module, "checkNativeManagerStartupReady") !== binding.check
+           || this.nativeManagerExport(binding.module, "getNativeManagerStartupInstance") !== binding.instance
++          || this.nativeManagerExport(binding.module, "waitForNativeGameActivationReady") !== binding.activationWait
++          || this.nativeManagerExport(binding.module, "checkNativeGameActivationReady") !== binding.activationCheck
+           || this.mNativeStaticManager !== binding || binding.held) throw new Error();
+     } catch {
+       this.holdNativeStaticManager(binding);
+@@ -1995,6 +2041,11 @@
+       const wait = this.nativeManagerExport(module, "waitForNativeManagerStartupReady");
+       const check = this.nativeManagerExport(module, "checkNativeManagerStartupReady");
+       const instance = this.nativeManagerExport(module, "getNativeManagerStartupInstance");
++      const activationWait=this.nativeManagerExport(module,"waitForNativeGameActivationReady");
++      const activationCheck=this.nativeManagerExport(module,"checkNativeGameActivationReady");
++      if(typeof activationWait!=="function"||typeof activationCheck!=="function")throw new Error();
++      binding.activationWait=activationWait as NativeStaticManagerBinding["activationWait"];
++      binding.activationCheck=activationCheck as NativeStaticManagerBinding["activationCheck"];
+       if (initializer === undefined || typeof wait !== "function" || typeof check !== "function" || typeof instance !== "function" || binding.held) throw new Error();
+       binding.wait = wait as NativeStaticManagerBinding["wait"];
+       binding.check = check as NativeStaticManagerBinding["check"];

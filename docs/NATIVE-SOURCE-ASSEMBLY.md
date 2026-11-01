@@ -1,7 +1,7 @@
 # Assemble the reviewed Vortex source patches
 
-`native-source-series.mjs` applies the fixed sequence of 124 reviewed patches to
-25 original files from Vortex `v2.9.1`, commit
+`native-source-series.mjs` applies the fixed sequence of 129 reviewed patches to
+26 original files from Vortex `v2.9.1`, commit
 `c80326367cbe6d96621ad6cf4a5488ef49bac110`. It replaces manually composing separate
 patch chains before compilation. It does not change an installed application or
 make native installation available through MCP.
@@ -34,8 +34,8 @@ final source hashes, patch/manifest hashes and cross-file prerequisites must
 match the pinned series. Patch application requires exact offsets and context;
 it has no fuzzy matching or hash-refresh mode.
 
-The fixed graph combines the 34-patch mod-management/transfer packet with the
-90-patch persistence packet. The latter includes renderer target admission and
+The fixed graph combines the 38-patch mod-management/transfer packet with the
+91-patch persistence packet. The latter includes renderer target admission and
 acknowledged diffs, main/preload/shared IPC, backend reservations and managed SQL
 ownership, the main build's runtime binding and startup history classification.
 Both runtime packet directories have separate closed inventories;
@@ -103,7 +103,7 @@ node --test tools/modding/vortex-agent/native-source-series.test.mjs
 
 The first command covers portable input and packet checks. The second also
 exercises exact original-source assembly and output isolation. The fixture root
-must contain all 25 original files, not their patched replacements. Earlier
+must contain all 26 original files, not their patched replacements. Earlier
 partial fixtures are incomplete for this graph and are refused.
 Neither command proves compilation, host loading or a successful mod install.
 
@@ -843,3 +843,41 @@ This is an offline source and build qualification. The application has not been
 launched with this repair. Full cancellation, installation and public MCP
 activation remain separate gates; startup activation ordering and the isolated
 host's staging layout also need correction before another native attempt.
+
+## Wait for game activation (129 patches) — 1 November 2026
+
+An active profile and a completed renderer load do not mean game activation has
+finished. Vortex can still be preparing the game and refreshing mods. Taking the
+native installation exclusion during that work can refuse the ordinary refresh.
+
+Five patches retain the actual activation attempt and join both its setup promise
+and the tracked refresh promise. A call made before activation begins waits for
+the matching source attempt. Earlier unrelated refreshes cannot satisfy that
+wait. Profile changes invalidate the old owner; fixed module methods retain their
+source checks if public prototype methods are subsequently replaced. The
+30-second observation budget includes manager readiness and prevents a late
+completion from invoking Main after expiry. It does not cancel underlying work.
+
+The graph adds the original `gamemode_management/index.ts`: 129 patches now cover
+26 original files. Packet inventories contain 76 lifecycle and 182 persistence
+files. The graph remains below the unchanged 96 KiB cap. Existing manager-specific
+dependency references bind three new consumers to the exact earlier manager
+patch; Renderer retains its full cross-packet module dependency.
+
+Local checks passed 13 activation cases and 24 assembly cases without skips.
+The source-derived companion validator separately checks eight unique valid
+references against nine; the independent packet byte-limit test remains intact.
+Fresh Main and Renderer TypeScript checks passed for the isolated source variant,
+including eight changed Program inputs. That variant includes separately pinned
+fixture metadata and diagnostics; it is not an exact public application build.
+The source-test Manager uses actual enrollment and lifecycle methods with a
+controlled outer constructor. Its deadline probe covers the actual readiness
+block with explicit transport collaborators, not a complete IPC permission.
+
+Local typecheck proof:
+`local-state/native-inert-cancel/recovery/activation-final-source/TYPECHECK-PROOF.json`,
+SHA-256 `6a885147038dc0b3faf977ed483f6a0389349d62ae05d287d74c46125bc00b48`.
+No runtime bundle or source map was rebuilt by these checks. Same-game profile
+switches that do not emit a new game-activation attempt remain unsupported by
+this readiness producer. Full application cancellation and installation,
+public MCP activation, and installed-host acceptance are still pending.
