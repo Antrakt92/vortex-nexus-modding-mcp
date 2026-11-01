@@ -149,8 +149,9 @@ binding, descriptor/path/root generation checks and parent-side readback. Fresh
 proofs have a new checkpoint cache. Failure, timeout or cancellation poisons the
 client; it never retries or starts a replacement worker automatically.
 
-The worker is not wired into current helpers or an MCP endpoint. The existing
-guard remains synchronous. Historical callers discarded return values; new kits
+At this foundation checkpoint the worker was not yet wired into helpers or an
+MCP endpoint; helper worker-mode integration is recorded below. The original
+guard was synchronous. Historical callers discarded return values; new kits
 include the propagation repair described below. Electron/original-fs acceptance
 and a fresh native pre-effect barrier remain required. Directory
 inventory, process enumeration and native-state hashing are not supplied by this

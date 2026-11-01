@@ -1,0 +1,37 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/renderer/src/ExtensionManager.ts",
+  "originalSourceSHA256": "5d0de2194cf413938e61a398494196af07677dc6d0d014216ba3b25b5a211b95",
+  "inputSHA256": "f304ac0f7f5881dc6183c2000834101424bbc9376ab2da669beb9f61e640c81e",
+  "outputSHA256": "24be706d6039d2c70bba327f5452a2ec755ab406486d47f3cd452089b402b9e1",
+  "patchSHA256": "c0f72e9e67d7691aac5f0a4a4d0fe277df471e4cc4d7031b1eba6f8f011897bd",
+  "prerequisitePatch": "native-renderer-executor-transport.patch",
+  "prerequisitePatchSHA256": "16e4de17fcc8087d11bc5926e90fc07befc01840c4084145a8a176509029b4f1",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "installationPermit": false,
+  "effectsAllowed": false,
+  "nativeAdmission": false,
+  "powerLossPersistenceVerified": false,
+  "releaseSupported": false,
+  "limitations": [
+    "Internal source-owned renderer adoption and retained release preparation only; no IPC, finalization, slot reset, new operation or START.",
+    "A correlated observed/2 DTO is not independent Main commit authority; future fixed source coordinator must supply the actual committed observation.",
+    "Actual target/flush/manager/release ownership remains private and retained on failure; no generic extension API."
+  ],
+  "requiredCompanionPatch": "renderer-registration-release.patch",
+  "requiredCompanionPatchSHA256": "9627e58347f3c88c016fb1165163478899901a0cf17e5e5115f8da27cc47131b",
+  "requiredCompanionOutputSHA256": "36290d8a0a158bfd87f2024461bcf6a711913841f5f94048f9b20e139a8fca69",
+  "additionalCompanions": [
+    {
+      "packet": "lifecycle",
+      "name": "native-manager-registration-release",
+      "patchSHA256": "a89507c72cf8c8d74c2cc9f63692b27c206654b9d6e7ea610465e9275bdca16a",
+      "outputSHA256": "38ceb37ac994f9da61e0a93b3be8e0e7618a9833b7e514e5aec710638653d667"
+    }
+  ]
+}

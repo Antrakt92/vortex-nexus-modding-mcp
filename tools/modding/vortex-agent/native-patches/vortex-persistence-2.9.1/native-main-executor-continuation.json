@@ -1,0 +1,37 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/main/src/store/mainPersistence.ts",
+  "originalSourceSHA256": "7d3e28cb829914fb092774eca3fc357645fa7ef508177d1a0e3b32eed58f05fe",
+  "inputSHA256": "7f58c8da84444bb8154001a3b17a3ba6b09e2cf7e40d7d8a4d7a6907e30c261f",
+  "outputSHA256": "6b22342f742fb0c5d3c7e9ed3a7814bed6472825db82255d343f7557ab372055",
+  "patchSHA256": "94bdbe4f92b3ebcd9d06cd0202da52eb97b2b43654e56c193a76c0c846aca335",
+  "prerequisitePatch": "native-main-executor-transport.patch",
+  "prerequisitePatchSHA256": "b8d230190da14bc2155380d802d69587e3924157a24fdbbb20d6eb4a263d254c",
+  "requiredCompanionPatch": "native-main-executor-terminal-window.patch",
+  "requiredCompanionPatchSHA256": "93466fb7d9eda396ed8e9fd4d873c7ab6735b982f57ca1a894eb4d73b4eaa343",
+  "requiredCompanionOutputSHA256": "0079084dee06bed5b96b560fe576f4e0b8734ab3363fa6c9e89af8c7adff2b5d",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "installationPermit": false,
+  "effectsAllowed": false,
+  "nativeAdmission": false,
+  "powerLossPersistenceVerified": false,
+  "limitations": [
+    "Internal Main continuation only; no IPC, renderer adoption, worker release, terminal evidence/write or installation permit.",
+    "SDK relay observations are used only through the private verified prepared instance; registration needs actual production transport and physical acceptance separately.",
+    "Unknown START/copy/COMMIT remains held without retry, cancellation, release or ID refund.",
+    "payloadSHA256 uses existing installPayloadDigest(plan); canonical live copy-proof bytes are retained separately, distinct from raw archiveSHA256."
+  ],
+  "additionalCompanions": [
+    {
+      "packet": "persistence",
+      "name": "native-executor-transport-shared-ipc",
+      "patchSHA256": "ae27e5103066c674996accade952cee18f46d51b0ae16dbb58455e30fbdf66e0",
+      "outputSHA256": "cb76a3e04315bda9e6734b5d00f9d7be63eafd2f995f250611b5bf0a316dbd0c"
+    }
+  ]
+}

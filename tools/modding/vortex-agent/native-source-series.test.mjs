@@ -96,7 +96,7 @@ test('fixed packet is checked, but an unpinned original can never assemble', () 
 });
 
 test('pinned series closes all fixed nodes, exact source chains and cross-file manager dependencies', () => {
-  assert.equal(series.patches.length, 95); assert.equal(series.files.length, 25);
+  assert.equal(series.patches.length, 97); assert.equal(series.files.length, 25);
   assert.equal(series.schema, 'native-source-series/2');
   assert.deepEqual([...series.files.map(row => row.path)].sort(), [...NATIVE_SOURCE_PATHS].sort());
   const done = new Map(), current = new Map(series.files.map(row => [row.path, row.originalSHA256]));
@@ -285,11 +285,11 @@ test('Git index and LF checkout preserve strict packet pins from CRLF working in
   }
 });
 
-function resealFixture(copy, update) {
+function resealFixture(copy, update, compact = false) {
   const file = path.join(copy.root, 'native-source-series.json');
   const value = JSON.parse(fs.readFileSync(file));
   update(value);
-  const bytes = Buffer.from(JSON.stringify(value, null, 2)+'\n');
+  const bytes = Buffer.from(JSON.stringify(value, null, compact ? undefined : 2)+'\n');
   fs.writeFileSync(file, bytes);
   const module = path.join(copy.root, 'native-source-series.mjs');
   fs.writeFileSync(module, fs.readFileSync(module, 'utf8').replace(/const SERIES_SHA256 = '[a-f0-9]{64}';/,
@@ -318,7 +318,9 @@ test('additional companion lists are closed, bounded and matched to the pinned m
         if (mode === 'oversize') while (value.length < 9) value.push({...value[0]});
         manifest.additionalCompanions = value; row.additionalCompanions = value;
       }
-    }));
+    }), mode === 'oversize');
+    // Exercise the companion-count guard independently of the outer byte cap.
+    if (mode === 'oversize') assert(fs.statSync(path.join(copy.root, 'native-source-series.json')).size <= 96*1024);
     const assemble = await copy.load();
     assert.throws(() => assemble(dummy()), /^Error: NATIVE_SOURCE_SERIES_GRAPH$/);
   }
