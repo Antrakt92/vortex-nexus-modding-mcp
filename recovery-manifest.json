@@ -196,7 +196,7 @@
     },
     {
       "path": "docs/AGENT-WORKFLOW.md",
-      "sha256_lf": "2f01ce982c344136e02e2568a505baf979e63651bf68be303c7e5dba63bc595a"
+      "sha256_lf": "d69f2786c0f1e7816c596cccc6aaeb323d98e4ff892ec6d961beededa34b1dd8"
     },
     {
       "path": "docs/ARCHIVE-TEMP-CUSTODY.md",
@@ -276,7 +276,7 @@
     },
     {
       "path": "docs/LOCAL-INSTALL-IMPLEMENTATION.md",
-      "sha256_lf": "452ea2da9e498b0e9480c19f79f13f3738111079ae234e82d3b74fd9c5ca4a24"
+      "sha256_lf": "9ae288eb16b73dfc0582751e69e901f0b8e124d9ee21786524ba4b4da95f3568"
     },
     {
       "path": "docs/MAINTENANCE.md",
@@ -323,6 +323,10 @@
       "sha256_lf": "00590ecc728dbc8f60e540d0899f69b75814bcfac49f5c7350c5edf8dfe9875e"
     },
     {
+      "path": "docs/NATIVE-EXECUTOR-TRANSPORT.md",
+      "sha256_lf": "ba4a73068b44d32694199aad0026a57997b1793c15e1cce9fdaabf6e12e2c6fb"
+    },
+    {
       "path": "docs/NATIVE-EXTRACTOR-CLOSE-PATCH.md",
       "sha256_lf": "ac5eca694d081d13115fe12d6a9a706b8e7b4958c14f807ce7fcd2819f69bc3e"
     },
@@ -364,7 +368,7 @@
     },
     {
       "path": "docs/NATIVE-SOURCE-ASSEMBLY.md",
-      "sha256_lf": "4d9d69cd718ceafe9c343d06bdfe4b12086e9994e5c6c45c515c367c62b236dd"
+      "sha256_lf": "bd8e2527e1dd64f4955e3f55bae799325bd2dc4b81ee61cf88ffdde509e8f79d"
     },
     {
       "path": "docs/NATIVE-STAGING-TRANSFER.md",
@@ -1039,6 +1043,18 @@
       "sha256_lf": "96f607576b2dd8ba25a11c0757214ff800f87bb745802b6f6607088167ee40a5"
     },
     {
+      "path": "tools/modding/vortex-agent/native-executor-transport-integration.test.mjs",
+      "sha256_lf": "2051fc60ce02a1ed03b4d8d852e35c2192caf7f165714e24fbcdc621e7561632"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-executor-transport-ipc.test.mjs",
+      "sha256_lf": "85f4d139d7f3b8a063c0b6af4de7cac5747d48ed131680321c8cd55c40ece939"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-executor-transport-preload.test.mjs",
+      "sha256_lf": "ced61732edd3d1a8b75c879214b14f513cd0a51a6cc6688285a21e791df0f088"
+    },
+    {
       "path": "tools/modding/vortex-agent/native-extractor-close-patch.test.mjs",
       "sha256_lf": "d913f4a02085631fc283b4da955b20308ddabb5b9b0156edcb8ded596492fab6"
     },
@@ -1101,6 +1117,10 @@
     {
       "path": "tools/modding/vortex-agent/native-main-executor-anchor.test.mjs",
       "sha256_lf": "db187ff088114aa838979ef680b9fd92eee5f89279a4da009522fe9a8e0442b3"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-main-executor-transport.test.mjs",
+      "sha256_lf": "a0effef7a722b13668af4a1493b78eee2728a46915fb19e02891c9a4e30f5bbf"
     },
     {
       "path": "tools/modding/vortex-agent/native-main-mod-registration.test.mjs",
@@ -1571,6 +1591,38 @@
       "sha256_lf": "5ce5e1484d03cb497152579d422371bfa3df176ebeae8c20d054ef668045e211"
     },
     {
+      "path": "tools/modding/vortex-agent/native-patches/vortex-persistence-2.9.1/native-executor-transport-ipc.json",
+      "sha256_lf": "ae0c90c0d80063a4eeb45bfee02bc63198505e5d6695d09795bccb93865fff16"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-patches/vortex-persistence-2.9.1/native-executor-transport-ipc.patch",
+      "sha256_lf": "4494da36a422862ef72ce51d7fc7012dc854047371ac6c9f796a3a6195cdd12b"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-patches/vortex-persistence-2.9.1/native-executor-transport-preload.json",
+      "sha256_lf": "09e9dcdad3cd1f52d5b47fd933c96fcbab71e3f8e7eb60cea7501e086ef8b419"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-patches/vortex-persistence-2.9.1/native-executor-transport-preload.patch",
+      "sha256_lf": "9e7ee439acaa1fb18dd0b5e32b5c84bc9eb09b8c2e9663ee1724365baae3308d"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-patches/vortex-persistence-2.9.1/native-executor-transport-shared-ipc.json",
+      "sha256_lf": "c0be31a04aa2ef0d70b019b5f25622a4dce21e9ebcd3f59dcfae0f8e0860eb02"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-patches/vortex-persistence-2.9.1/native-executor-transport-shared-ipc.patch",
+      "sha256_lf": "ae27e5103066c674996accade952cee18f46d51b0ae16dbb58455e30fbdf66e0"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-patches/vortex-persistence-2.9.1/native-executor-transport-shared-preload.json",
+      "sha256_lf": "c620919e0a5fa05f3961afd85049e4ca4a393f0eb85c600aa7d555c0956311be"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-patches/vortex-persistence-2.9.1/native-executor-transport-shared-preload.patch",
+      "sha256_lf": "d1e4f30a58e54589d80d9afac410ec51f08f97f5e131254bfc2c2cdbddf59b18"
+    },
+    {
       "path": "tools/modding/vortex-agent/native-patches/vortex-persistence-2.9.1/native-main-anchor-binding.json",
       "sha256_lf": "3f2ae9731b04bf0298fa8bae829f72c530b9da696f8d7e0d35c9a87997ab8770"
     },
@@ -1633,6 +1685,14 @@
     {
       "path": "tools/modding/vortex-agent/native-patches/vortex-persistence-2.9.1/native-main-executor-terminal-window.patch",
       "sha256_lf": "93466fb7d9eda396ed8e9fd4d873c7ab6735b982f57ca1a894eb4d73b4eaa343"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-patches/vortex-persistence-2.9.1/native-main-executor-transport.json",
+      "sha256_lf": "e96a9cce53d7cae8b75c0a902f33be2279f565bd2faee8e54c77e057a26ba3b3"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-patches/vortex-persistence-2.9.1/native-main-executor-transport.patch",
+      "sha256_lf": "b8d230190da14bc2155380d802d69587e3924157a24fdbbb20d6eb4a263d254c"
     },
     {
       "path": "tools/modding/vortex-agent/native-patches/vortex-persistence-2.9.1/native-main-mod-registration.json",
@@ -1753,6 +1813,14 @@
     {
       "path": "tools/modding/vortex-agent/native-patches/vortex-persistence-2.9.1/native-renderer-executor-admission.patch",
       "sha256_lf": "fec839675e9ed434efb09bea77d33331c57fdc6d28159f9503ac99660063543f"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-patches/vortex-persistence-2.9.1/native-renderer-executor-transport.json",
+      "sha256_lf": "2541e41dca4e5fa50b4b186cba16f76a6ce175cbe24ea8cd4381cc647dee0271"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-patches/vortex-persistence-2.9.1/native-renderer-executor-transport.patch",
+      "sha256_lf": "16e4de17fcc8087d11bc5926e90fc07befc01840c4084145a8a176509029b4f1"
     },
     {
       "path": "tools/modding/vortex-agent/native-patches/vortex-persistence-2.9.1/native-singleton-sql-admission.json",
@@ -1987,6 +2055,10 @@
       "sha256_lf": "fc5e5d1086e3e6ba3e064a54a2ac9a8b2de29dc7ee94aea328a26f83478598f5"
     },
     {
+      "path": "tools/modding/vortex-agent/native-renderer-executor-transport.test.mjs",
+      "sha256_lf": "4a7e5ada275441d8a1c6eace137f3fbb35df3296cd7d5a6ee1bf91e57d594a26"
+    },
+    {
       "path": "tools/modding/vortex-agent/native-renderer-mod-adoption.test.mjs",
       "sha256_lf": "4e1f01edcba54d5e845eb532852dd97fd25d95002f90b8c07c50af7af7710688"
     },
@@ -2012,15 +2084,15 @@
     },
     {
       "path": "tools/modding/vortex-agent/native-source-series.json",
-      "sha256_lf": "d42abe5e3b89ecf9909d1c7ea5c36091a2c0266c599b7d5418a2fa154fbda112"
+      "sha256_lf": "aa834e9700e4819194b03bef31ee3fff1a3f15ee3af0c310765afaaee7e245d4"
     },
     {
       "path": "tools/modding/vortex-agent/native-source-series.mjs",
-      "sha256_lf": "76c1615760a7334e8ebcc794e6c6e46a22c44ff977e6d782e09fdbadf112bfc9"
+      "sha256_lf": "b7773eed1f61237203dbedf2d88d6ac0faf0823c116c075c6216c56ec1817d74"
     },
     {
       "path": "tools/modding/vortex-agent/native-source-series.test.mjs",
-      "sha256_lf": "78c724024b121809a60ba05f41f066d0974a26a16625f98747f5e5306a552156"
+      "sha256_lf": "6591f5ec6482ba15e3e353f4de1c5d513b108d82056aa43b6b1593dae8d1697d"
     },
     {
       "path": "tools/modding/vortex-agent/native-staging-pending-transfer-patch.test.mjs",

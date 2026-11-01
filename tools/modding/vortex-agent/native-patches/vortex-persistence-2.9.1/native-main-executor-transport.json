@@ -1,0 +1,37 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/main/src/store/mainPersistence.ts",
+  "originalSourceSHA256": "7d3e28cb829914fb092774eca3fc357645fa7ef508177d1a0e3b32eed58f05fe",
+  "inputSHA256": "b8fe62b0e8da9e149bd432d6e66a58bd226bb53c16de5b08578551a5644ac8a0",
+  "outputSHA256": "7f58c8da84444bb8154001a3b17a3ba6b09e2cf7e40d7d8a4d7a6907e30c261f",
+  "patchSHA256": "b8d230190da14bc2155380d802d69587e3924157a24fdbbb20d6eb4a263d254c",
+  "prerequisitePatch": "native-main-executor-pending.patch",
+  "prerequisitePatchSHA256": "6b0cfd524ad923daff9aaf2ae7979547655dfbe228116d31938ca5aa39c17307",
+  "requiredCompanionPatch": "native-main-executor-terminal-window.patch",
+  "requiredCompanionPatchSHA256": "93466fb7d9eda396ed8e9fd4d873c7ab6735b982f57ca1a894eb4d73b4eaa343",
+  "requiredCompanionOutputSHA256": "0079084dee06bed5b96b560fe576f4e0b8734ab3363fa6c9e89af8c7adff2b5d",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "installationPermit": false,
+  "effectsAllowed": false,
+  "nativeAdmission": false,
+  "powerLossPersistenceVerified": false,
+  "limitations": [
+    "Internal Main transport ticket only; no IPC endpoint, renderer authority, START or installation permit.",
+    "Pure preflight checks metadata/source consistency only, not held archive SHA/MD5 or live application context.",
+    "The actual caller must complete source-owned renderer old ACK before invoking reservation; this component never trusts caller ready booleans.",
+    "Held/late reservations and matching pending attempts remain held without cancellation, release, refund or retry."
+  ],
+  "additionalCompanions": [
+    {
+      "packet": "persistence",
+      "name": "native-executor-transport-shared-ipc",
+      "patchSHA256": "ae27e5103066c674996accade952cee18f46d51b0ae16dbb58455e30fbdf66e0",
+      "outputSHA256": "cb76a3e04315bda9e6734b5d00f9d7be63eafd2f995f250611b5bf0a316dbd0c"
+    }
+  ]
+}

@@ -1,0 +1,185 @@
+--- a/src/main/src/store/persistenceIPC.ts
++++ b/src/main/src/store/persistenceIPC.ts
+@@ -1,4 +1,6 @@
+ import { performance } from "node:perf_hooks";
++import { randomBytes as nativeTransportRandom } from "node:crypto";
++import { types as nativeTransportTypes } from "node:util";
+ /**
+  * IPC handlers for persistence operations.
+  *
+@@ -11,13 +13,13 @@
+  * 3. Main process applies operations to LevelDB via ReduxPersistorIPC
+  */
+ 
+-import type { DiffOperation, NativeMainReadinessObservation } from "@vortex/shared/ipc";
++import type { DiffOperation, NativeMainReadinessObservation, NativeExecutorChallenge, NativeExecutorPreparation } from "@vortex/shared/ipc";
+ import type { PersistedHive, PersistedState } from "@vortex/shared/state";
+ import { ipcMain, type WebContents } from "electron";
+ 
+ import { betterIpcMain } from "../ipc";
+ import { log } from "../logging";
+-import { registerAllPersistedHives, getMainPersistor, waitForNativeMainPersistenceReady, checkNativeMainPersistenceReady } from "./mainPersistence";
++import { registerAllPersistedHives, getMainPersistor, waitForNativeMainPersistenceReady, checkNativeMainPersistenceReady, preflightNativeExecutorTransport, getNativeExecutorTransportBinding, checkNativeExecutorTransport, holdNativeExecutorTransport, reserveNativeExecutorTransport, prepareNativeExecutorTransportPending } from "./mainPersistence";
+ import type ReduxPersistorIPC from "./ReduxPersistorIPC";
+ 
+ let acknowledgementOwner: WebContents | undefined;
+@@ -111,6 +113,137 @@
+   record.phase = "held";
+ }
+ 
++
++type NativeTransportBinding = {operationId:string;nativeJobId:string;requestSHA256:string;requestBytesSHA256:string;archiveBytesSHA256:string;gameId:string;modId:string;profileId:string;managerScope:string;rendererGeneration:string};
++interface NativeTransportAttempt {
++  event:Electron.IpcMainInvokeEvent;phase:"checking"|"prepared"|"held"; checking:boolean; deadline:number; transportId:string;
++  frameOwner?:object; ticket?:object; owner?:WebContents; frame?:Electron.WebFrameMain; binding?:NativeTransportBinding;
++  contacted:boolean;holdSent:boolean;frameHeld?:boolean;ticketHeld?:boolean;invalidate:()=>void;invalidated:Promise<void>;
++  challenge?:{value:NativeExecutorChallenge;resolve:()=>void;reject:(error:Error)=>void};
++}
++let nativeTransportAttempt:NativeTransportAttempt|undefined;
++let nativeTransportInvalidation:(()=>void)|undefined;
++let nativeTransportResponseInstalled=false;
++const nativeTransportError=()=>new Error("NATIVE_EXECUTOR_TRANSPORT_HELD");
++const nativeTransportNonce=(kind:string)=>kind+"_"+nativeTransportRandom(16).toString("hex");
++function nativeTransportData(value:unknown,keys:string[]):Record<string,unknown>{
++  if(value===null||typeof value!=="object"||nativeTransportTypes.isProxy(value)||Array.isArray(value))throw nativeTransportError();
++  const descriptors=Object.getOwnPropertyDescriptors(value),actual=Reflect.ownKeys(descriptors);
++  if(actual.length!==keys.length||actual.some(key=>typeof key!=="string"||!keys.includes(key)))throw nativeTransportError();
++  const result:Record<string,unknown>={};
++  for(const key of keys){const d=descriptors[key];if(d===undefined||!Object.hasOwn(d,"value"))throw nativeTransportError();result[key]=d.value;}
++  return result;
++}
++function nativeTransportCopy(value:unknown,maximum:number):Uint8Array {
++  if(!nativeTransportTypes.isUint8Array(value)||nativeTransportTypes.isProxy(value))throw nativeTransportError();
++  const typed=Object.getPrototypeOf(Uint8Array.prototype),size=Object.getOwnPropertyDescriptor(typed,"byteLength")?.get?.call(value),backing=Object.getOwnPropertyDescriptor(typed,"buffer")?.get?.call(value);
++  if(!Number.isSafeInteger(size)||size<=0||size>maximum||nativeTransportTypes.isSharedArrayBuffer(backing))throw nativeTransportError();
++  const copy=new Uint8Array(size);Uint8Array.prototype.set.call(copy,value);
++  if(copy[0]===239&&copy[1]===187&&copy[2]===191)throw nativeTransportError();return copy;
++}
++function nativeTransportBinding(raw:unknown):NativeTransportBinding {
++  const keys=["operationId","nativeJobId","requestSHA256","requestBytesSHA256","archiveBytesSHA256","gameId","modId","profileId","managerScope","rendererGeneration"],value=nativeTransportData(raw,keys);
++  if(keys.some(key=>typeof value[key]!=="string")||!["requestSHA256","requestBytesSHA256","archiveBytesSHA256"].every(key=>/^[a-f0-9]{64}$/.test(value[key] as string))
++    ||!/^op_[a-f0-9]{32}$/.test(value.operationId as string)||!/^exec_[a-f0-9]{32}$/.test(value.nativeJobId as string)
++    ||!/^renderer_[a-f0-9]{32}$/.test(value.rendererGeneration as string)
++    ||!["gameId","modId","profileId","managerScope"].every(key=>(value[key] as string).length>0&&(value[key] as string).length<=128))throw nativeTransportError();
++  return Object.freeze(value) as NativeTransportBinding;
++}
++function nativeTransportChallenge(a:NativeTransportAttempt,round:1|2|3|4,stage:"acquire"|"check"|"hold"):NativeExecutorChallenge {
++  const b=a.binding;if(b===undefined)throw nativeTransportError();
++  return Object.freeze({schema:"native-executor-challenge/1",transportId:a.transportId,challengeId:nativeTransportNonce("challenge"),round,stage,...b});
++}
++function nativeTransportHold(a:NativeTransportAttempt):void {
++  a.phase="held";
++  if(a.frameOwner!==undefined&&!a.frameHeld)try{a.frameHeld=true;holdNativeExecutorFrame(a.frameOwner);}catch{/* Retain original failure. */}
++  if(a.ticket!==undefined&&!a.ticketHeld)try{a.ticketHeld=true;holdNativeExecutorTransport(a.ticket);}catch{/* Retain original failure. */}
++  a.invalidate();
++  const pending=a.challenge;a.challenge=undefined;pending?.reject(nativeTransportError());
++  if(a.contacted&&!a.holdSent&&a.owner!==undefined&&a.binding!==undefined){
++    a.holdSent=true;try{betterIpcMain.send(a.owner,"persist:native-executor-challenge",nativeTransportChallenge(a,4,"hold"));}catch{/* Unknown delivery never refunds ownership. */}
++  }
++}
++function nativeTransportCheck(a:NativeTransportAttempt):void {
++  if(a.checking){nativeTransportHold(a);throw nativeTransportError();}a.checking=true;
++  try{
++    const valid=()=>nativeTransportAttempt===a&&a.phase==="checking"&&performance.now()<a.deadline;
++    if(!valid())throw nativeTransportError();
++    if(a.frameOwner!==undefined)checkNativeExecutorFrame(a.frameOwner);
++    if(a.ticket!==undefined)checkNativeExecutorTransport(a.ticket);
++    if(!valid())throw nativeTransportError();
++  }catch(primary){nativeTransportHold(a);throw primary;}finally{a.checking=false;}
++}
++async function nativeTransportAwait<T>(a:NativeTransportAttempt,work:Promise<T>):Promise<T>{
++  const value=await Promise.race([work,a.invalidated.then(()=>{throw nativeTransportError();})]);nativeTransportCheck(a);return value;
++}
++function nativeTransportRespond(event:Electron.IpcMainEvent,...args:unknown[]):void {
++  const a=nativeTransportAttempt,pending=a?.challenge;if(a===undefined||a.phase!=="checking"||pending===undefined)return;
++  try{
++    // Exact object/frame pointers; generic callback helper's sender.id is insufficient.
++    if(event.sender!==a.owner||event.senderFrame!==a.frame)return;
++    nativeTransportCheck(a);
++    if(args.length!==1)throw nativeTransportError();
++    const value=nativeTransportData(args[0],["schema","transportId","challengeId","round","stage","requestSHA256","requestBytesSHA256","archiveBytesSHA256","state","observation","errorCode"]),challenge=pending.value;
++    if(value.transportId!==a.transportId||value.challengeId!==challenge.challengeId)return;
++    if(value.schema!=="native-executor-response/1"||value.round!==challenge.round||value.stage!==challenge.stage
++      ||value.requestSHA256!==challenge.requestSHA256||value.requestBytesSHA256!==challenge.requestBytesSHA256||value.archiveBytesSHA256!==challenge.archiveBytesSHA256)throw nativeTransportError();
++    if(value.state!==(challenge.stage==="acquire"?"acquired":"checked")||value.errorCode!==null)throw nativeTransportError();
++    const observation=nativeTransportData(value.observation,["schema","gameId","modId","profileId","managerScopeId","rendererGeneration","effectsAllowed","installationPermit"]),b=a.binding;
++    if(b===undefined||observation.schema!=="native-renderer-executor-admission/1"||observation.gameId!==b.gameId||observation.modId!==b.modId
++      ||observation.profileId!==b.profileId||observation.managerScopeId!==b.managerScope||observation.rendererGeneration!==b.rendererGeneration
++      ||observation.effectsAllowed!==false||observation.installationPermit!==false)throw nativeTransportError();
++    nativeTransportCheck(a);if(a.challenge!==pending)throw nativeTransportError();a.challenge=undefined;pending.resolve();
++  }catch{nativeTransportHold(a);}
++}
++function nativeTransportRound(a:NativeTransportAttempt,round:1|2|3):Promise<void>{
++  nativeTransportCheck(a);if(a.challenge!==undefined)throw nativeTransportError();
++  const value=nativeTransportChallenge(a,round,round===1?"acquire":"check");
++  const work=new Promise<void>((resolve,reject)=>{a.challenge={value,resolve,reject};});
++  // Attach observation before the send can synchronously trigger a response/failure.
++  void work.catch(()=>{});a.contacted=true;
++  try{nativeTransportCheck(a);if(a.owner===undefined)throw nativeTransportError();betterIpcMain.send(a.owner,"persist:native-executor-challenge",value);nativeTransportCheck(a);}
++  catch(primary){nativeTransportHold(a);throw primary;}return work;
++}
++async function nativeTransportInvoke(event:Electron.IpcMainInvokeEvent,...args:unknown[]):Promise<NativeExecutorPreparation>{
++  if(nativeTransportAttempt!==undefined){
++    const previous=nativeTransportAttempt;
++    // The original event reference covers genuine callback reentry before the
++    // native frame reservation has returned. Other events must match the exact
++    // retained WebContents and frame; foreign requests cannot poison its owner.
++    let authentic=event===previous.event;
++    if(!authentic&&previous.owner!==undefined&&previous.frame!==undefined){
++      try{authentic=event.sender===previous.owner&&event.senderFrame===previous.frame;}catch{/* Foreign event is refused inertly. */}
++    }
++    if(authentic)nativeTransportHold(previous);throw nativeTransportError();
++  }
++  let invalidate=()=>{};const invalidated=new Promise<void>(resolve=>{invalidate=resolve;});
++  const a:NativeTransportAttempt={event,phase:"checking",checking:false,deadline:performance.now()+30000,transportId:"",contacted:false,holdSent:false,invalidate,invalidated};nativeTransportAttempt=a;
++  nativeTransportInvalidation=()=>nativeTransportHold(a);let timer:ReturnType<typeof setTimeout>|undefined;
++  try{
++    if(args.length!==2)throw nativeTransportError();const request=nativeTransportCopy(args[0],1052672),archive=nativeTransportCopy(args[1],8192);
++    a.transportId=nativeTransportNonce("transport");nativeTransportCheck(a);
++    a.frameOwner=reserveNativeExecutorFrame(event);a.owner=event.sender;a.frame=event.senderFrame??undefined;nativeTransportCheck(a);
++    timer=setTimeout(()=>nativeTransportHold(a),Math.max(0,a.deadline-performance.now()));
++    const ready=await nativeTransportAwait(a,Promise.resolve(waitForNativeMainPersistenceReady()));checkNativeMainPersistenceReady(ready);nativeTransportCheck(a);
++    a.ticket=preflightNativeExecutorTransport(ready,request,archive);nativeTransportCheck(a);
++    a.binding=nativeTransportBinding(getNativeExecutorTransportBinding(a.ticket));nativeTransportCheck(a);
++    await nativeTransportAwait(a,nativeTransportRound(a,1));
++    await nativeTransportAwait(a,Promise.resolve(reserveNativeExecutorTransport(a.ticket)));
++    await nativeTransportAwait(a,nativeTransportRound(a,2));
++    const raw=await nativeTransportAwait(a,Promise.resolve(prepareNativeExecutorTransportPending(a.ticket,a.frameOwner)));
++    const result=nativeTransportData(raw,["schema","operationId","nativeJobId","requestSHA256","rootId","inventorySHA256","effectsAllowed","installationPermit","nativeAdmission","powerLossPersistenceVerified"]),b=a.binding;
++    if(result.schema!=="native-executor-pending-preparation/1"||result.operationId!==b.operationId||result.nativeJobId!==b.nativeJobId||result.requestSHA256!==b.requestSHA256
++      ||typeof result.rootId!=="string"||!/^[0-9]+:[0-9]+$/.test(result.rootId)||result.rootId.length>100
++      ||typeof result.inventorySHA256!=="string"||!/^[a-f0-9]{64}$/.test(result.inventorySHA256)
++      ||result.effectsAllowed!==false||result.installationPermit!==false||result.nativeAdmission!==false||result.powerLossPersistenceVerified!==false)throw nativeTransportError();
++    await nativeTransportAwait(a,nativeTransportRound(a,3));nativeTransportCheck(a);
++    const observation:NativeExecutorPreparation=Object.freeze({schema:"native-executor-transport-preparation/1",transportId:a.transportId,
++      operationId:b.operationId,nativeJobId:b.nativeJobId,requestSHA256:b.requestSHA256,requestBytesSHA256:b.requestBytesSHA256,archiveBytesSHA256:b.archiveBytesSHA256,
++      rootId:result.rootId,inventorySHA256:result.inventorySHA256,effectsAllowed:false,installationPermit:false,nativeAdmission:false,powerLossPersistenceVerified:false});
++    nativeTransportCheck(a);a.phase="prepared";return observation;
++  }catch(primary){nativeTransportHold(a);throw primary;}finally{if(timer!==undefined)clearTimeout(timer);}
++}
++
+ function watchNativeReadinessOwner(owner: WebContents): void {
+   if (nativeReadWatchOwner !== undefined) return;
+   nativeReadWatchOwner = owner;
+@@ -118,6 +251,7 @@
+     if (nativeReadFrameEpoch >= Number.MAX_SAFE_INTEGER) nativeReadWatchReady = false;
+     else ++nativeReadFrameEpoch;
+     nativeExecutorFrameInvalidation?.();
++    nativeTransportInvalidation?.();
+     nativeReadInvalidation?.();
+   };
+   try {
+@@ -156,10 +290,13 @@
+  * @param persistor - The ReduxPersistorIPC instance to use for persistence
+  */
+ export function setupPersistenceIPC(persistor: ReduxPersistorIPC): void {
++  if(!nativeTransportResponseInstalled){nativeTransportResponseInstalled=true;ipcMain.on("persist:native-executor-response",nativeTransportRespond);}
++  betterIpcMain.handle("persist:native-executor-prepare",nativeTransportInvoke);
+   if (nativeExecutorFramePersistor === undefined && !nativeExecutorFramePersistorInvalid) nativeExecutorFramePersistor = persistor;
+   else if (nativeExecutorFramePersistor !== persistor) {
+     nativeExecutorFramePersistorInvalid = true;
+     nativeExecutorFrameInvalidation?.();
++    nativeTransportInvalidation?.();
+   }
+   // One retained main readiness observation, one bounded active reader. Timeout
+   // abandons only this read; the actual main initialization is never cancelled.
