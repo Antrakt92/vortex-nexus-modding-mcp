@@ -1,0 +1,128 @@
+--- a/src/main/src/store/mainPersistence.ts
++++ b/src/main/src/store/mainPersistence.ts
+@@ -1404,6 +1404,125 @@
+ }
+ /** Historical known ACK only; permits neither a release retry nor finalization. */
+ export function getNativeExecutorTransportMainRelease(ticket:object) {
++  const completed=nativeSuccessorHistory.get(ticket);
++  if(completed!==undefined)return completed.release;
+   const attempt=nativeTransportTicket(ticket),c=attempt.continuation;
+   return c?.completion?.releaseReceipt===undefined?null:nativeCompletionReceipt(c,c.completion.releaseReceipt);
+ }
++
++
++// Main-only known-success handoff. IPC supplies the genuine ticket after its
++// own completed seven-stage result; this method alone does not prove Renderer ACK.
++const nativeSuccessorMainStatus = ReduxPersistorIPC.prototype.getNativeModPersistenceReservation;
++const nativeSuccessorBackendStatus = LevelPersist.prototype.getNativeBackendWriteStatus;
++const nativeSuccessorHistoryLimit = 4096;
++type NativeExecutorCompletedHistory = Readonly<{
++  operationId:string; nativeJobId:string; requestSHA256:string;
++  release:Readonly<Record<string,unknown>>; transition:Readonly<Record<string,unknown>>;
++  rootId:string; inventorySHA256:string;
++}>;
++let nativeSuccessorHistory = new Map<object,NativeExecutorCompletedHistory>();
++type NativeExecutorSuccessor = {
++  transport?:NativeExecutorTransportAttempt; phase:'preparing'|'armed'|'finalizing'|'retired'|'held'; checking:boolean;
++  history?:Map<object,NativeExecutorCompletedHistory>; nextHistory?:Map<object,NativeExecutorCompletedHistory>;
++};
++let nativeSuccessorAttempt:NativeExecutorSuccessor|undefined;
++const nativeSuccessorError=()=>new Error('NATIVE_EXECUTOR_SUCCESSOR_HELD');
++const nativeSuccessorPhase=(record:{phase:string}):string=>record.phase;
++function nativeSuccessorHold(record:NativeExecutorSuccessor):void {
++  record.phase='held';if(record.transport!==undefined)nativeTransportHold(record.transport);
++}
++function nativeSuccessorCheck(record:NativeExecutorSuccessor):void {
++  if(record.checking){nativeSuccessorHold(record);throw nativeSuccessorError();}
++  record.checking=true;
++  try{
++    const a=record.transport;if(a===undefined||record.history===undefined)throw nativeSuccessorError();
++    const current=()=>nativeSuccessorAttempt===record&&nativeExecutorTransport===a
++      &&record.phase!=='held'&&record.phase!=='retired'&&a.phase==='main_released'
++      &&nativeSuccessorHistory===record.history;
++    if(!current())throw nativeSuccessorError();
++    nativeTransportCheck(a);
++    const ready=a.ready,startup=a.startup,pending=a.pending,c=a.continuation,e=c?.completion;
++    const genesis=pending?.genesis;
++    if(ready===undefined||startup===undefined||pending===undefined||genesis===undefined||c===undefined||e===undefined
++      ||a.source===undefined||a.binding===undefined||a.frameOwner===undefined||a.modOwner===undefined
++      ||nativeMainAttempt!==ready||nativeStartupAttempt!==startup||startup.phase!=='initialized'
++      ||startup.source!==a.source||ready.backend!==startup.backend||nativePendingAttempt!==pending
++      ||pending.phase!=='prepared'||pending.owner!==a.pendingOwner||pending.main!==ready.main
++      ||pending.mainReadyOwner!==a.mainReadyOwner||pending.modOwner!==a.modOwner||pending.frameOwner!==a.frameOwner
++      ||nativeGenesisAttempt!==genesis||genesis.phase!=='ready'||genesis.main!==ready.main||genesis.startup!==startup
++      ||genesis.mainOwner!==a.mainReadyOwner||genesis.reservationOwner!==a.modOwner
++      ||nativeGenesisPreflight||nativeGenesisReentered||!e.closeInvoked||!e.sealStarted||!e.releaseStarted
++      ||e.next===undefined||e.transition===undefined||e.closedJSON===undefined||e.releaseReceipt===undefined
++      ||startup.anchor!==e.next||pending.anchor!==e.next||genesis.anchor!==e.next)throw nativeSuccessorError();
++    // Use genuine captured prototypes, never an instance's substitute/status getter.
++    if(Object.getOwnPropertyDescriptor(ReduxPersistorIPC.prototype,'getNativeModPersistenceReservation')?.value!==nativeSuccessorMainStatus
++      ||Object.getOwnPropertyDescriptor(LevelPersist.prototype,'getNativeBackendWriteStatus')?.value!==nativeSuccessorBackendStatus)throw nativeSuccessorError();
++    const main=nativeStartupData(nativeSuccessorMainStatus.call(ready.main),['phase','registrationPhase','gameId','modId',
++      'effectsAllowed','installationPermit','releaseSupported','writeFailureObserved']);
++    const backend=nativeStartupData(nativeSuccessorBackendStatus.call(ready.backend),['phase','nativeExecutorAnchorPhase',
++      'nativeExecutorAnchorTransaction','nativeRegistrationPhase','nativeRegistrationTransaction','activeIntents','transactionPending',
++      'inTransaction','writeFailureObserved','closeAttempted','rawConnectionExposed','effectsAllowed','installationPermit',
++      'globalSQLIsolationVerified','releaseSupported']);
++    if(main.phase!=='not_reserved'||main.registrationPhase!=='not_attempted'||main.writeFailureObserved!==false
++      ||backend.phase!=='not_reserved'||backend.nativeRegistrationPhase!=='not_attempted'||backend.writeFailureObserved!==false
++      ||backend.closeAttempted!==false||backend.rawConnectionExposed!==false)throw nativeSuccessorError();
++    nativePendingInventory(a.source,e.next,false);
++    if(!current()||nativePendingAttempt!==pending||nativeGenesisAttempt!==genesis||nativeMainAttempt!==ready
++      ||nativeStartupAttempt!==startup||startup.anchor!==e.next||pending.anchor!==e.next||genesis.anchor!==e.next)throw nativeSuccessorError();
++    // Last observable check: an IPC duplicate must directly hold this token,
++    // even though the old completed execution's generic hold is a no-op.
++    checkNativeExecutorFrame(a.frameOwner);
++    if(!current()||a.checking||nativePendingAttempt!==pending||nativeGenesisAttempt!==genesis||nativeMainAttempt!==ready
++      ||nativeStartupAttempt!==startup||nativeSuccessorPhase(pending)!=='prepared'||nativeSuccessorPhase(genesis)!=='ready'
++      ||nativeSuccessorPhase(startup)!=='initialized'||startup.anchor!==e.next||pending.anchor!==e.next||genesis.anchor!==e.next)throw nativeSuccessorError();
++  }catch(primary){nativeSuccessorHold(record);throw primary;}
++  finally{record.checking=false;}
++}
++/** Opaque source-created capability only. No caller receipt or reset flags. */
++export function prepareNativeExecutorSuccessor(ticket:object):()=>void {
++  const attempt=nativeTransportTicket(ticket);
++  if(nativeSuccessorAttempt!==undefined){nativeSuccessorHold(nativeSuccessorAttempt);throw nativeSuccessorError();}
++  const record:NativeExecutorSuccessor={transport:attempt,phase:'preparing',checking:false,history:nativeSuccessorHistory};
++  nativeSuccessorAttempt=record;
++  try{
++    nativeSuccessorCheck(record);
++    const binding=attempt.binding,c=attempt.continuation,e=c?.completion;
++    if(binding===undefined||c===undefined||e===undefined||e.next===undefined||e.transition===undefined||e.releaseReceipt===undefined
++      ||record.history===undefined||record.history.size>=nativeSuccessorHistoryLimit||record.history.has(ticket))throw nativeSuccessorError();
++    const retained=Object.freeze({operationId:binding.operationId,nativeJobId:binding.nativeJobId,requestSHA256:binding.requestSHA256,
++      release:nativeCompletionReceipt(c,e.releaseReceipt),transition:e.transition,rootId:e.next.rootId,inventorySHA256:e.next.inventorySHA256});
++    // All allocation/capacity work precedes any retirement. Never evict history.
++    const nextHistory=new Map(record.history);nextHistory.set(ticket,retained);record.nextHistory=nextHistory;
++    record.phase='armed';
++    return nativeSuccessorFinalizer(record);
++  }catch(primary){nativeSuccessorHold(record);throw primary;}
++}
++
++// Separate lexical scope: a retained used finalizer cannot keep the prepare
++// function's full transport/copy-proof/raw-byte locals reachable.
++function nativeSuccessorFinalizer(record:NativeExecutorSuccessor):()=>void {
++  const finalize=():void=>{
++    if(record.phase==='retired')throw nativeSuccessorError();
++    if(record.phase!=='armed'||nativeSuccessorAttempt!==record){nativeSuccessorHold(record);throw nativeSuccessorError();}
++    record.phase='finalizing';
++    nativeSuccessorCheck(record);
++    const next=record.nextHistory,target=record.transport,history=record.history;
++    if(next===undefined||target===undefined||history===undefined||nativeSuccessorHistory!==history||nativeExecutorTransport!==target) {
++      nativeSuccessorHold(record);throw nativeSuccessorError();
++    }
++    // CALLBACK-FREE TAIL. No function, SQL, IO, await, allocation or old-owner
++    // validation after the first pointer changes. IPC clears its prevalidated
++    // pointers in the same turn. Only compact history survives successful use.
++    record.phase='retired';
++    nativeSuccessorHistory=next;
++    nativeExecutorTransport=undefined;
++    nativePendingAttempt=undefined;
++    nativeGenesisAttempt=undefined;
++    nativeSuccessorAttempt=undefined;
++    record.transport=undefined;
++    record.history=undefined;
++    record.nextHistory=undefined;
++  };
++  return Object.freeze(finalize);
++}

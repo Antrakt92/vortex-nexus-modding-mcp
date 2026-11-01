@@ -4,7 +4,7 @@ This component builds and loads executable SDK bytes without reopening the
 external SDK source files during execution. It captures the existing fifteen-file
 SDK, bundles its twelve JavaScript files into closed Main and relay code, and
 adapts the three reviewed Python sources for an in-memory bootstrap. The fifteen raw SDK files
-remain unchanged. The prepared [105-patch application graph](NATIVE-SOURCE-ASSEMBLY.md)
+remain unchanged. The prepared [application graph](NATIVE-SOURCE-ASSEMBLY.md)
 adds Main/build wiring to this loader and artifact. This is source preparation;
 the kit is not installed and adds no public MCP installation command.
 

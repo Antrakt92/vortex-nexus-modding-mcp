@@ -1,0 +1,23 @@
+--- a/src/shared/src/types/ipc.ts
++++ b/src/shared/src/types/ipc.ts
+@@ -179,6 +179,12 @@
+   archiveBytesSHA256: string;
+   reasonCode: "NATIVE_EXECUTOR_RENDERER_FAILED";
+ }
++export interface NativeExecutorSuccessor {
++  schema: "native-executor-successor/1"; transportId: string; executionId: string;
++  operationId: string; nativeJobId: string; requestSHA256: string;
++  ready: true; effectsAllowed: false; installationPermit: false; nativeAdmission: false;
++}
++
+ export interface NativeExecutorExecutionResult {
+   schema: "native-executor-execution-result/1";
+   transportId: string;
+@@ -559,6 +565,7 @@
+ 
+   /** Wait for the exact submitted batches and earlier accepted persistence work. */
+   "persist:diffs-acknowledged": (batches: PersistenceBatch[]) => Promise<void>;
++  "persist:native-executor-successor": (transportId: string, executionId: string) => Promise<NativeExecutorSuccessor>;
+   "persist:native-executor-execute": (transportId: string) => Promise<NativeExecutorExecutionResult>;
+   "persist:native-executor-prepare": (requestBytes: Uint8Array, archiveBytes: Uint8Array) => Promise<NativeExecutorPreparation>;
+   "persist:native-main-readiness": (requestId: string) => Promise<NativeMainReadinessObservation>;

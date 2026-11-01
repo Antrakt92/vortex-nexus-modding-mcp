@@ -1,0 +1,184 @@
+--- a/src/main/src/store/persistenceIPC.ts
++++ b/src/main/src/store/persistenceIPC.ts
+@@ -1,5 +1,5 @@
+ import { performance } from "node:perf_hooks";
+-import { randomBytes as nativeTransportRandom } from "node:crypto";
++import { randomBytes as nativeTransportRandom, createHash as nativeSuccessorHash } from "node:crypto";
+ import { types as nativeTransportTypes } from "node:util";
+ /**
+  * IPC handlers for persistence operations.
+@@ -13,13 +13,13 @@
+  * 3. Main process applies operations to LevelDB via ReduxPersistorIPC
+  */
+ 
+-import type { DiffOperation, NativeMainReadinessObservation, NativeExecutorChallenge, NativeExecutorPreparation, NativeExecutorExecutionChallenge, NativeExecutorExecutionResponse, NativeExecutorExecutionResult } from "@vortex/shared/ipc";
++import type { DiffOperation, NativeMainReadinessObservation, NativeExecutorChallenge, NativeExecutorPreparation, NativeExecutorExecutionChallenge, NativeExecutorExecutionResponse, NativeExecutorExecutionResult, NativeExecutorSuccessor } from "@vortex/shared/ipc";
+ import type { PersistedHive, PersistedState } from "@vortex/shared/state";
+ import { ipcMain, type WebContents } from "electron";
+ 
+ import { betterIpcMain } from "../ipc";
+ import { log } from "../logging";
+-import { registerAllPersistedHives, getMainPersistor, waitForNativeMainPersistenceReady, checkNativeMainPersistenceReady, preflightNativeExecutorTransport, getNativeExecutorTransportBinding, checkNativeExecutorTransport, holdNativeExecutorTransport, reserveNativeExecutorTransport, prepareNativeExecutorTransportPending, copyNativeExecutorTransport, registerNativeExecutorTransportCopied, closeNativeExecutorTransportWorker, sealNativeExecutorTransportTerminal, releaseNativeExecutorTransport, getNativeExecutorTransportMainRelease } from "./mainPersistence";
++import { registerAllPersistedHives, getMainPersistor, waitForNativeMainPersistenceReady, checkNativeMainPersistenceReady, preflightNativeExecutorTransport, getNativeExecutorTransportBinding, checkNativeExecutorTransport, holdNativeExecutorTransport, reserveNativeExecutorTransport, prepareNativeExecutorTransportPending, copyNativeExecutorTransport, registerNativeExecutorTransportCopied, closeNativeExecutorTransportWorker, sealNativeExecutorTransportTerminal, releaseNativeExecutorTransport, getNativeExecutorTransportMainRelease, prepareNativeExecutorSuccessor } from "./mainPersistence";
+ import type ReduxPersistorIPC from "./ReduxPersistorIPC";
+ 
+ let acknowledgementOwner: WebContents | undefined;
+@@ -206,6 +206,8 @@
+   catch(primary){nativeTransportHold(a);throw primary;}return work;
+ }
+ async function nativeTransportInvoke(event:Electron.IpcMainInvokeEvent,...args:unknown[]):Promise<NativeExecutorPreparation>{
++  if(nativeSuccessorRetiredPrepare(args))throw nativeTransportError();
++  nativeSuccessorReentry(event);
+   if(nativeTransportAttempt!==undefined){
+     const previous=nativeTransportAttempt;
+     // The original event reference covers genuine callback reentry before the
+@@ -367,6 +369,8 @@
+   return Object.freeze(d);
+ }
+ async function nativeExecutionInvoke(event:Electron.IpcMainInvokeEvent,...args:unknown[]):Promise<NativeExecutorExecutionResult>{
++  if(args.length===1&&typeof args[0]==="string"&&nativeSuccessorRetiredTransport(args[0]))throw nativeTransportError();
++  nativeSuccessorReentry(event);
+   const previous=nativeExecutionAttempt;
+   if(previous!==undefined){if(previous.phase!=="completed"&&(event===previous.event||nativeExecutionAuthentic(event,previous.transport)))nativeExecutionHold(previous);throw nativeTransportError();}
+   const t=nativeTransportAttempt;
+@@ -447,7 +451,140 @@
+  *
+  * @param persistor - The ReduxPersistorIPC instance to use for persistence
+  */
++interface NativeSuccessorHistory {
++  readonly ack: Readonly<NativeExecutorSuccessor>;
++  readonly owner: WebContents; readonly frame: Electron.WebFrameMain;
++  readonly persistor: ReduxPersistorIPC; readonly epoch: number;
++  readonly identity: Readonly<NativeExecutorFrameIdentity>;
++  readonly requestBytesSHA256: string; readonly archiveBytesSHA256: string;
++  phase: "preparing" | "retired" | "held";
++}
++const nativeSuccessorHistory = new Map<string, NativeSuccessorHistory>();
++const nativeSuccessorTransports = new Map<string, NativeSuccessorHistory>();
++const nativeSuccessorPreparePairs = new Map<string, NativeSuccessorHistory>();
++const nativeSuccessorMapGet = Map.prototype.get;
++const nativeSuccessorMapSet = Map.prototype.set;
++let nativeSuccessorActive: {row: NativeSuccessorHistory; token: object; event: Electron.IpcMainInvokeEvent; authenticating: boolean} | undefined;
++function nativeSuccessorRetiredTransport(id: string): boolean {
++  const row=Reflect.apply(nativeSuccessorMapGet,nativeSuccessorTransports,[id]) as NativeSuccessorHistory|undefined;
++  return row?.phase==="retired";
++}
++function nativeSuccessorRetiredPrepare(args:unknown[]):boolean {
++  if(args.length!==2)return false;
++  try {
++    const request=nativeTransportCopy(args[0],1052672),archive=nativeTransportCopy(args[1],8192);
++    const key=nativeSuccessorHash("sha256").update(request).digest("hex")+":"+nativeSuccessorHash("sha256").update(archive).digest("hex");
++    const row=Reflect.apply(nativeSuccessorMapGet,nativeSuccessorPreparePairs,[key]) as NativeSuccessorHistory|undefined;
++    return row?.phase==="retired";
++  } catch { return false; } // Existing current-attempt validation/duplicate policy still applies.
++}
++function nativeSuccessorAuthentic(event: Electron.IpcMainInvokeEvent, row: NativeSuccessorHistory): boolean {
++  try { return event.sender === row.owner && event.senderFrame === row.frame; } catch { return false; }
++}
++function nativeSuccessorReentry(event: Electron.IpcMainInvokeEvent): void {
++  const active = nativeSuccessorActive;
++  if (active === undefined) return;
++  let authentic=event===active.event;
++  if (!authentic && active.authenticating && !nativeTransportTypes.isProxy(event)) {
++    // Genuine distinct Electron events with own data identities can be matched
++    // during initial authentication without recursively invoking event getters.
++    try {
++      const sender=Object.getOwnPropertyDescriptor(event,"sender"),frame=Object.getOwnPropertyDescriptor(event,"senderFrame");
++      authentic=sender!==undefined && frame!==undefined && "value" in sender && "value" in frame
++        && sender.value===active.row.owner && frame.value===active.row.frame;
++    } catch { /* Unauthenticated reentry is refused inertly. */ }
++  } else if (!authentic && !active.authenticating) authentic=nativeSuccessorAuthentic(event,active.row);
++  if (authentic) {
++    active.row.phase = "held";
++    if (!active.authenticating) try { holdNativeExecutorFrame(active.token); } catch { /* Original hold remains sticky. */ }
++  }
++  throw nativeTransportError();
++}
++// Historical authentication never checks the old reserved token or a new operation.
++function nativeSuccessorSample(event: Electron.IpcMainInvokeEvent, row: NativeSuccessorHistory): NativeExecutorFrameIdentity {
++  const {owner, frame, persistor} = row;
++  if (!nativeSuccessorAuthentic(event,row) || nativeExecutorFramePersistorInvalid
++      || row.epoch !== nativeReadFrameEpoch || !nativeReadWatchReady
++      || owner !== acknowledgementOwner || owner !== nativeReadWatchOwner
++      || persistor !== nativeExecutorFramePersistor || getMainPersistor() !== persistor
++      || owner.isDestroyed() || owner.mainFrame !== frame) throw nativeTransportError();
++  const identity = {mainProcessId:process.pid,webContentsId:owner.id,rendererProcessId:owner.getOSProcessId(),frameProcessId:frame.processId,frameRoutingId:frame.routingId};
++  if (!nativeExecutorFrameSame(identity,row.identity) || !nativeSuccessorAuthentic(event,row)
++      || row.epoch !== nativeReadFrameEpoch || nativeExecutorFramePersistorInvalid
++      || owner !== acknowledgementOwner || owner !== nativeReadWatchOwner || !nativeReadWatchReady
++      || owner.isDestroyed() || owner.mainFrame !== frame || getMainPersistor() !== persistor
++      || nativeExecutorFramePersistor !== persistor) throw nativeTransportError();
++  return identity;
++}
++let nativeSuccessorHistoricalReading = false;
++function nativeSuccessorInvoke(event: Electron.IpcMainInvokeEvent, ...args: unknown[]): NativeExecutorSuccessor {
++  // An exact old ACK cannot poison a newer handoff's provisional frame owner.
++  // Invalid/current requests still reach the original authentic reentry guard.
++  const valid = args.length === 2 && typeof args[0] === "string" && typeof args[1] === "string"
++    && args[0].length <= 256 && args[1].length <= 256;
++  const key = valid ? (args[0] as string) + ":" + (args[1] as string) : "";
++  const historical = valid ? Reflect.apply(nativeSuccessorMapGet,nativeSuccessorHistory,[key]) as NativeSuccessorHistory | undefined : undefined;
++  if (historical?.phase === "retired") {
++    if (nativeSuccessorHistoricalReading || historical.ack.transportId !== args[0] || historical.ack.executionId !== args[1]) throw nativeTransportError();
++    nativeSuccessorHistoricalReading = true;
++    try {
++      const first=nativeSuccessorSample(event,historical),second=nativeSuccessorSample(event,historical);
++      if (!nativeExecutorFrameSame(first,second) || historical.phase !== "retired") throw nativeTransportError();
++      return historical.ack;
++    } finally { nativeSuccessorHistoricalReading = false; }
++  }
++  nativeSuccessorReentry(event);
++  if (!valid || historical !== undefined) throw nativeTransportError();
++  const t=nativeTransportAttempt,a=nativeExecutionAttempt,f=nativeExecutorFrameRecord;
++  if (t===undefined || a===undefined || f===undefined
++      || a.transport!==t || a.phase!=="completed" || a.checking || a.challenge!==undefined
++      || t.phase!=="prepared" || t.checking || t.challenge!==undefined || a.result===undefined
++      || t.transportId!==args[0] || a.executionId!==args[1] || !a.mainReleased
++      || t.ticket===undefined || t.frameOwner!==f.token || f.phase!=="reserved" || f.checking
++      || f.owner===undefined || f.frame===undefined || f.persistor===undefined || f.identity===undefined
++      || t.binding===undefined || nativeSuccessorHistory.size>=4096) throw nativeTransportError();
++  const result=a.result,b=t.binding;
++  if (result.transportId!==t.transportId || result.executionId!==a.executionId || result.operationId!==b.operationId
++      || result.nativeJobId!==b.nativeJobId || result.requestSHA256!==b.requestSHA256
++      || result.mainReleased!==true || result.rendererReleased!==true || result.effectsAllowed!==false
++      || result.installationPermit!==false || result.nativeAdmission!==false) throw nativeTransportError();
++  const ack:Readonly<NativeExecutorSuccessor>=Object.freeze({schema:"native-executor-successor/1",transportId:t.transportId,executionId:a.executionId,
++    operationId:b.operationId,nativeJobId:b.nativeJobId,requestSHA256:b.requestSHA256,ready:true,effectsAllowed:false,installationPermit:false,nativeAdmission:false});
++  const row:NativeSuccessorHistory={ack,owner:f.owner,frame:f.frame,persistor:f.persistor,epoch:f.epoch,identity:Object.freeze({...f.identity}),
++    requestBytesSHA256:b.requestBytesSHA256,archiveBytesSHA256:b.archiveBytesSHA256,phase:"preparing"};
++  // Allocate history and claim reentry before any Main/frame callback.
++  const active={row,token:f.token,event,authenticating:true};nativeSuccessorActive=active;
++  let authentic=false;
++  try {
++    authentic=nativeSuccessorAuthentic(event,row);active.authenticating=false;
++    if (!authentic) { nativeSuccessorActive=undefined; throw nativeTransportError(); }
++    if (row.phase!=="preparing") throw nativeTransportError();
++    Reflect.apply(nativeSuccessorMapSet,nativeSuccessorHistory,[key,row]);
++    Reflect.apply(nativeSuccessorMapSet,nativeSuccessorTransports,[t.transportId,row]);
++    Reflect.apply(nativeSuccessorMapSet,nativeSuccessorPreparePairs,[row.requestBytesSHA256+":"+row.archiveBytesSHA256,row]);
++    nativeSuccessorSample(event,row);checkNativeExecutorFrame(f.token);
++    const finalize=prepareNativeExecutorSuccessor(t.ticket);
++    nativeSuccessorSample(event,row);checkNativeExecutorFrame(f.token);
++    if (nativeSuccessorActive!==active || row.phase!=="preparing" || nativeTransportAttempt!==t
++        || nativeExecutionAttempt!==a || nativeExecutorFrameRecord!==f || a.phase!=="completed"
++        || a.result!==result || t.binding!==b || f.phase!=="reserved") throw nativeTransportError();
++    finalize();
++    // Main has retired: this tail performs no callbacks, validation, await or allocation.
++    row.phase="retired";
++    nativeTransportAttempt=undefined;nativeExecutionAttempt=undefined;nativeExecutorFrameRecord=undefined;
++    nativeTransportInvalidation=undefined;nativeExecutionInvalidation=undefined;nativeExecutorFrameInvalidation=undefined;
++    nativeSuccessorActive=undefined;
++    return ack;
++  } catch(primary) {
++    row.phase="held";
++    if (authentic) try { holdNativeExecutorFrame(f.token); } catch { /* Preserve first failure. */ }
++    nativeSuccessorActive=undefined;
++    throw primary;
++  }
++}
++
+ export function setupPersistenceIPC(persistor: ReduxPersistorIPC): void {
++  betterIpcMain.handle("persist:native-executor-successor",nativeSuccessorInvoke);
+   if(!nativeExecutionListenersInstalled){nativeExecutionListenersInstalled=true;ipcMain.on("persist:native-executor-execution-response",nativeExecutionRespond);ipcMain.on("persist:native-executor-execution-invalidated",nativeExecutionInvalidate);}
+   betterIpcMain.handle("persist:native-executor-execute",nativeExecutionInvoke);
+   if(!nativeTransportResponseInstalled){nativeTransportResponseInstalled=true;ipcMain.on("persist:native-executor-response",nativeTransportRespond);}

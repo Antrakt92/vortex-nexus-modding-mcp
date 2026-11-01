@@ -1,0 +1,10 @@
+--- a/src/preload/src/index.ts
++++ b/src/preload/src/index.ts
+@@ -174,6 +174,7 @@
+     },
+ 
+     persist: {
++      handoffNativeExecutorSuccessor: (transportId, executionId) => betterIpcRenderer.invoke("persist:native-executor-successor", transportId, executionId),
+       executeNativeExecutor: (transportId) => betterIpcRenderer.invoke("persist:native-executor-execute", transportId),
+       onExecutorExecutionChallenge: nativeExecutionRegisterReceiver,
+       invalidateNativeExecutorExecution: nativeExecutionInvalidate,

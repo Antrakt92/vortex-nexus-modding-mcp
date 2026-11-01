@@ -12,7 +12,7 @@ const PACKETS = Object.freeze({
   lifecycle: path.join(HERE, 'native-patches/vortex-2.9.1'),
   persistence: path.join(HERE, 'native-patches/vortex-persistence-2.9.1'),
 });
-const SERIES_SHA256 = '2adcb694060d87140ca28f1498ae534ae3735b6e29be6b893a23b1250c45288b';
+const SERIES_SHA256 = '94b15a811b99510396fc83fed627a2c698cdf808ce16a2963431d2119108f5ab';
 export const NATIVE_SOURCE_PATHS = Object.freeze([
   "src/renderer/src/extensions/mod_management/eventHandlers.ts",
   "src/renderer/src/extensions/mod_management/index.ts",
@@ -116,12 +116,12 @@ function readPacket() {
   need(sha(raw) === SERIES_SHA256, 'SERIES');
   const series = strict.parseStrictJSON(raw, {maxBytes: 96*1024, maxDepth: 8, maxTokens: 8000});
   need(series.schema === 'native-source-series/2' && series.files.length === 25
-    && series.patches.length === 105 && exact(Object.fromEntries(series.files.map(row => [row.path, true])), NATIVE_SOURCE_PATHS), 'SERIES');
+    && series.patches.length === 111 && exact(Object.fromEntries(series.files.map(row => [row.path, true])), NATIVE_SOURCE_PATHS), 'SERIES');
   const inventory = () => {
     for (const {id, directory: packet} of roots) {
       const names = series.patches.filter(row => row.packet === id)
         .flatMap(row => [row.name+'.json', row.name+'.patch']).sort();
-      need(names.length === (id === 'lifecycle' ? 66 : 144), 'SERIES');
+      need(names.length === (id === 'lifecycle' ? 66 : 156), 'SERIES');
       const directory = fs.opendirSync(packet), actual = [];
       try {
         for (let entry = directory.readSync(); entry !== null; entry = directory.readSync()) {
@@ -135,6 +135,11 @@ function readPacket() {
   };
   inventory();
   const records = series.patches.map(row => {
+    // New graph rows omit absent optional edges to retain the fixed byte cap.
+    // Normalize before matching manifests and enforcing every dependency edge.
+    row = {requiredManagerPatchSHA256: null, requiredCompanionPatch: null,
+      requiredCompanionPatchSHA256: null, requiredCompanionOutputSHA256: null,
+      requiredCompanionPacket: null, ...row};
     need(/^[a-z][a-z-]{0,63}$/.test(row.name) && NATIVE_SOURCE_PATHS.includes(row.path)
       && Object.hasOwn(PACKETS, row.packet), 'SERIES');
     const packet = PACKETS[row.packet];

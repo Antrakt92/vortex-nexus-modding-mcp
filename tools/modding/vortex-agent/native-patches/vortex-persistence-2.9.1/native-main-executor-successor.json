@@ -1,0 +1,20 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/main/src/store/mainPersistence.ts",
+  "originalSourceSHA256": "7d3e28cb829914fb092774eca3fc357645fa7ef508177d1a0e3b32eed58f05fe",
+  "inputSHA256": "969b5d4180ea92e051ec3cc01eb7ea27ce4451a3f7ce06c18050b6a0f1bfe5f0",
+  "outputSHA256": "c87e07044cd05be1f9d6cce68355234d623ec68ed6c5e18865eb6dc44fb0b8c6",
+  "patchSHA256": "f696fce270e32a2b6aab68244d9e9de5aeff03071e886bf05533bd70f6d29db2",
+  "prerequisitePatch": "native-main-sdk-capsule.patch",
+  "prerequisitePatchSHA256": "eeafcb602e2564e06cbe83856de632022f15d52812b52d8cf01ae1b12b41277c",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "effectsAllowed": false,
+  "installationPermit": false,
+  "nativeAdmission": false,
+  "powerLossPersistenceVerified": false
+}
