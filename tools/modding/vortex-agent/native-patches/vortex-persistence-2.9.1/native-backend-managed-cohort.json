@@ -1,0 +1,29 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/main/src/store/LevelPersist.ts",
+  "originalSourceSHA256": "742929670876a79c7332a13d16381cf2098ee55f57f838e3e35668853d1455a1",
+  "inputSHA256": "11ca91f241329d33332a083c7538449c8cd5181aaa04247993646c1488a6662a",
+  "outputSHA256": "a032d35840fe5341ae7acd2e02c55a1b99f5bddf51b7d97a7f0c93e113d69620",
+  "patchSHA256": "2ba00f33c40ecfbaf6abc530fb740cae0db5bd008dac4ec8d6247397fc9c98bc",
+  "prerequisitePatch": "native-backend-unregistered-release.patch",
+  "prerequisitePatchSHA256": "1332d28662aece843048cb29e6e9651255ce83c6b3276c02e93d1f79f4f64223",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "effectsAllowed": false,
+  "installationPermit": false,
+  "nativeAdmission": false,
+  "globalSQLIsolationVerified": false,
+  "powerLossPersistenceVerified": false,
+  "limitations": [
+    "Native ownership requires the exact source-registered bounded managed attachment cohort and one qualified QueryRegistry connection.",
+    "Ordinary factory-managed writers share a source-owned fence; unmanaged raw SQL and privileged same-process JavaScript are not isolated.",
+    "Failed, transaction-open, closed or raw-exposed writers retain admission holds; no runtime acceptance or installation permit is inferred."
+  ],
+  "requiredCompanionPatch": "native-sql-managed-cohort.patch",
+  "requiredCompanionPatchSHA256": "b4ce0a322608ffb576f3c69d0df1d787ceddd434864286c3edf9893bfd5acaa4",
+  "requiredCompanionOutputSHA256": "de3ca366537683f97dec6264854b6328cb60d6272253db8ffabb3cc54664f899"
+}

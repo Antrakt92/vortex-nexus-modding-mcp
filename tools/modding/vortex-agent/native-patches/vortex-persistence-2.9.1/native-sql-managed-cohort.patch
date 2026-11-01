@@ -1,0 +1,202 @@
+--- a/src/main/src/store/DuckDBSingleton.ts
++++ b/src/main/src/store/DuckDBSingleton.ts
+@@ -8,6 +8,11 @@
+  * Manages a single shared in-memory DuckDB instance with level_pivot loaded.
+  * All LevelPersist instances attach their databases to this shared instance.
+  */
++type NativeManagedWriter = { connection: DuckDBConnection; alias: string; managed: object | undefined;
++  active: number; transaction: boolean; failed: boolean; raw: boolean; closed: boolean };
++type NativeManagedFence = { selected: DuckDBConnection; alias: string; phase: "pending" | "reserved" | "held";
++  generation: number; writers: NativeManagedWriter[]; drain?: () => void };
++
+ class DuckDBSingleton {
+   static #sInstance: DuckDBSingleton | undefined;
+ 
+@@ -18,6 +23,9 @@
+   #mAttachedDatabases: Map<string, string> = new Map(); // alias -> path
+   #mConnections: DuckDBConnection[] = [];
+ 
++  #nativeWriters: NativeManagedWriter[] = [];
++  #nativeWriterTickets = new WeakMap<object, NativeManagedWriter>();
++  #nativeWriterFence: NativeManagedFence | undefined;
+   #nativeActive = 0;
+   #nativeFailed = false;
+   #nativeInitStarts = 0;
+@@ -27,13 +35,14 @@
+   #nativeGeneration = 0;
+   #nativeIssued: Array<{ connection: DuckDBConnection; kind: "attach" | "query"; alias?: string }> = [];
+   #nativeHold: { owner: object; phase: "pending" | "reserved" | "held"; generation: number;
+-    registry: QueryRegistry; queryOwner?: object; backend: DuckDBConnection; query: DuckDBConnection | undefined } | undefined;
++    registry: QueryRegistry; queryOwner?: object; backend: DuckDBConnection; alias: string; query: DuckDBConnection | undefined } | undefined;
+ 
+   private constructor() {}
+ 
+   #nativeGuard(): void {
+-    if (this.#nativeHold !== undefined) {
+-      this.#nativeHold.phase = "held";
++    if (this.#nativeHold !== undefined || this.#nativeWriterFence !== undefined) {
++      if (this.#nativeWriterFence !== undefined) this.#nativeWriterFence.phase = "held";
++      if (this.#nativeHold !== undefined) this.#nativeHold.phase = "held";
+       throw new Error("NATIVE_SQL_POOL_HELD");
+     }
+   }
+@@ -48,6 +57,94 @@
+     return this.#mInitialized && this.#mDuckDB !== undefined && this.#mInitPromise === undefined
+       && this.#nativeActive === 0 && !this.#nativeFailed && !this.#nativeClosed
+       && !this.#nativeDetached && this.#nativeInitStarts === 1 && this.#nativeBootstrapClosed;
++  }
++  // Called by the actual LevelPersist.create factory after its own constructor.
++  // This is a trusted source registration, not an arbitrary-JavaScript sandbox.
++  public registerNativeManagedBackend(connection: DuckDBConnection, alias: string, level: object): void {
++    this.#nativeExact(); this.#nativeGuard();
++    const writer = this.#nativeWriter(connection, alias);
++    if (writer.managed !== undefined || level === null || typeof level !== "object" || nativeTypes.isProxy(level))
++      throw new Error("NATIVE_SQL_MANAGED_BACKEND_REFUSED");
++    writer.managed = level;
++    this.#nativeGeneration++;
++  }
++  #nativeWriter(connection: DuckDBConnection, alias: string): NativeManagedWriter {
++    const writer = this.#nativeWriters.find(row => row.connection === connection && row.alias === alias);
++    if (writer === undefined) throw new Error("NATIVE_SQL_WRITER_REFUSED");
++    return writer;
++  }
++  #nativeWriterFail(): Error {
++    if (this.#nativeWriterFence !== undefined) this.#nativeWriterFence.phase = "held";
++    if (this.#nativeHold !== undefined) this.#nativeHold.phase = "held";
++    return new Error("NATIVE_SQL_WRITERS_HELD");
++  }
++  public enterNativeManagedWriter(connection: DuckDBConnection, alias: string, kind: "write" | "begin" | "terminal" | "close"): object {
++    this.#nativeExact();
++    const writer = this.#nativeWriter(connection, alias);
++    if (this.#nativeWriterFence !== undefined || this.#nativeHold !== undefined) {
++      const failure = this.#nativeWriterFail();
++      // Cleanup of an already-open transaction remains possible, but never grants admission.
++      if (kind !== "terminal" || !writer.transaction) throw failure;
++    }
++    const ticket = Object.freeze({});
++    this.#nativeWriterTickets.set(ticket, writer); writer.active++;
++    if (kind === "close") writer.closed = true;
++    return ticket;
++  }
++  public finishNativeManagedWriter(ticket: object, ok: boolean, transaction: boolean): void {
++    const writer = this.#nativeWriterTickets.get(ticket);
++    if (writer === undefined || typeof ok !== "boolean" || typeof transaction !== "boolean") throw new Error("NATIVE_SQL_WRITER_REFUSED");
++    this.#nativeWriterTickets.delete(ticket); writer.active--; writer.transaction = transaction;
++    if (!ok) { writer.failed = true; this.#nativeWriterFail(); }
++    const fence = this.#nativeWriterFence;
++    if (fence !== undefined && fence.writers.every(row => row.active === 0) && fence.drain !== undefined) {
++      const settle = fence.drain; fence.drain = undefined; settle();
++    }
++  }
++  public exposeNativeManagedConnection(connection: DuckDBConnection, alias: string): void {
++    const writer = this.#nativeWriter(connection, alias);
++    writer.raw = true;
++    if (this.#nativeWriterFence !== undefined || this.#nativeHold !== undefined) throw this.#nativeWriterFail();
++  }
++  #nativeWritersStable(fence: NativeManagedFence): boolean {
++    return fence === this.#nativeWriterFence && fence.generation === this.#nativeGeneration
++      && fence.writers.length > 0 && fence.writers.length <= 8
++      && fence.writers.length === this.#nativeWriters.length
++      && fence.writers.every((writer, index) => this.#nativeWriters[index] === writer
++        && writer.managed !== undefined && writer.active === 0 && !writer.transaction
++        && !writer.failed && !writer.raw && !writer.closed);
++  }
++  public reserveNativeManagedWriters(connection: DuckDBConnection, alias: string, level: object): Promise<void> {
++    this.#nativeExact();
++    if (this.#nativeWriterFence !== undefined || this.#nativeHold !== undefined) return Promise.reject(this.#nativeWriterFail());
++    const writer = this.#nativeWriter(connection, alias);
++    const fence: NativeManagedFence = {selected: connection, alias, phase: "pending", generation: this.#nativeGeneration,
++      writers: this.#nativeWriters.slice()};
++    this.#nativeWriterFence = fence;
++    if (writer.managed !== level || !this.#nativeStable() || fence.writers.some(row => row.managed === undefined
++      || row.failed || row.raw || row.closed || row.transaction)) fence.phase = "held";
++    const drained = fence.writers.every(row => row.active === 0) ? Promise.resolve()
++      : new Promise<void>(resolve => { fence.drain = resolve; });
++    return drained.then(() => {
++      if (fence.phase !== "pending" || !this.#nativeWritersStable(fence)) throw this.#nativeWriterFail();
++      fence.phase = "reserved";
++    });
++  }
++  public checkNativeManagedWriters(connection: DuckDBConnection, alias: string, level: object): void {
++    this.#nativeExact();
++    const fence = this.#nativeWriterFence;
++    if (fence === undefined || fence.selected !== connection || fence.alias !== alias
++      || this.#nativeWriter(connection, alias).managed !== level || fence.phase !== "reserved"
++      || !this.#nativeWritersStable(fence)) throw this.#nativeWriterFail();
++  }
++  #nativeAttachmentCohort(backend: DuckDBConnection, alias: string): boolean {
++    const attached = this.#nativeIssued.filter(row => row.kind === "attach");
++    const fence = this.#nativeWriterFence;
++    if (fence === undefined) return false;
++    return fence.selected === backend && fence.alias === alias && fence.phase === "reserved"
++      && this.#nativeWritersStable(fence) && attached.length === fence.writers.length
++      && attached.every((row, index) => row.connection === fence.writers[index]?.connection
++        && row.alias === fence.writers[index]?.alias);
+   }
+   public reserveNativeSQLConnections(backend: DuckDBConnection, alias: string, registry: QueryRegistry): object {
+     this.#nativeExact();
+@@ -56,20 +153,20 @@
+     const queries = this.#nativeIssued.filter((r) => r.kind === "query");
+     const attachedRecord = attached[0], query = queries[0]?.connection;
+     const hold = { owner: Object.freeze({}), phase: "pending" as "pending" | "reserved" | "held",
+-      generation: this.#nativeGeneration, registry, backend, query,
++      generation: this.#nativeGeneration, registry, backend, alias, query,
+       queryOwner: undefined as object | undefined };
+     this.#nativeHold = hold;
+     try {
+       // The public Map is not authority: records of issued capabilities are private.
+-      if (!this.#nativeStable() || this.#nativeIssued.length !== 2 || attached.length !== 1 || queries.length !== 1
++      if (!this.#nativeStable() || this.#nativeIssued.length !== attached.length + 1 || !this.#nativeAttachmentCohort(backend, alias) || queries.length !== 1
+           || attachedRecord === undefined || query === undefined
+-          || attachedRecord.connection !== backend || attachedRecord.alias !== alias || backend === query
+-          || this.#mConnections.length !== 2 || !this.#mConnections.includes(backend)
++          || !attached.some(row => row.connection === backend && row.alias === alias) || backend === query
++          || this.#mConnections.length !== attached.length + 1 || !this.#mConnections.includes(backend)
+           || !this.#mConnections.includes(query)) throw new Error("NATIVE_SQL_POOL_HELD");
+       hold.queryOwner = QueryRegistry.prototype.acquireNativeQueryOwner.call(registry, query);
+       if (hold.queryOwner === null || typeof hold.queryOwner !== "object") throw new Error("NATIVE_SQL_POOL_HELD");
+       QueryRegistry.prototype.checkNativeQueryOwner.call(registry, hold.queryOwner, query);
+-      if (hold.phase !== "pending" || !this.#nativeStable() || hold.generation !== this.#nativeGeneration
++      if (hold.phase !== "pending" || !this.#nativeAttachmentCohort(backend, alias) || !this.#nativeStable() || hold.generation !== this.#nativeGeneration
+           || DuckDBSingleton.#sInstance !== this) throw new Error("NATIVE_SQL_POOL_HELD");
+       hold.phase = "reserved";
+       return hold.owner;
+@@ -81,10 +178,11 @@
+     if (hold === undefined || owner !== hold.owner || hold.phase !== "reserved") throw new Error("NATIVE_SQL_POOL_REFUSED");
+     try {
+       const query = hold.query;
+-      if (!this.#nativeStable() || hold.generation !== this.#nativeGeneration || hold.queryOwner === undefined
++      if (!this.#nativeAttachmentCohort(hold.backend, hold.alias)
++          || !this.#nativeStable() || hold.generation !== this.#nativeGeneration || hold.queryOwner === undefined
+           || query === undefined) throw new Error("NATIVE_SQL_POOL_HELD");
+       QueryRegistry.prototype.checkNativeQueryOwner.call(hold.registry, hold.queryOwner, query);
+-      if (hold.phase !== "reserved" || !this.#nativeStable() || hold.generation !== this.#nativeGeneration
++      if (hold.phase !== "reserved" || !this.#nativeAttachmentCohort(hold.backend, hold.alias) || !this.#nativeStable() || hold.generation !== this.#nativeGeneration
+           || DuckDBSingleton.#sInstance !== this) throw new Error("NATIVE_SQL_POOL_HELD");
+     } catch { hold.phase = "held"; throw new Error("NATIVE_SQL_POOL_HELD"); }
+   }
+@@ -98,6 +196,7 @@
+     return () => {
+       if (consumed || this.#nativeHold !== hold || hold.owner !== owner || hold.phase !== "reserved"
+           || DuckDBSingleton.#sInstance !== this || hold.generation !== this.#nativeGeneration
++          || !this.#nativeAttachmentCohort(hold.backend, hold.alias)
+           || !this.#mInitialized || this.#mDuckDB === undefined || this.#mInitPromise !== undefined
+           || this.#nativeActive !== 0 || this.#nativeFailed || this.#nativeClosed || this.#nativeDetached
+           || this.#nativeInitStarts !== 1 || !this.#nativeBootstrapClosed) throw new Error("NATIVE_SQL_RELEASE_REFUSED");
+@@ -105,6 +204,7 @@
+       // No validation, allocation or callback after the first inner owner clear.
+       consumed = true;
+       this.#nativeHold = undefined;
++      this.#nativeWriterFence = undefined;
+     };
+   }
+ 
+@@ -192,6 +292,8 @@
+ 
+     const connection = await this.#mDuckDB.connect();
+     this.#nativeIssued.push({ connection, kind: "attach", alias });
++    this.#nativeWriters.push({connection, alias, managed: undefined, active: 0, transaction: false,
++      failed: false, raw: false, closed: false});
+     this.#mConnections.push(connection);
+     this.#nativeLive();
+ 

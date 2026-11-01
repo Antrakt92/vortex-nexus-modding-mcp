@@ -1,0 +1,26 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/main/src/store/DuckDBSingleton.ts",
+  "originalSourceSHA256": "d11e7ca11c9bc0b0ee9659b4a4d26c7fba14e6a56ccae03b25df33d91e4589a0",
+  "inputSHA256": "fe8733d7cd06c2f49f690607041f0ecad3f890b9bf79480bec688a8628926dda",
+  "outputSHA256": "de3ca366537683f97dec6264854b6328cb60d6272253db8ffabb3cc54664f899",
+  "patchSHA256": "b4ce0a322608ffb576f3c69d0df1d787ceddd434864286c3edf9893bfd5acaa4",
+  "prerequisitePatch": "native-sql-registration-release.patch",
+  "prerequisitePatchSHA256": "1a1859fa73c6279cc78b78e00d7d533525cfa619216ab96c370035bb0b8be890",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "effectsAllowed": false,
+  "installationPermit": false,
+  "nativeAdmission": false,
+  "globalSQLIsolationVerified": false,
+  "powerLossPersistenceVerified": false,
+  "limitations": [
+    "Native ownership requires the exact source-registered bounded managed attachment cohort and one qualified QueryRegistry connection.",
+    "Ordinary factory-managed writers share a source-owned fence; unmanaged raw SQL and privileged same-process JavaScript are not isolated.",
+    "Failed, transaction-open, closed or raw-exposed writers retain admission holds; no runtime acceptance or installation permit is inferred."
+  ]
+}

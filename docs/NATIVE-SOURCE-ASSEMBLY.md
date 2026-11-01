@@ -1,6 +1,6 @@
 # Assemble the reviewed Vortex source patches
 
-`native-source-series.mjs` applies the fixed sequence of 122 reviewed patches to
+`native-source-series.mjs` applies the fixed sequence of 124 reviewed patches to
 25 original files from Vortex `v2.9.1`, commit
 `c80326367cbe6d96621ad6cf4a5488ef49bac110`. It replaces manually composing separate
 patch chains before compilation. It does not change an installed application or
@@ -35,7 +35,7 @@ match the pinned series. Patch application requires exact offsets and context;
 it has no fuzzy matching or hash-refresh mode.
 
 The fixed graph combines the 34-patch mod-management/transfer packet with the
-88-patch persistence packet. The latter includes renderer target admission and
+90-patch persistence packet. The latter includes renderer target admission and
 acknowledged diffs, main/preload/shared IPC, backend reservations and managed SQL
 ownership, the main build's runtime binding and startup history classification.
 Both runtime packet directories have separate closed inventories;
@@ -801,3 +801,45 @@ The affected-source matrix passed 603 tests without skips. Five separate SDK
 fixture cases also passed, including real Node/Python ZIP copy and prepared
 cancellation with joined process/pipe closure. Those physical cases use their
 own synthetic workspaces; they do not prove the full application flow in Vortex.
+
+## Managed SQL attachment cohort (124 patches) — 1 November 2026
+
+The isolated application creates an early and a final `LevelPersist` backend,
+then one query connection. The previous native admission required exactly one
+backend and therefore could not accept that application shape.
+
+The two new patches register backends through the actual `LevelPersist.create`
+factory. Before native admission, a shared fence stops new ordinary writes and
+joins writes already accepted on every registered backend. Admission requires
+the exact bounded managed cohort and one qualified query connection. Unknown
+attachments, raw connection exposure, failed writes and open transactions refuse
+admission. Foreign owner checks reject before touching another operation's fence.
+Release validates the cohort before releasing the query owner.
+
+The graph retains 25 original files and now contains 34 lifecycle and 90
+persistence patches. Its closed packet inventories contain 68 and 180 files;
+the 96 KiB manifest limit is unchanged.
+
+Local verification passed 14 cohort regressions and 23 assembly checks without
+skips. The two-backend positive fails against the previous source. A separate
+121-test historical matrix passed; it exercises its pinned earlier stages rather
+than substituting for current-source acceptance. Fresh Main TypeScript, build and
+all 52 unchanged upstream Main tests passed. Inspection matched all 25 selected
+Program inputs and 23 runtime-map entries, including seven fresh Main entries;
+the other components retain their previous output evidence. The isolated build
+also preserves all fifteen fixture overlays and the captured SDK.
+
+The current-source consumer matrix exercised 110 cases with one backend and 107
+applicable cases with two backends, including cancellation, registration and
+sequential handoff. The SQL, frame and worker collaborators remain explicit
+facades. A predecessor-only assertion stays in the historical lane; two more
+predecessor comparisons and an exact-one-backend count assertion stay in the
+one-backend lane. Their expectations were preserved. These cases do not prove
+physical Vortex installation or worker closure.
+
+Local build proof: `local-state/native-inert-cancel/bridge/sql-pool-build/PROGRAM-MAP-PROOF.json`,
+SHA-256 `bb4785c33e7659951b8ac5be981ab1c4685b5b6795604fc4981b3b57a5d4aa5f`.
+This is an offline source and build qualification. The application has not been
+launched with this repair. Full cancellation, installation and public MCP
+activation remain separate gates; startup activation ordering and the isolated
+host's staging layout also need correction before another native attempt.
