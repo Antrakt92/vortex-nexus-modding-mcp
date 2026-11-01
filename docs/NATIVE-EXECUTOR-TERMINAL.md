@@ -40,12 +40,80 @@ The placeholders above describe the format; they are not valid digest values.
 The evidence is limited to 8 KiB. Duplicate keys, extra fields, malformed UTF-8,
 unsupported outcomes and permission booleans refuse publication.
 
-Only a future actual source-bound coordinator may call the writer after known
-registration/readback, renderer adoption, physical worker closure and coordinated
-release acknowledgement. This module records hashes and a historical assertion;
+For version 1, only an actual source-bound coordinator may call the writer after
+known registration/readback, renderer adoption, physical worker closure and
+coordinated release acknowledgement. This module records hashes and a historical assertion;
 it does **not** independently verify those observations or authenticate their
 producer. Calling this API with claimed hashes cannot authorize installation.
 There is no MCP writer or generic native dispatch added by this component.
+
+## Completion with retained writer ownership
+
+Version 1 requires an executed coordinated release acknowledgement. Its exact
+record/evidence formats and meaning are unchanged. It cannot be used for an
+operation whose writer barriers are still held.
+
+Version 2 separates completed installation work from volatile writer release:
+
+```json
+{
+  "schema": "native-executor-terminal-evidence/2",
+  "outcome": "committed_adopted_worker_closed",
+  "fullRecordSHA256": "64-lowercase-hex-digits",
+  "registrationObservationSHA256": "64-lowercase-hex-digits",
+  "adoptionObservationSHA256": "64-lowercase-hex-digits",
+  "workerClosureObservationSHA256": "64-lowercase-hex-digits",
+  "ownershipHoldObservationSHA256": "64-lowercase-hex-digits"
+}
+```
+
+The disk record uses `native-executor-terminal/2`. Mixing a v1 release field
+with a v2 ownership field, substituting outcomes or accepting an unknown version
+is refused. The placeholders are not valid digests. Both direct readback and
+cached inventory validate the selected version, evidence hash and original
+operation/job/root/directory binding. Old v1 terminal bytes need no migration.
+
+The source coordinator must first establish actual tracked registration and
+readback, exact renderer adoption, closure of both worker processes and their
+resources, and retained genuine writer ownership. The journal records hashes;
+it does not authenticate these observations. Claimed hashes cannot mint owners
+or prove completion.
+
+The required order for v2 is: retain all writer barriers, publish terminal,
+persist its successor census through owned main compare-and-swap and readback,
+then acknowledge main release and finalize renderer release. Preparing a release
+closure is not executing it. Renderer flush, manager ownership and the live
+coordinator remain held until the matching main acknowledgement. An unknown
+release result requires reconciliation, not another attempt or replacement IDs.
+
+Publication alone does not update the separately retained main anchor. A crash
+between terminal publication and its anchor update leaves a census mismatch and
+startup HOLD. With the matching trusted successor anchor, v2 can describe closed
+historical installation work even when the old process died before releasing its
+volatile barriers. It never asserts that those barriers were released, and it
+never authorizes replay. Source-owned terminal anchor transfer and full runtime
+coordination remain separate mechanisms; this codec adds no installation endpoint.
+
+## Source-owned terminal anchor window
+
+The prepared Main/Level source adds a separate opaque window after a known
+tracked registration commit. Main binds the existing mod reservation, operation,
+job, request digest and exact committed full-record digest. It retains backend,
+SQL and query ownership; ordinary anchor methods and the old registration release
+cannot bypass an active window.
+
+The fixed internal methods are `beginNativeExecutorTerminalWindow`,
+`checkNativeExecutorTerminalWindow`, `readNativeExecutorTerminalAnchor`,
+`writeNativeExecutorTerminalAnchor` and `releaseNativeExecutorTerminalWindow`.
+They accept source-owned identities, not permission flags. The window performs
+one nonnull, same-root, changed-census CAS. Release requires a separate exact
+post-CAS readback. Unknown commit, reentry and source drift retain the holds.
+No failure clears a window, refunds a consumed operation or starts another write.
+
+These methods do not validate journal transitions or authenticate renderer/worker
+observations. The source coordinator must bind the actual v2 successor census
+and completion evidence before calling them. The window alone is not a complete
+installer, START gate or installed-host acceptance.
 
 ## Disk and publication
 
@@ -65,9 +133,11 @@ publication acknowledgement.
 
 File flush/readback is process-level evidence, **not** proof of directory-entry
 or database durability across power loss. `powerLossPersistenceVerified` remains
-false. Unknown release acknowledgement must be reconciled against the original
-operation/committed record/worker evidence before any terminal is written. A
-missing terminal does not authorize repeating installation or clearing IDs.
+false. For version 1, an unknown release acknowledgement must be reconciled
+against the original operation/committed record/worker evidence before terminal
+publication. Version 2 records retained ownership and requires release
+reconciliation after its anchor acknowledgement. A missing terminal never
+authorizes repeating installation or clearing IDs.
 
 ## Inventory and root anchor
 
@@ -174,15 +244,18 @@ not a lock against another privileged filesystem writer.
 
 ## Main storage and first provisioning
 
-Main-state transition coordination remains pending. The prepared
+Full installation coordination remains pending. The prepared
 [main-private storage](NATIVE-EXECUTOR-ANCHOR.md) provides one fixed KV in the
 actual final selected backend, excluded from renderer hydration and ordinary KV
 read/write/remove routes. Its owned transaction and exact readback replace the
 convenience helpers for this boundary; those helpers can swallow errors.
-Application startup, provisioning and coordinator ordering are not connected yet.
+The prepared [Application startup gate](NATIVE-RUNTIME-BINDING.md),
+[owned provisioning](NATIVE-EXECUTOR-GENESIS.md) and pending-transition preparation
+are connected in source. They have not replaced installed Vortex, and complete
+renderer transport, START and terminal coordination remain separate gates.
 
-First provisioning must explicitly require an absent anchor and exclusively
-create a new fixed journal root. Any existing unanchored root, failed publication
+First provisioning explicitly requires an absent anchor and exclusively
+creates a new fixed journal root. Any existing unanchored root, failed publication
 or replacement after initialization stays held. It must not adopt an empty
 existing directory or silently recreate missing history. A crash between root
 creation and known anchor commit requires reconciliation. Restoring both trusted
@@ -194,16 +267,31 @@ Its fixed HOLD error must not enter Vortex's `DataInvalid` database-repair retry
 Normal completion also needs a checked pending-to-terminal census transition
 and acknowledged main-anchor update; reservation support alone does not provide
 that completion path.
-The registration release clears its backend and SQL owners. A later terminal
-anchor update must acquire a separate serialized anchor-only window while the
-logical coordinator slot still excludes new operations. Reusing the released
-owners or falling back to an ordinary KV write cannot acknowledge completion.
+The ordinary registration release clears backend and SQL ownership, so it must
+not precede the terminal anchor update. Version 2 requires a source-owned
+anchor-only window retaining those owners across terminal publication and CAS,
+followed by actual release. The logical coordinator still excludes new operations.
+Reusing released owners or falling back to an ordinary KV write cannot acknowledge
+completion.
 
 ## Local checks
 
 ```powershell
-node --test --test-timeout=15000 tools/modding/vortex-agent/native-executor-journal.test.mjs tools/modding/vortex-agent/native-intent-journal.test.mjs tools/modding/vortex-agent/plan-journal.test.mjs
+node --test --test-timeout=60000 tools/modding/vortex-agent/native-executor-journal.test.mjs tools/modding/vortex-agent/native-intent-journal.test.mjs tools/modding/vortex-agent/plan-journal.test.mjs
 ```
+
+For the source window and its composition with the journal, set the source
+repository to a local checkout containing the pinned Vortex commit (replace the
+example path). Without this variable the source cases are skipped:
+
+```powershell
+$env:VORTEX_EXTENSION_ADMISSION_REPO = 'C:/Source/Vortex'
+node --test --test-timeout=60000 tools/modding/vortex-agent/native-executor-terminal-window.test.mjs tools/modding/vortex-agent/native-executor-terminal-journal.test.mjs
+```
+
+These cases execute composed Main/Level/registry/pool source with a controlled
+transactional SQL model. Adoption and worker-closure observations in the journal
+composition are fixture claims, not actual renderer or native worker evidence.
 
 Tests use retained own scratch directories and controlled I/O faults. Child
 process races concern only the test's own Node children. They do not launch
