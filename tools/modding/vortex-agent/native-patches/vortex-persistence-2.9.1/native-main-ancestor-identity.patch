@@ -1,0 +1,17 @@
+--- a/src/main/src/store/mainPersistence.ts
++++ b/src/main/src/store/mainPersistence.ts
+@@ -73,11 +73,12 @@
+ }
+ const nativeStartupStamp = (s: import('node:fs').BigIntStats) => [s.dev,s.ino,s.size,s.mtimeNs,s.ctimeNs,s.nlink].join(':');
+ function nativeStartupAncestry(target: string, missingAllowed = false) {
+-  const chain: string[]=[];for(let p=path.resolve(target);;p=path.dirname(p)){chain.unshift(p);if(p===path.dirname(p))break;}
++  const resolvedTarget=path.resolve(target);
++  const chain: string[]=[];for(let p=resolvedTarget;;p=path.dirname(p)){chain.unshift(p);if(p===path.dirname(p))break;}
+   const pins = new Map<string,string>();let missing=false;
+   for(const p of chain){
+     if(missing)break;
+-    try{const s=nativeStartupFS.lstatSync(p,{bigint:true});if(!s.isDirectory()||s.isSymbolicLink())throw nativeStartupError();pins.set(p,nativeStartupStamp(s));}
++    try{const s=nativeStartupFS.lstatSync(p,{bigint:true});if(!s.isDirectory()||s.isSymbolicLink())throw nativeStartupError();pins.set(p,p===resolvedTarget?nativeStartupStamp(s):`${s.dev}:${s.ino}`);}
+     catch(error){if(missingAllowed && error !== null && typeof error === 'object' && !nativeStartupTypes.isProxy(error)
+       && Object.getOwnPropertyDescriptor(error,'code')?.value==='ENOENT'){missing=true;}else throw error;}
+   }

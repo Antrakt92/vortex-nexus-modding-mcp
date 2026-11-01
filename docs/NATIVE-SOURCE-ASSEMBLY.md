@@ -1,6 +1,6 @@
 # Assemble the reviewed Vortex source patches
 
-`native-source-series.mjs` applies the fixed sequence of 131 reviewed patches to
+`native-source-series.mjs` applies the fixed sequence of 132 reviewed patches to
 26 original files from Vortex `v2.9.1`, commit
 `c80326367cbe6d96621ad6cf4a5488ef49bac110`. It replaces manually composing separate
 patch chains before compilation. It does not change an installed application or
@@ -920,3 +920,42 @@ mirror. Earlier runs exposed a separate startup availability issue: full ancesto
 timestamp comparisons can refuse work after an unrelated parent directory changes.
 The mirror isolates that test environment; this Promise repair does not change
 filesystem custody checks or establish native installation acceptance.
+
+## Journal ancestor identity (132 patches) — 1 November 2026
+
+Startup previously compared size, timestamps and link count for every ancestor
+of the executor journal. A change elsewhere in a shared parent directory could
+therefore stop an otherwise unchanged operation. A diagnostic run captured this
+failure with unchanged directory identity and a parent timestamp change.
+
+Ordinary ancestor directories now retain volume and file identity checks. The
+exact journal directory still retains its full six-field generation stamp.
+Every existing component must remain an ordinary directory without a symbolic
+link; changed identity, missing/present transitions and changes in the observed
+path census still refuse startup. Journal records, anchors, inventory and the
+captured SDK checks remain unchanged. This change does not clear uncertain
+operations or permit replay.
+
+The maintained graph has 132 patches over 26 originals, with 76 lifecycle and
+188 persistence packet files. Its 97,921 bytes remain below the unchanged 96 KiB
+limit. Seven explicit null optional companion fields were omitted using the
+assembler's existing defaults; all dependency values remain pinned.
+
+The 14 new tests execute the assembled Main helper declarations with controlled
+filesystem results. The original source fails the two parent-metadata cases;
+the repaired source passes all 14, including directory replacement, symbolic
+links, all six journal generation fields, access failures and namespace changes.
+Set `VORTEX_NATIVE_ANCESTOR_REQUIRED=1`, `VORTEX_NATIVE_SOURCE_ROOT` and
+`VORTEX_CAPSULE_BUILD_SOURCE` to require these inputs rather than skip them.
+Together with Promise and assembly regressions, 78 tests passed without skips.
+The 126 unchanged compatibility cases also passed in a separate source mirror;
+all 563 maintained input files matched before and after the run. These historical
+actor fixtures remain separate from current-source and native application proof.
+A compile-only fixture then passed a fresh Main typecheck, Main build and all
+52 unchanged upstream Main tests. Inspection matched 26 selected Program inputs
+and 24 source-map entries, including 19 separately pinned fixture overlays. Only
+the Main bundle and its map changed; the other 11 output files, SDK and capsule
+retained their prior hashes. This is an isolated fixture build, not an exact
+public application build or a cancellation/installation acceptance run. Complete
+application cancellation and installation, public MCP activation and
+installed-host acceptance remain pending.
