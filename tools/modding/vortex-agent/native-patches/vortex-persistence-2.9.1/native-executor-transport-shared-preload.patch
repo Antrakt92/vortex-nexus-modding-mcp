@@ -1,0 +1,23 @@
+--- a/src/shared/src/types/preload.ts
++++ b/src/shared/src/types/preload.ts
+@@ -23,6 +23,9 @@
+   DiffOperation,
+   PersistenceBatch,
+   NativeMainReadinessObservation,
++  NativeExecutorChallenge,
++  NativeExecutorResponse,
++  NativeExecutorPreparation,
+   AppInitMetadata,
+   HashAlgorithm,
+   Serializable,
+@@ -386,6 +389,10 @@
+ 
+   observeMainReadiness(requestId: string): Promise<NativeMainReadinessObservation>;
+ 
++  /** Internal source transport; a prepared reply is not installation permission. */
++  prepareNativeExecutor(requestBytes: Uint8Array, archiveBytes: Uint8Array): Promise<NativeExecutorPreparation>;
++  onExecutorChallenge(handler: (challenge: NativeExecutorChallenge) => Promise<NativeExecutorResponse>): () => void;
++
+   /**
+    * Synchronously send diff operations to main, blocking until they are queued.
+    * Used only on quit (from a beforeunload handler) so the final debounced batch

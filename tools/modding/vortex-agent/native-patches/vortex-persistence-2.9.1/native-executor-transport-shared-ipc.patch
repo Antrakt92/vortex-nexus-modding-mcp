@@ -1,0 +1,92 @@
+--- a/src/shared/src/types/ipc.ts
++++ b/src/shared/src/types/ipc.ts
+@@ -62,6 +62,65 @@
+   nativeAdmission: false;
+ }
+ 
++/** Source-derived correlation only. Opaque owners never serialize. */
++export interface NativeExecutorTransportBinding {
++  operationId: string;
++  nativeJobId: string;
++  requestSHA256: string;
++  requestBytesSHA256: string;
++  archiveBytesSHA256: string;
++  gameId: string;
++  modId: string;
++  profileId: string;
++  managerScope: string;
++  rendererGeneration: string;
++}
++export interface NativeRendererExecutorProjection {
++  schema: "native-renderer-executor-admission/1";
++  gameId: string;
++  modId: string;
++  profileId: string;
++  managerScopeId: string;
++  rendererGeneration: string;
++  effectsAllowed: false;
++  installationPermit: false;
++}
++export interface NativeExecutorChallenge extends NativeExecutorTransportBinding {
++  schema: "native-executor-challenge/1";
++  transportId: string;
++  challengeId: string;
++  round: 1 | 2 | 3 | 4;
++  stage: "acquire" | "check" | "hold";
++}
++export interface NativeExecutorResponse {
++  schema: "native-executor-response/1";
++  transportId: string;
++  challengeId: string;
++  round: 1 | 2 | 3 | 4;
++  stage: "acquire" | "check" | "hold";
++  requestSHA256: string;
++  requestBytesSHA256: string;
++  archiveBytesSHA256: string;
++  state: "acquired" | "checked" | "held" | "failed";
++  observation: NativeRendererExecutorProjection | null;
++  errorCode: "NATIVE_EXECUTOR_RENDERER_FAILED" | null;
++}
++export interface NativeExecutorPreparation {
++  schema: "native-executor-transport-preparation/1";
++  transportId: string;
++  operationId: string;
++  nativeJobId: string;
++  requestSHA256: string;
++  requestBytesSHA256: string;
++  archiveBytesSHA256: string;
++  rootId: string;
++  inventorySHA256: string;
++  effectsAllowed: false;
++  installationPermit: false;
++  nativeAdmission: false;
++  powerLossPersistenceVerified: false;
++}
++
+ export interface AppInitMetadata {
+   /** Command line arguments */
+   commandLine: Record<string, unknown>;
+@@ -275,6 +334,7 @@
+ 
+ /** Type containing all known channels used by renderer processes to send messages to the main process */
+ export interface RendererChannels extends RendererCallbackChannels {
++  "persist:native-executor-response": (response: NativeExecutorResponse) => void;
+   // NOTE(erri120): Parameters must be serializable and return values must be void.
+ 
+   /** Logs a message */
+@@ -336,6 +396,7 @@
+ 
+ /** Type containing all known channels used by the main process to send messages to a renderer process */
+ export interface MainChannels extends MainCallbackChannels {
++  "persist:native-executor-challenge": (challenge: NativeExecutorChallenge) => void;
+   // NOTE(erri120): Parameters must be serializable and return values must be void.
+ 
+   // Examples:
+@@ -417,6 +478,7 @@
+ 
+   /** Wait for the exact submitted batches and earlier accepted persistence work. */
+   "persist:diffs-acknowledged": (batches: PersistenceBatch[]) => Promise<void>;
++  "persist:native-executor-prepare": (requestBytes: Uint8Array, archiveBytes: Uint8Array) => Promise<NativeExecutorPreparation>;
+   "persist:native-main-readiness": (requestId: string) => Promise<NativeMainReadinessObservation>;
+ 
+   // Updater: the renderer polls this (pull, like downloads and uploads). With

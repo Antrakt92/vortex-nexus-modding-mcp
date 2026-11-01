@@ -1,6 +1,6 @@
 # Assemble the reviewed Vortex source patches
 
-`native-source-series.mjs` applies the fixed sequence of 89 reviewed patches to
+`native-source-series.mjs` applies the fixed sequence of 95 reviewed patches to
 25 original files from Vortex `v2.9.1`, commit
 `c80326367cbe6d96621ad6cf4a5488ef49bac110`. It replaces manually composing separate
 patch chains before compilation. It does not change an installed application or
@@ -35,7 +35,7 @@ match the pinned series. Patch application requires exact offsets and context;
 it has no fuzzy matching or hash-refresh mode.
 
 The fixed graph combines the 33-patch mod-management/transfer packet with the
-50-patch persistence packet. The latter includes renderer target admission and
+62-patch persistence packet. The latter includes renderer target admission and
 acknowledged diffs, main/preload/shared IPC, backend reservations and managed SQL
 ownership, the main build's runtime binding and startup history classification.
 Both runtime packet directories have separate closed inventories;
@@ -621,3 +621,40 @@ The final Main source passed the real TypeScript target and its seven prerequisi
 Rolldown build and all 52 upstream main tests. All seven selected Main Program/map
 entries matched the final graph, alongside all 25 source outputs and fifteen SDK
 pins. Eighteen unchanged renderer/preload/shared entries retained their prior proof.
+
+## Internal preparation transport — 1 November 2026
+
+The 95-patch graph adds six source changes across Shared, Preload, Main and
+Renderer. The [transport contract](NATIVE-EXECUTOR-TRANSPORT.md) joins actual
+renderer exclusion and old persistence ACK, exact frame challenges, genuine Main
+reservation and pending journal/anchor preparation. It does not issue START or
+register an installation endpoint. Preparation can create history and an inert
+worker in a qualified native host; a false permission flag is not a read-only claim.
+
+The first complete build passed Shared, Main, Preload and Renderer TypeScript
+targets and builds, plus all 52 upstream Main tests. All 25 selected compiler
+Program sources matched; 23 runtime source-map texts matched, while two Shared
+interfaces were erased and checked through their Program inputs. All six emitted
+bundle/map outputs and the unchanged fifteen-file SDK tuple were checked.
+
+Review then found two defects: a foreign duplicate invoke could hold the genuine
+operation, and renderer validation rejected supported leading `_`/`-` profile IDs.
+Focused regressions failed before repair. The repaired Main and Renderer passed
+fresh TypeScript targets, builds and the same 52 upstream tests. Twenty-two
+selected Program/map sources were checked afresh; three unchanged Shared/Preload
+Program sources and the two Preload outputs retained the exact complete-build
+proof. No dependency or installed-host change was made.
+
+The final sequential actor/graph matrix passed all 96 checks without skips. The
+related 31-file source matrix passed all 434 checks without skips. An independent
+review identified a timing assumption in the sibling-frame integration test:
+two scheduler turns did not establish acquisition. The test now waits for the
+actual acquired response and asserts the pre-timeout ownership state, retaining
+all refusal and post-timeout assertions. Production guards were unchanged.
+
+The SDK ancestor-generation guard can reject an operation when an unrelated
+sibling directory changes. The failed parallel fixture run and an isolated causal
+check are retained; this availability limitation remains a gate before public
+installation. Sequential fixture execution does not establish concurrent native
+acceptance. Full START/completion/release coordination, repeat-operation handoff,
+inert cancellation closure and installed-host acceptance remain required.

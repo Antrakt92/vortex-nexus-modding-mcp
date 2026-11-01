@@ -1,0 +1,26 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/shared/src/types/preload.ts",
+  "originalSourceSHA256": "06493d6bfd8db9ed898fbadcd565f4881566984969a6f0fbb300ea70fd8ba45a",
+  "inputSHA256": "25df90ae322ef579ef7ffcef9ae9892d01704e0fa53faa2605b65b4bd2ad9171",
+  "outputSHA256": "0d337a5bd21c57ce1053eee956e696d635b93ac890cd3e06637deb3767b3e269",
+  "patchSHA256": "d1e4f30a58e54589d80d9afac410ec51f08f97f5e131254bfc2c2cdbddf59b18",
+  "prerequisitePatch": "native-main-readiness-shared-preload.patch",
+  "prerequisitePatchSHA256": "483b5128c1717974c8d5d3a36432a413bb5c8a928cd03448e89c390f0d3ca84c",
+  "requiredCompanionPatch": "native-executor-transport-shared-ipc.patch",
+  "requiredCompanionPatchSHA256": "ae27e5103066c674996accade952cee18f46d51b0ae16dbb58455e30fbdf66e0",
+  "requiredCompanionOutputSHA256": "cb76a3e04315bda9e6734b5d00f9d7be63eafd2f995f250611b5bf0a316dbd0c",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "effectsAllowed": false,
+  "installationPermit": false,
+  "nativeAdmission": false,
+  "powerLossPersistenceVerified": false,
+  "limitations": [
+    "Fixed prepared transport only; no START, public installation endpoint, runtime host acceptance or privileged-JavaScript isolation."
+  ]
+}

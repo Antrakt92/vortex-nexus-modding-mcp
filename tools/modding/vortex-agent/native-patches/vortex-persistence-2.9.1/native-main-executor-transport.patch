@@ -1,0 +1,147 @@
+--- a/src/main/src/store/mainPersistence.ts
++++ b/src/main/src/store/mainPersistence.ts
+@@ -1,4 +1,5 @@
+ import * as path from "node:path";
++import type { NativeExecutorTransportBinding } from "@vortex/shared/ipc";
+ import { checkNativeExecutorFrame, holdNativeExecutorFrame } from "./persistenceIPC";
+ import * as nativeStartupFS from "node:fs";
+ import { createHash as nativeStartupHash } from "node:crypto";
+@@ -446,6 +447,138 @@
+   }catch(primary){nativePendingHold(attempt);throw primary;}
+ }
+ 
++
++const nativeTransportReserve = ReduxPersistorIPC.prototype.reserveNativeModPersistence;
++const nativeTransportPrepare = prepareNativeExecutorPending;
++type NativeExecutorTransportAttempt = {
++  owner:object;mainReadyOwner:object;phase:'preflighting'|'ready'|'reserving'|'reserved'|'preparing'|'prepared'|'held';checking:boolean;
++  requestBytes?:Buffer;archiveBytes?:Buffer;binding?:Readonly<NativeExecutorTransportBinding>;
++  ready?:NativeMainAttempt;startup?:NativeExecutorStartupAttempt;source?:NativeExecutorJournalSource;
++  closure?:ReturnType<typeof nativeStartupClosure>;modOwner?:object;reserveStarted:boolean;prepareStarted:boolean;
++  frameOwner?:object;pendingBefore?:NativePendingAttempt;pending?:NativePendingAttempt;pendingOwner?:object;
++};
++let nativeExecutorTransport:NativeExecutorTransportAttempt|undefined;
++const nativeTransportError=()=>new Error('NATIVE_EXECUTOR_TRANSPORT_HELD');
++const nativeTransportHeld=(attempt:NativeExecutorTransportAttempt):boolean=>attempt.phase==='held';
++function nativeTransportCopy(bytes:Uint8Array,max:number):Buffer {
++  if(!nativeStartupTypes.isUint8Array(bytes)||nativeStartupTypes.isProxy(bytes))throw nativeTransportError();
++  const typed=Object.getPrototypeOf(Uint8Array.prototype),size=Object.getOwnPropertyDescriptor(typed,'byteLength')?.get?.call(bytes),backing=Object.getOwnPropertyDescriptor(typed,'buffer')?.get?.call(bytes);
++  if(typeof size!=='number'||size<1||size>max||nativeStartupTypes.isSharedArrayBuffer(backing))throw nativeTransportError();
++  const copy=new Uint8Array(size);Uint8Array.prototype.set.call(copy,bytes);
++  if(copy[0]===0xef&&copy[1]===0xbb&&copy[2]===0xbf)throw nativeTransportError();
++  return Buffer.from(copy);
++}
++function nativeTransportMatchingPending(attempt:NativeExecutorTransportAttempt):NativePendingAttempt|undefined {
++  const pending=nativePendingAttempt;
++  if(!attempt.prepareStarted||pending===undefined||pending===attempt.pendingBefore||attempt.modOwner===undefined||attempt.frameOwner===undefined
++    ||pending.mainReadyOwner!==attempt.mainReadyOwner||pending.modOwner!==attempt.modOwner||pending.frameOwner!==attempt.frameOwner
++    ||pending.main!==attempt.ready?.main)return undefined;
++  if(attempt.pending!==undefined&&attempt.pending!==pending)return undefined;
++  return pending;
++}
++function nativeTransportHold(attempt:NativeExecutorTransportAttempt):void {
++  attempt.phase='held';
++  if(attempt.startup!==undefined)attempt.startup.phase='held';
++  const pending=nativeTransportMatchingPending(attempt);if(pending!==undefined){attempt.pending=pending;nativePendingHold(pending);}
++  if(attempt.ready!==undefined&&attempt.modOwner!==undefined)try{nativeGenesisHoldReservation.call(attempt.ready.main,attempt.modOwner);}catch{/* No refund; preserve the primary failure. */}
++}
++function nativeTransportTicket(ticket:object):NativeExecutorTransportAttempt {
++  const attempt=nativeExecutorTransport;if(attempt===undefined||attempt.owner!==ticket)throw nativeTransportError();return attempt;
++}
++function nativeTransportCheck(attempt:NativeExecutorTransportAttempt):void {
++  if(attempt.checking){nativeTransportHold(attempt);throw nativeTransportError();}
++  attempt.checking=true;
++  try{
++    const current=()=>nativeExecutorTransport===attempt&&attempt.phase!=='held'&&attempt.phase!=='preflighting';
++    if(!current())throw nativeTransportError();checkNativeMainPersistenceReady(attempt.mainReadyOwner);
++    const ready=attempt.ready,startup=attempt.startup,binding=attempt.binding,source=attempt.source,closure=attempt.closure;
++    if(ready===undefined||nativeMainAttempt!==ready||startup===undefined||nativeStartupAttempt!==startup||ready.backend!==startup.backend
++      ||startup.binding===undefined||!['uninitialized','initialized'].includes(startup.phase)||binding===undefined||source===undefined||startup.source!==source||closure===undefined)throw nativeTransportError();
++    nativeExecutorCheckSource(source);
++    const observed=nativeStartupClosure(startup.binding);nativeStartupSame(closure.dirs,observed.dirs);nativeStartupSame(closure.files,observed.files);
++    if(attempt.modOwner!==undefined)nativePendingCheckTarget.call(ready.main,attempt.modOwner,binding.gameId,binding.modId);
++    if(attempt.frameOwner!==undefined)checkNativeExecutorFrame(attempt.frameOwner);
++    if(attempt.pending!==undefined){
++      if(nativeTransportMatchingPending(attempt)!==attempt.pending||attempt.pending.phase==='held')throw nativeTransportError();
++      if(attempt.phase==='prepared'&&(attempt.pending.phase!=='prepared'||attempt.pendingOwner!==attempt.pending.owner))throw nativeTransportError();
++    }
++    checkNativeMainPersistenceReady(attempt.mainReadyOwner);
++    if(!current()||nativeMainAttempt!==ready||nativeStartupAttempt!==startup||startup.source!==source)throw nativeTransportError();
++  }catch(primary){nativeTransportHold(attempt);throw primary;}
++  finally{attempt.checking=false;}
++}
++/** Source-only preflight. Both raw inputs are copied before SDK/native getters. */
++export function preflightNativeExecutorTransport(mainReadyOwner:object,requestBytes:Uint8Array,archiveBytes:Uint8Array):object {
++  if(nativeExecutorTransport!==undefined){nativeTransportHold(nativeExecutorTransport);throw nativeTransportError();}
++  const attempt:NativeExecutorTransportAttempt={owner:Object.freeze({}),mainReadyOwner,phase:'preflighting',checking:false,reserveStarted:false,prepareStarted:false};
++  nativeExecutorTransport=attempt;
++  const current=()=>{if(nativeExecutorTransport!==attempt||attempt.phase==='held')throw nativeTransportError();};
++  try{
++    // Deliberately before readiness, loader, filesystem or any SDK callback.
++    const requestCopy=nativeTransportCopy(requestBytes,1052672),archiveCopy=nativeTransportCopy(archiveBytes,8192);
++    attempt.requestBytes=requestCopy;attempt.archiveBytes=archiveCopy;
++    const requestBytesSHA256=nativeStartupHash('sha256').update(requestCopy).digest('hex'),archiveBytesSHA256=nativeStartupHash('sha256').update(archiveCopy).digest('hex');
++    checkNativeMainPersistenceReady(mainReadyOwner);current();
++    const ready=nativeMainAttempt,startup=nativeStartupAttempt;
++    if(ready===undefined||startup===undefined||ready.backend!==startup.backend||startup.binding===undefined||!['uninitialized','initialized'].includes(startup.phase))throw nativeTransportError();
++    attempt.ready=ready;attempt.startup=startup;
++    const closure=nativeStartupClosure(startup.binding);current();
++    const source=nativeExecutorEnsureJournal(startup);attempt.source=source;current();
++    const snapshot=nativeExecutorMethod(source,startup.binding,'owned-zip-worker-client.mjs','snapshotOwnedStagingZipInputs');current();
++    const inputs=nativeStartupData(snapshot(requestCopy,archiveCopy),['request','archive']);current();
++    const request=inputs.request as NativePendingRequest & {managerScope:string;rendererGeneration:string;plan:{context:{gameId:string;profileId:string};package:{expectedModId:string}}};
++    const digest=nativeExecutorMethod(source,startup.binding,'native-dispatch-contract.cjs','dispatchRequestDigest');current();
++    const requestSHA256:unknown=digest(requestCopy);if(typeof requestSHA256!=='string'||!/^[a-f0-9]{64}$/.test(requestSHA256))throw nativeTransportError();
++    const observed=nativeStartupClosure(startup.binding);nativeStartupSame(closure.dirs,observed.dirs);nativeStartupSame(closure.files,observed.files);current();
++    attempt.binding=Object.freeze({operationId:request.operationId,nativeJobId:request.nativeJobId,requestSHA256,requestBytesSHA256,archiveBytesSHA256,
++      gameId:request.plan.context.gameId,modId:request.plan.package.expectedModId,profileId:request.plan.context.profileId,managerScope:request.managerScope,rendererGeneration:request.rendererGeneration});
++    attempt.closure=closure;attempt.phase='ready';nativeTransportCheck(attempt);return attempt.owner;
++  }catch(primary){nativeTransportHold(attempt);throw primary;}
++}
++export function getNativeExecutorTransportBinding(ticket:object):Readonly<NativeExecutorTransportBinding> {
++  const attempt=nativeTransportTicket(ticket);nativeTransportCheck(attempt);if(attempt.binding===undefined)throw nativeTransportError();return attempt.binding;
++}
++export function checkNativeExecutorTransport(ticket:object):void {nativeTransportCheck(nativeTransportTicket(ticket));}
++export function holdNativeExecutorTransport(ticket:object):void {nativeTransportHold(nativeTransportTicket(ticket));}
++export async function reserveNativeExecutorTransport(ticket:object):Promise<void> {
++  const attempt=nativeTransportTicket(ticket);nativeTransportCheck(attempt);
++  if(attempt.phase!=='ready'||attempt.reserveStarted){nativeTransportHold(attempt);throw nativeTransportError();}
++  attempt.reserveStarted=true;attempt.phase='reserving';
++  try{
++    const ready=attempt.ready,binding=attempt.binding;if(ready===undefined||binding===undefined)throw nativeTransportError();
++    const owner=await nativeTransportReserve.call(ready.main,binding.gameId,binding.modId);
++    // Retain the actual late result first; an already held observer can never
++    // refund/use it, but must hold this genuine reservation immediately.
++    attempt.modOwner=owner;
++    if(nativeTransportHeld(attempt)){nativeTransportHold(attempt);throw nativeTransportError();}
++    attempt.phase='reserved';nativeTransportCheck(attempt);
++  }catch(primary){nativeTransportHold(attempt);throw primary;}
++}
++export async function prepareNativeExecutorTransportPending(ticket:object,frameOwner:object) {
++  const attempt=nativeTransportTicket(ticket);nativeTransportCheck(attempt);
++  if(attempt.phase!=='reserved'||attempt.prepareStarted){nativeTransportHold(attempt);throw nativeTransportError();}
++  try{
++    checkNativeExecutorFrame(frameOwner);nativeTransportCheck(attempt);
++    const ready=attempt.ready,owner=attempt.modOwner,requestBytes=attempt.requestBytes,archiveBytes=attempt.archiveBytes;
++    if(ready===undefined||owner===undefined||requestBytes===undefined||archiveBytes===undefined||nativePendingAttempt!==undefined)throw nativeTransportError();
++    attempt.frameOwner=frameOwner;attempt.pendingBefore=nativePendingAttempt;attempt.prepareStarted=true;attempt.phase='preparing';
++    const flight=nativeTransportPrepare(attempt.mainReadyOwner,owner,frameOwner,requestBytes,archiveBytes);
++    attempt.pending=nativeTransportMatchingPending(attempt);
++    const result=await flight;
++    attempt.pending=nativeTransportMatchingPending(attempt);nativeTransportCheck(attempt);
++    const data=nativeStartupData(result,['schema','owner','operationId','nativeJobId','requestSHA256','rootId','inventorySHA256','effectsAllowed','installationPermit','nativeAdmission','powerLossPersistenceVerified']);
++    const binding=attempt.binding,pending=attempt.pending;
++    if(binding===undefined||pending===undefined||pending.phase!=='prepared'||data.owner!==pending.owner
++      ||data.schema!=='native-executor-pending-preparation/1'||data.operationId!==binding.operationId||data.nativeJobId!==binding.nativeJobId||data.requestSHA256!==binding.requestSHA256
++      ||typeof data.rootId!=='string'||!/^[0-9]+:[0-9]+$/.test(data.rootId)||typeof data.inventorySHA256!=='string'||!/^[a-f0-9]{64}$/.test(data.inventorySHA256)
++      ||data.effectsAllowed!==false||data.installationPermit!==false||data.nativeAdmission!==false||data.powerLossPersistenceVerified!==false)throw nativeTransportError();
++    attempt.pendingOwner=pending.owner;attempt.phase='prepared';nativeTransportCheck(attempt);
++    return Object.freeze({schema:'native-executor-pending-preparation/1',operationId:binding.operationId,nativeJobId:binding.nativeJobId,
++      requestSHA256:binding.requestSHA256,rootId:data.rootId,inventorySHA256:data.inventorySHA256,
++      effectsAllowed:false,installationPermit:false,nativeAdmission:false,powerLossPersistenceVerified:false});
++  }catch(primary){nativeTransportHold(attempt);throw primary;}
++}
++
+ let mainPersistor: ReduxPersistorIPC | undefined;
+ let levelPersist: LevelPersist | undefined;
+ let queryRegistry: QueryRegistry | undefined;

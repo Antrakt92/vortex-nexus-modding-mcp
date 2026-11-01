@@ -1,0 +1,36 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/main/src/store/persistenceIPC.ts",
+  "originalSourceSHA256": "a570597ae00396259d1ebbb37c7fe7ddb0a01ff3dcecd231cabde1059e9723ae",
+  "inputSHA256": "37c89a2326ff68ece390363bdef409a3d25e13ef7799c5aa38cfe4ad31450c03",
+  "outputSHA256": "b1f27654e83dcedb76cb46da3a7e9a958fc973b30b5a09d7f659e645bab971cc",
+  "patchSHA256": "4494da36a422862ef72ce51d7fc7012dc854047371ac6c9f796a3a6195cdd12b",
+  "prerequisitePatch": "native-executor-frame-owner.patch",
+  "prerequisitePatchSHA256": "5ce5e1484d03cb497152579d422371bfa3df176ebeae8c20d054ef668045e211",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "effectsAllowed": false,
+  "installationPermit": false,
+  "nativeAdmission": false,
+  "powerLossPersistenceVerified": false,
+  "limitations": [
+    "Source-owned fixed IPC preparation transport only; no START, public MCP or release authority.",
+    "Renderer DTO correlation relies on the reviewed source receiver and exact Electron frame; not isolation against privileged compromised JavaScript.",
+    "Timeout abandons observation only; actual work and all ownership remain retained."
+  ],
+  "requiredCompanionPatch": "native-main-executor-transport.patch",
+  "requiredCompanionPatchSHA256": "b8d230190da14bc2155380d802d69587e3924157a24fdbbb20d6eb4a263d254c",
+  "requiredCompanionOutputSHA256": "7f58c8da84444bb8154001a3b17a3ba6b09e2cf7e40d7d8a4d7a6907e30c261f",
+  "additionalCompanions": [
+    {
+      "packet": "persistence",
+      "name": "native-executor-transport-shared-ipc",
+      "patchSHA256": "ae27e5103066c674996accade952cee18f46d51b0ae16dbb58455e30fbdf66e0",
+      "outputSHA256": "cb76a3e04315bda9e6734b5d00f9d7be63eafd2f995f250611b5bf0a316dbd0c"
+    }
+  ]
+}

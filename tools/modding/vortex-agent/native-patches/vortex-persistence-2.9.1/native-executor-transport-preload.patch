@@ -1,0 +1,85 @@
+--- a/src/preload/src/index.ts
++++ b/src/preload/src/index.ts
+@@ -1,8 +1,11 @@
++import { types as nativeExecutorPreloadTypes } from "node:util";
+ import { VortexError } from "@vortex/shared";
+ import type { QualifiedPathWire, StatResult, Status, StatusTime } from "@vortex/shared/filesystem";
+ import { QualifiedPath } from "@vortex/shared/filesystem";
+ import type {
+   AppInitMetadata,
++  NativeExecutorChallenge,
++  NativeExecutorResponse,
+   EnumerateEntryWire,
+   Serializable,
+   TemporalWire,
+@@ -24,6 +27,59 @@
+   callback: rendererCallback,
+ };
+ 
++let nativeExecutorReceiverBound = false;
++function nativeExecutorPreloadData(value: unknown, keys: string[]): Record<string, unknown> | undefined {
++  if(value===null||typeof value!=="object"||nativeExecutorPreloadTypes.isProxy(value)||Array.isArray(value))return;
++  const descriptors=Object.getOwnPropertyDescriptors(value);
++  if(Reflect.ownKeys(descriptors).length!==keys.length||keys.some(key=>{const d=descriptors[key];return d===undefined||!Object.hasOwn(d,"value");}))return;
++  return Object.fromEntries(keys.map(key=>[key,descriptors[key]!.value]));
++}
++function nativeExecutorPreloadChallenge(value: unknown): NativeExecutorChallenge | undefined {
++  const row=nativeExecutorPreloadData(value,["schema","transportId","challengeId","round","stage","requestSHA256","requestBytesSHA256","archiveBytesSHA256","operationId","nativeJobId","gameId","modId","profileId","managerScope","rendererGeneration"]);
++  if(row===undefined||row.schema!=="native-executor-challenge/1")return;
++  for(const key of ["requestSHA256","requestBytesSHA256","archiveBytesSHA256"])if(typeof row[key]!=="string"||!/^[a-f0-9]{64}$/.test(row[key]))return;
++  for(const [key,prefix] of [["transportId","transport"],["challengeId","challenge"],["operationId","op"],["nativeJobId","exec"],["rendererGeneration","renderer"]]){
++    if(key===undefined||prefix===undefined||typeof row[key]!=="string"||!new RegExp("^"+prefix+"_[a-f0-9]{32}$").test(row[key]))return;
++  }
++  for(const key of ["gameId","modId","profileId","managerScope"])if(typeof row[key]!=="string"||row[key].length<1||row[key].length>256)return;
++  if(!((row.round===1&&row.stage==="acquire")||((row.round===2||row.round===3)&&row.stage==="check")||(row.round===4&&row.stage==="hold")))return;
++  return Object.freeze(row) as unknown as NativeExecutorChallenge;
++}
++function nativeExecutorPreloadFailure(challenge: NativeExecutorChallenge): NativeExecutorResponse {
++  return {schema:"native-executor-response/1",transportId:challenge.transportId,challengeId:challenge.challengeId,
++    round:challenge.round,stage:challenge.stage,requestSHA256:challenge.requestSHA256,requestBytesSHA256:challenge.requestBytesSHA256,
++    archiveBytesSHA256:challenge.archiveBytesSHA256,state:"failed",observation:null,errorCode:"NATIVE_EXECUTOR_RENDERER_FAILED"};
++}
++function nativeExecutorPreloadResponse(value: unknown, challenge: NativeExecutorChallenge): NativeExecutorResponse | undefined {
++  const row=nativeExecutorPreloadData(value,["schema","transportId","challengeId","round","stage","requestSHA256","requestBytesSHA256","archiveBytesSHA256","state","observation","errorCode"]);
++  if(row===undefined||row.schema!=="native-executor-response/1")return;
++  for(const key of ["transportId","challengeId","round","stage","requestSHA256","requestBytesSHA256","archiveBytesSHA256"] as const)if(row[key]!==challenge[key])return;
++  if(row.state==="failed")return row.observation===null&&row.errorCode==="NATIVE_EXECUTOR_RENDERER_FAILED"?nativeExecutorPreloadFailure(challenge):undefined;
++  if(row.errorCode!==null)return;
++  if(row.state==="held")return challenge.stage==="hold"&&row.observation===null?{...nativeExecutorPreloadFailure(challenge),state:"held",errorCode:null}:undefined;
++  if(!((challenge.stage==="acquire"&&row.state==="acquired")||(challenge.stage==="check"&&row.state==="checked")))return;
++  const observation=nativeExecutorPreloadData(row.observation,["schema","gameId","modId","profileId","managerScopeId","rendererGeneration","effectsAllowed","installationPermit"]);
++  if(observation===undefined||observation.schema!=="native-renderer-executor-admission/1"||observation.gameId!==challenge.gameId
++    ||observation.modId!==challenge.modId||observation.profileId!==challenge.profileId||observation.managerScopeId!==challenge.managerScope
++    ||observation.rendererGeneration!==challenge.rendererGeneration||observation.effectsAllowed!==false||observation.installationPermit!==false)return;
++  return {...nativeExecutorPreloadFailure(challenge),state:row.state,observation:Object.freeze(observation) as unknown as NonNullable<NativeExecutorResponse["observation"]>,errorCode:null};
++}
++function nativeExecutorRegisterReceiver(handler: (challenge: NativeExecutorChallenge) => Promise<NativeExecutorResponse>): () => void {
++  if(typeof handler!=="function"||nativeExecutorPreloadTypes.isProxy(handler)||nativeExecutorReceiverBound)throw new Error("NATIVE_EXECUTOR_RECEIVER_REFUSED");
++  nativeExecutorReceiverBound=true;
++  const listener=(_event:unknown,raw:unknown)=>{
++    const challenge=nativeExecutorPreloadChallenge(raw);if(challenge===undefined)return;
++    const send=(value:unknown)=>betterIpcRenderer.send("persist:native-executor-response",nativeExecutorPreloadResponse(value,challenge)??nativeExecutorPreloadFailure(challenge));
++    try {const flight=handler(challenge);
++      if(!nativeExecutorPreloadTypes.isPromise(flight)||nativeExecutorPreloadTypes.isProxy(flight)){send(nativeExecutorPreloadFailure(challenge));return;}
++      void Promise.prototype.then.call(flight,send,()=>send(nativeExecutorPreloadFailure(challenge))).catch(()=>{});
++    }
++    catch {try{send(nativeExecutorPreloadFailure(challenge));}catch{/* Main retains its observation deadline and ownership. */}}
++  };
++  betterIpcRenderer.on("persist:native-executor-challenge",listener);
++  return ()=>betterIpcRenderer.off("persist:native-executor-challenge",listener);
++}
++
+ try {
+   expose("versions", {
+     chromium: process.versions.chrome,
+@@ -48,6 +104,10 @@
+     },
+ 
+     persist: {
++      prepareNativeExecutor: (requestBytes, archiveBytes) =>
++        betterIpcRenderer.invoke("persist:native-executor-prepare", requestBytes, archiveBytes),
++      onExecutorChallenge: nativeExecutorRegisterReceiver,
++
+       observeMainReadiness: (requestId) =>
+         betterIpcRenderer.invoke("persist:native-main-readiness", requestId),
+ 

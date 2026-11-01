@@ -1,0 +1,23 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/shared/src/types/ipc.ts",
+  "originalSourceSHA256": "cb34be45e8b87cca3480ad1805a358b8e2604ac8938b71e4a0594f7f6885521d",
+  "inputSHA256": "d3474309d186d9909b4056f54ebdf079f765e96d2832249cb83ef196bb6d6e9a",
+  "outputSHA256": "cb76a3e04315bda9e6734b5d00f9d7be63eafd2f995f250611b5bf0a316dbd0c",
+  "patchSHA256": "ae27e5103066c674996accade952cee18f46d51b0ae16dbb58455e30fbdf66e0",
+  "prerequisitePatch": "native-main-readiness-shared-ipc.patch",
+  "prerequisitePatchSHA256": "b5d9c3cc260796e8a2432afacd3566fda59db1c093aae28fdc2a03128da65135",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "effectsAllowed": false,
+  "installationPermit": false,
+  "nativeAdmission": false,
+  "powerLossPersistenceVerified": false,
+  "limitations": [
+    "Fixed prepared transport only; no START, public installation endpoint, runtime host acceptance or privileged-JavaScript isolation."
+  ]
+}
