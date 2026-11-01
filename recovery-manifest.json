@@ -276,7 +276,7 @@
     },
     {
       "path": "docs/LOCAL-INSTALL-IMPLEMENTATION.md",
-      "sha256_lf": "13c24235231d11238f0ca05b226db3720fdc04f83a8278717ad477705417d5a5"
+      "sha256_lf": "5d3061201f9fb4d3276f330bde663c8646f13c3afe8c99c88fad694824768258"
     },
     {
       "path": "docs/MAINTENANCE.md",
@@ -376,7 +376,7 @@
     },
     {
       "path": "docs/NATIVE-SDK-CAPSULE.md",
-      "sha256_lf": "14910a42b4b04cf6d10ecf27cba7bc12b5568cfff9b5cde6bab94cf53216fe3f"
+      "sha256_lf": "f5c674405a873e12e600d3cf2657742278ce08fc40af909a9d65a58c813c0b22"
     },
     {
       "path": "docs/NATIVE-SOURCE-ASSEMBLY.md",
@@ -2233,6 +2233,10 @@
     {
       "path": "tools/modding/vortex-agent/native-sdk-capsule-load.test.mjs",
       "sha256_lf": "c9d3262760d05ff0ba680c75c53371ef376c5e6d1cbbdfddd464603dcf481e4d"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-sdk-capsule-native.test.mjs",
+      "sha256_lf": "9306fa18e3f40c6ea9397bc19d68e59b4673b5ddfc604c6d19dd3b9d07e9bd93"
     },
     {
       "path": "tools/modding/vortex-agent/native-sdk-capture.mjs",
