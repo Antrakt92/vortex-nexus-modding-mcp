@@ -1,0 +1,119 @@
+--- a/src/main/build.mjs
++++ b/src/main/build.mjs
+@@ -80,6 +80,95 @@
+   return binding;
+ }
+ 
++function nativeRuntimeCapsule(binding) {
++  const need = value => { if (!value) throw new Error("NATIVE_RUNTIME_CAPSULE_REFUSED"); };
++  const digest = value => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
++  const expectedArtifact = process.env.NEXUS_RUNTIME_CAPSULE_SHA256;
++  const expectedLoader = process.env.NEXUS_RUNTIME_CAPSULE_LOADER_SHA256;
++  if (binding === null) {
++    need(expectedArtifact === undefined && expectedLoader === undefined);
++    return null;
++  }
++  need(digest(expectedArtifact) && digest(expectedLoader));
++  const generation = stat => ["dev","ino","size","mtimeNs","ctimeNs","nlink"].map(key => String(stat[key])).join(":");
++  const directories = new Map(), leaves = new Map();
++  const directory = target => {
++    const stat = nativeFS.lstatSync(target, {bigint:true});
++    need(stat.isDirectory() && !stat.isSymbolicLink());
++    const stamp = generation(stat);
++    if (directories.has(target)) need(directories.get(target) === stamp);
++    else directories.set(target, stamp);
++  };
++  const read = (file, maximum, expected) => {
++    for (let current=path.dirname(file), depth=0;;current=path.dirname(current)) {
++      need(++depth<=128); directory(current);
++      if(current===path.dirname(current))break;
++    }
++    const before=nativeFS.lstatSync(file,{bigint:true});
++    need(before.isFile() && !before.isSymbolicLink() && before.size>0n && before.size<=BigInt(maximum));
++    const stamp=generation(before), size=Number(before.size), fd=nativeFS.openSync(file,"r");
++    let bytes;
++    try {
++      need(generation(nativeFS.fstatSync(fd,{bigint:true}))===stamp);
++      const buffer=Buffer.alloc(size+1);let used=0;
++      while(used<buffer.length){
++        const n=nativeFS.readSync(fd,buffer,used,Math.min(65536,buffer.length-used),used);
++        if(n===0)break;used+=n;
++      }
++      need(used===size && generation(nativeFS.fstatSync(fd,{bigint:true}))===stamp
++        && generation(nativeFS.lstatSync(file,{bigint:true}))===stamp);
++      bytes=Buffer.from(buffer.subarray(0,used));
++      need(createHash("sha256").update(bytes).digest("hex")===expected);
++    } finally {nativeFS.closeSync(fd);}
++    leaves.set(file,stamp);return bytes;
++  };
++  const root=path.join(binding.workspaceRoot,"local-state","native-sdk-capsule");
++  const artifactBytes=read(path.join(root,"compiled.json"),4*1024*1024,expectedArtifact);
++  const loaderBytes=read(path.join(root,"loader.cjs"),64*1024,expectedLoader);
++  const decode=bytes=>{
++    const text=new TextDecoder("utf-8",{fatal:true,ignoreBOM:true}).decode(bytes);
++    need(!text.startsWith("\uFEFF") && Buffer.from(text,"utf8").equals(bytes));return text;
++  };
++  const artifactText=decode(artifactBytes), artifact=JSON.parse(artifactText);
++  need(Buffer.from(JSON.stringify(artifact),"utf8").equals(artifactBytes));
++  const exact=(value,keys)=>{
++    need(value!==null && typeof value==="object" && !Array.isArray(value));
++    const own=Object.keys(value);need(own.length===keys.length && keys.every((key,i)=>key===own[i]));
++  };
++  const pins=(value,names)=>{exact(value,names);for(const name of names)need(digest(value[name]));};
++  exact(artifact,["schema","binding","main","relay","python","transformedJavaScriptSHA256"]);
++  need(artifact.schema==="native-sdk-capsule/1" && JSON.stringify(artifact.binding)===JSON.stringify(binding));
++  exact(artifact.main,["code","sha256"]);exact(artifact.relay,["codeSHA256","envelopeSHA256"]);
++  exact(artifact.python,["originalSHA256","executionSHA256"]);
++  const python=NATIVE_RUNTIME_SOURCE_NAMES.filter(name=>name.endsWith(".py"));
++  pins(artifact.python.originalSHA256,python);pins(artifact.python.executionSHA256,python);
++  pins(artifact.transformedJavaScriptSHA256,NATIVE_RUNTIME_SOURCE_NAMES.filter(name=>!name.endsWith(".py")));
++  need(python.every(name=>artifact.python.originalSHA256[name]===binding.sourceSHA256[name])
++    && digest(artifact.main.sha256) && digest(artifact.relay.codeSHA256) && digest(artifact.relay.envelopeSHA256));
++  const encoded=artifact.main.code;
++  need(typeof encoded==="string" && encoded.length>0 && encoded.length<=2796204 && encoded.length%4===0
++    && /^[A-Za-z0-9+/]*={0,2}$/.test(encoded));
++  const mainBytes=Buffer.from(encoded,"base64");
++  need(mainBytes.length>0 && mainBytes.length<=2*1024*1024 && mainBytes.toString("base64")===encoded
++    && createHash("sha256").update(mainBytes).digest("hex")===artifact.main.sha256);
++  decode(mainBytes);
++  const loader=decode(loaderBytes);
++  for(const [file,stamp] of leaves){
++    const stat=nativeFS.lstatSync(file,{bigint:true});
++    need(stat.isFile() && !stat.isSymbolicLink() && generation(stat)===stamp);
++  }
++  for(const current of directories.keys())directory(current);
++  const literal=Object.freeze({schema:"native-sdk-capsule-binding/1",artifactBase64:artifactBytes.toString("base64"),
++    artifactSHA256:expectedArtifact,loaderSHA256:expectedLoader});
++  // The outer union lets the reviewed loader delegate its own narrower SDK
++  // builtin gateway. No relative paths/packages are accepted by either gate.
++  const banner="const __NEXUS_NATIVE_CAPSULE_LOADER_SHA256__="+JSON.stringify(expectedLoader)+";\nconst __NEXUS_NATIVE_CAPSULE_LOAD__=((builtinRequire)=>{'use strict';\n"
++    +"const module={exports:{}};const allowed=new Set(['node:crypto','node:module','node:vm','node:util','node:fs','node:path','node:util/types','node:child_process','node:url','node:net','node:events','url']);\n"
++    +"const require=id=>{if(typeof id!=='string'||!allowed.has(id))throw Error('NATIVE_RUNTIME_CAPSULE_IMPORT_REFUSED');return builtinRequire(id);};\n"
++    +loader+"\nconst descriptor=Object.getOwnPropertyDescriptor(module.exports,'loadNativeSDKCapsule');if(!descriptor||!Object.hasOwn(descriptor,'value')||typeof descriptor.value!=='function')throw Error('NATIVE_RUNTIME_CAPSULE_LOADER_REFUSED');return descriptor.value;\n})(require);\n";
++  return Object.freeze({literal,banner});
++}
++
+ const INPUT = path.resolve(import.meta.dirname, "src", "main.ts");
+ const OUTPUT = path.join(mainOutputDirectory, "main.cjs");
+ 
+@@ -90,9 +179,19 @@
+   return true;
+ });
+ 
++const nativeBinding = nativeRuntimeBinding();
++const nativeCapsule = nativeRuntimeCapsule(nativeBinding);
+ config.transform = { ...config.transform, define: { ...config.transform?.define,
+-  __NEXUS_NATIVE_RUNTIME_BINDING__: JSON.stringify(nativeRuntimeBinding()),
++  __NEXUS_NATIVE_RUNTIME_BINDING__: JSON.stringify(nativeBinding),
++  __NEXUS_NATIVE_CAPSULE__: JSON.stringify(nativeCapsule?.literal ?? null),
+ } };
++if (nativeCapsule !== null) {
++  if (config.output.banner !== undefined && config.output.banner !== "") throw new Error("NATIVE_RUNTIME_CAPSULE_BANNER_REFUSED");
++  config.output = { ...config.output, banner: nativeCapsule.banner };
++} else {
++  if (config.output.banner !== undefined && typeof config.output.banner !== "string") throw new Error("NATIVE_RUNTIME_CAPSULE_BANNER_REFUSED");
++  config.output = { ...config.output, banner: (config.output.banner ?? "") + "\nconst __NEXUS_NATIVE_CAPSULE_LOADER_SHA256__=null;\nconst __NEXUS_NATIVE_CAPSULE_LOAD__=null;\n" };
++}
+ 
+ const bundle = await rolldown(config);
+ await bundle.write(config.output);

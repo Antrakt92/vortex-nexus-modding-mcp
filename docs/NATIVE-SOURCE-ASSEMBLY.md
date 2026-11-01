@@ -1,6 +1,6 @@
 # Assemble the reviewed Vortex source patches
 
-`native-source-series.mjs` applies the fixed sequence of 103 reviewed patches to
+`native-source-series.mjs` applies the fixed sequence of 105 reviewed patches to
 25 original files from Vortex `v2.9.1`, commit
 `c80326367cbe6d96621ad6cf4a5488ef49bac110`. It replaces manually composing separate
 patch chains before compilation. It does not change an installed application or
@@ -35,7 +35,7 @@ match the pinned series. Patch application requires exact offsets and context;
 it has no fuzzy matching or hash-refresh mode.
 
 The fixed graph combines the 33-patch mod-management/transfer packet with the
-70-patch persistence packet. The latter includes renderer target admission and
+72-patch persistence packet. The latter includes renderer target admission and
 acknowledged diffs, main/preload/shared IPC, backend reservations and managed SQL
 ownership, the main build's runtime binding and startup history classification.
 Both runtime packet directories have separate closed inventories;
@@ -692,7 +692,7 @@ installation endpoint or completion/release claim is made.
 
 ## Internal execution and completion — 1 November 2026
 
-The current 103-patch/25-source graph adds six patches to graph97: Shared IPC
+The qualified 103-patch/25-source generation added six patches to graph97: Shared IPC
 and Preload types, the fixed Preload receiver, Main IPC orchestration, Main
 completion and Renderer completion. The [completion contract](NATIVE-EXECUTOR-COMPLETION.md)
 connects seven source-owned stages from fresh preparation checks through copy,
@@ -719,3 +719,35 @@ use explicit Electron, SQL and physical-process facades; they do not establish
 installed-host loading, an actual seven-stage physical installation, power-loss
 durability or next-operation handoff. Earlier graph97 evidence above remains
 historical evidence for its own source generation.
+
+## Application Main capsule wiring — 1 November 2026
+
+The prepared 105-patch/25-source graph adds `native-main-sdk-capsule` and
+`native-main-sdk-capsule-build`: 33 lifecycle patches and 72 persistence patches.
+[The capsule contract](NATIVE-SDK-CAPSULE.md) describes the fixed build inputs and
+artifact/loader pins. Main retains one validated capsule namespace and compares
+its code/binding identities in memory, replacing external SDK requires,
+`require.cache` observations and repeated physical source scans. Data journal,
+archive, staging and executable/core checks remain physical.
+
+The sealed graph SHA-256 is
+`2adcb694060d87140ca28f1498ae534ae3735b6e29be6b893a23b1250c45288b`.
+All 23 graph checks and seven new build checks passed without skips; the 96 KiB
+series cap is unchanged. Ten new source cases also passed without skips, including
+five four-actor compositions and five direct Main cases. SQL/process/Electron collaborators are explicit
+facades. An actual 1,141-source Main TypeScript Program check passed with zero
+diagnostics. Fresh Main TypeScript/build qualification and all 52 upstream Main
+tests then passed without skips. Seven Main Program/map members were fresh;
+eighteen non-Main members, sixteen maps and four runtime outputs retain their
+exact graph103 proof. All 25 final sources and 23 maps were sampled. Main's build
+input changed separately; its emitted banner matched the exact loader body and
+private hash, artifact/base64 pin and all fifteen SDK source pins. Eight configs
+and the lock were unchanged, Electron stayed cold and the raw SDK15 was unchanged.
+The new SDK clone and earlier clones were preserved.
+
+Qualification receipt:
+`local-state/native-capsule-main/recovery/qualification105/QUALIFICATION.json`,
+SHA-256 `deb36e910f52fcff592110ca92690c86625b4e988a1b73685080e53a59c1f325`.
+This rebuilds Main, not all four projects. The graph103 qualification above remains
+evidence for its earlier generation and the unchanged retained outputs. Neither
+result installs the kit or adds a public MCP native installation permit.

@@ -1,0 +1,28 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/main/src/store/mainPersistence.ts",
+  "originalSourceSHA256": "7d3e28cb829914fb092774eca3fc357645fa7ef508177d1a0e3b32eed58f05fe",
+  "inputSHA256": "33dcd7d544a8f84c2420d40963b48b27a93400a6f6f6fc8ae05c5485ff68da52",
+  "outputSHA256": "969b5d4180ea92e051ec3cc01eb7ea27ce4451a3f7ce06c18050b6a0f1bfe5f0",
+  "patchSHA256": "eeafcb602e2564e06cbe83856de632022f15d52812b52d8cf01ae1b12b41277c",
+  "prerequisitePatch": "native-main-executor-completion.patch",
+  "prerequisitePatchSHA256": "9474de905230c5906ce9794352a9ac51cf73a24d727b16e4cca73cc28a4b79a0",
+  "requiredCompanionPatch": "native-main-sdk-capsule-build.patch",
+  "requiredCompanionPatchSHA256": "f38f341dba2a47aa5b2fe94e56ee9877e9fe17c05f7c27f4fff6bf0449ccabca",
+  "requiredCompanionOutputSHA256": "4484b33afab0290252cc8b702cc7c061d02e09da24f8f4b1c5a57bf1bef88bc9",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "effectsAllowed": false,
+  "installationPermit": false,
+  "nativeAdmission": false,
+  "powerLossPersistenceVerified": false,
+  "limitations": [
+    "Main retains one verified compiled SDK namespace; raw SDK files and Node path-cache entries are not runtime code authority.",
+    "Journal and native data ancestry, census/anchor, archive/staging custody and runtime binary guards retain their physical contracts.",
+    "Source/build qualification does not establish native installation, repeat-operation handoff or installed-host acceptance."
+  ]
+}
