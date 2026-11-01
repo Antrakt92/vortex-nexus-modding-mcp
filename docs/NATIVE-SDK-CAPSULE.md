@@ -200,3 +200,29 @@ node --test --test-concurrency=1 tools/modding/vortex-agent/native-sdk-capsule-n
 These checks create no Vortex mod record, use no installed game/staging paths and
 do not start Vortex or a game. They qualify physical SDK preparation/copy/closure,
 not the complete application installation or repeated-operation handoff.
+
+## Isolated application bootstrap
+
+On 2026-11-01, a separate application fixture based on Vortex 2.9.1 passed
+bootstrap in real Electron 44.2.0, Node 24.20.0, Windows x64. It used the captured
+SDK and reviewed fixture-only isolation code, not the installed Vortex instance.
+The application created an isolated profile and imported two generated ZIPs
+through Vortex's actual handlers. Both downloads reached `finished`; sizes,
+MD5, SHA-256 and selected paths were checked. No installation was requested.
+
+The retained supervisor observed exit zero, no remaining owned processes and
+EOF on both output pipes, without timeout recovery or forced termination.
+After exit, a native DuckDB/Level Pivot query against a verified physical copy
+confirmed 20 selected persisted values. The original database's file identities,
+sizes and hashes remained unchanged. The copy can change during LevelDB recovery,
+even with a `READ_ONLY` attachment; the original was never opened by that reader.
+An absent automation `start` key was interpreted using the matching source's
+`false` default; other required settings and download fields remained strict.
+
+The private supervisor result has SHA-256
+`a8ed82544df3e9c8e62a32d21cc975779273bacefc1855b30a52b5e713f41228`;
+the selected-KV result has SHA-256
+`099f24d5a424ea889a9040727e6ea96b28cbc4a74d236cc2b8f1c1e08f5511b9`.
+Runtime receipts and databases are deliberately excluded from this repository.
+This qualifies application bootstrap and persisted imports, not installation,
+cancellation, repeated-operation handoff, deployment or installed-host activation.
