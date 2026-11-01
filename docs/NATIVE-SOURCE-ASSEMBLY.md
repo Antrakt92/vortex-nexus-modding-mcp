@@ -1,6 +1,6 @@
 # Assemble the reviewed Vortex source patches
 
-`native-source-series.mjs` applies the fixed sequence of 129 reviewed patches to
+`native-source-series.mjs` applies the fixed sequence of 131 reviewed patches to
 26 original files from Vortex `v2.9.1`, commit
 `c80326367cbe6d96621ad6cf4a5488ef49bac110`. It replaces manually composing separate
 patch chains before compilation. It does not change an installed application or
@@ -881,3 +881,42 @@ No runtime bundle or source map was rebuilt by these checks. Same-game profile
 switches that do not emit a new game-activation attempt remain unsupported by
 this readiness producer. Full application cancellation and installation,
 public MCP activation, and installed-host acceptance are still pending.
+
+## Native Promise observation (131 patches) — 1 November 2026
+
+Vortex renderer telemetry imports Zone.js, which replaces the shared renderer
+and preload realm's global `Promise`. Native async handlers still return native
+promises. Applying the replacement's `Promise.prototype.then` to those promises
+can throw before the handler settles, causing a false failed IPC response while
+the original work continues.
+
+Preload now captures the native promise constructor and `then` before renderer
+startup. All three preparation, execution and cancellation receivers use that
+captured method for the handler and its rejection sink. Renderer uses a private
+native async observer at nine sites across cancellation, execution and successor
+control. It awaits native work and source-created Zone control promises without
+borrowing the wrong global method. Native-promise/proxy checks, tuple validation,
+ownership, deadlines and failure latches remain unchanged. Telemetry stays enabled.
+
+The graph contains 131 patches over the same 26 originals, with 76 lifecycle and
+186 persistence packet files. Its 97,560-byte representation remains under the
+unchanged 96 KiB limit. Absent prerequisite pairs may omit their two null fields;
+the assembler restores them before manifest and dependency checks and in receipts.
+A partial pair or omission of a real dependency is refused.
+
+The new tests assemble the maintained graph and run the actual receiver and
+control expressions with pinned Zone.js in isolated VMs. Their IPC, lifecycle and
+host collaborators are explicit fixtures. Required acceptance sets
+`VORTEX_NATIVE_PROMISE_REQUIRED=1`, together with `VORTEX_NATIVE_SOURCE_ROOT` and
+`VORTEX_CAPSULE_BUILD_SOURCE`, so missing inputs fail rather than skip. The 38 new
+cases and 26 assembly checks passed without skips. A compile-only fixture passed
+fresh Main, Preload and Renderer typechecks and rebuilt Preload and Renderer;
+the unchanged Main outputs were retained. Inspection matched 26 selected Program inputs
+and 24 source-map entries, including its separately pinned fixture overlays. This is
+not an exact public application build or complete native cancellation/install.
+
+The 126 unchanged compatibility cases also passed in a byte-identical source
+mirror. Earlier runs exposed a separate startup availability issue: full ancestor
+timestamp comparisons can refuse work after an unrelated parent directory changes.
+The mirror isolates that test environment; this Promise repair does not change
+filesystem custody checks or establish native installation acceptance.

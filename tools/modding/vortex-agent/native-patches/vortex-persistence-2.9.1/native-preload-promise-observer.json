@@ -1,0 +1,21 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/preload/src/index.ts",
+  "originalSourceSHA256": "9f49d7900fedc1aaeac771711644bc2e1fcd71f77640bb43c4959a52f2093e42",
+  "inputSHA256": "5b30d381bd254b9856be8286b56b32abf4c28a7d746b46636dd6b41ac2b45ab2",
+  "outputSHA256": "990d562e5ae2821f7a6e4d77d37d270948bf8f38579ce2d87102b55f278a9df1",
+  "patchSHA256": "55cafd77ec213678f0ba87ab3bd428300a20a7ec975d4e8d0f8ea17925a98ce9",
+  "prerequisitePatch": "native-cancellation-preload.patch",
+  "prerequisitePatchSHA256": "fc657875cd29c835aa30dfe84d163b2ac7e1c026e4f44ac4325b13abee07636a",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "nativeTerminalGuarantee": false,
+  "globalIdleGuarantee": false,
+  "effectsAllowed": false,
+  "installationPermit": false,
+  "nativeAdmission": false
+}

@@ -24,6 +24,38 @@ const integration = (name, action) => test(name, {
 const originals = () => Object.fromEntries(NATIVE_SOURCE_PATHS.map(file => [file,
   fs.readFileSync(path.join(process.env.VORTEX_NATIVE_SOURCE_ROOT, file))]));
 
+integration('omitted absent prerequisite pairs preserve exact source assembly and receipt edges', async t => {
+  const explicit = clonePacket(t), omitted = clonePacket(t);
+  for (const [copy, include] of [[explicit, true], [omitted, false]]) resealFixture(copy, graph => {
+    let absent = 0;
+    for (const row of graph.patches) if (row.prerequisitePatch == null && row.prerequisitePatchSHA256 == null) {
+      // One explicit pair fits within the unchanged byte cap of the current graph.
+      if (include && absent === 0) { row.prerequisitePatch = null; row.prerequisitePatchSHA256 = null; }
+      else { delete row.prerequisitePatch; delete row.prerequisitePatchSHA256; }
+      absent++;
+    }
+    assert(absent > 0);
+  });
+  const actual = (await omitted.load())(originals()), baseline = (await explicit.load())(originals());
+  assert.deepEqual(actual.receipt.patches, baseline.receipt.patches);
+  for (const file of NATIVE_SOURCE_PATHS) assert.equal(sha(actual.sources[file]), sha(baseline.sources[file]));
+});
+
+test('omitted prerequisites cannot erase a real dependency or leave a partial pair', async t => {
+  for (const mode of ['real-parent', 'missing-name', 'missing-hash']) {
+    const copy = clonePacket(t);
+    resealFixture(copy, graph => {
+      const row = graph.patches.find(row => mode === 'real-parent' ? typeof row.prerequisitePatch === 'string' : row.prerequisitePatch == null);
+      assert(row);
+      if (mode !== 'real-parent') { row.prerequisitePatch = null; row.prerequisitePatchSHA256 = null; }
+      if (mode !== 'missing-hash') delete row.prerequisitePatch;
+      if (mode !== 'missing-name') delete row.prerequisitePatchSHA256;
+    });
+    const assemble = await copy.load();
+    assert.throws(() => assemble(dummy()), /^Error: NATIVE_SOURCE_SERIES_GRAPH$/);
+  }
+});
+
 function clonePacket(t) {
   const parent = path.resolve(HERE, '../../../local-state/vortex-agent-build/tests');
   fs.mkdirSync(parent, {recursive: true});
@@ -96,7 +128,7 @@ test('fixed packet is checked, but an unpinned original can never assemble', () 
 });
 
 test('pinned series closes all fixed nodes, exact source chains and cross-file manager dependencies', () => {
-  assert.equal(series.patches.length, 129); assert.equal(series.files.length, 26);
+  assert.equal(series.patches.length, 131); assert.equal(series.files.length, 26);
   assert.equal(series.schema, 'native-source-series/2');
   assert.deepEqual([...series.files.map(row => row.path)].sort(), [...NATIVE_SOURCE_PATHS].sort());
   const done = new Map(), current = new Map(series.files.map(row => [row.path, row.originalSHA256]));

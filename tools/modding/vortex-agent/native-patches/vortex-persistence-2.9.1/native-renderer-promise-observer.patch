@@ -1,0 +1,75 @@
+--- a/src/renderer/src/ExtensionManager.ts
++++ b/src/renderer/src/ExtensionManager.ts
+@@ -15,6 +15,17 @@
+ import type InstallManager from "./extensions/mod_management/InstallManager";
+ import { reserveNativeRendererTarget, checkNativeRendererTarget, adoptNativeRendererTarget } from "./reducers";
+ const nativeExecutorAdopt = adoptNativeRendererTarget;
++// Native async await observes genuine native flights without looking up the
++// renderer global Promise, which ordinary Zone telemetry may replace. Internal
++// Zone control promises remain valid awaitables; external native-flight guards
++// remain at their original intake sites. Callback failures are observed here.
++async function observeNativeRendererPromise<T>(flight: PromiseLike<T>, fulfilled: (value: T) => void, rejected: (primary: unknown) => void): Promise<void> {
++  let value: T;
++  try { value = await flight; }
++  catch (primary) { try { rejected(primary); } catch { /* Observe callback failure without replacing the original primary. */ } return; }
++  try { fulfilled(value); } catch { /* Match the original detached rejection sink; do not invoke the other callback. */ }
++}
++
+ import { acquireNativePersistenceFlushHold, checkNativePersistenceFlushHold } from "./store/persistDiffMiddleware";
+ import type { PreloadWindow } from "@vortex/shared/preload";
+ import PromiseBB from "bluebird";
+@@ -969,7 +980,7 @@
+     let invalidate=()=>{};const invalidated=new Promise<void>(resolve=>{invalidate=resolve;});
+     const record:NativeRendererCancellation={request,admission,phase:"running",sequence:0,busy:false,checking:false,notified:false,primarySet:false,primary:undefined,invalidated,invalidate,challenges:new Set(),unsubscribeAttempted:false};
+     this.#mNativeCancellation=record;
+-    void Promise.prototype.then.call(admission.invalidated,()=>this.#holdNativeCancellation(record),()=>this.#holdNativeCancellation(record)).catch(()=>{});
++    void observeNativeRendererPromise(admission.invalidated,()=>this.#holdNativeCancellation(record),()=>this.#holdNativeCancellation(record));
+     let timer:ReturnType<typeof setTimeout>|undefined;
+     try{
+       this.#checkNativeCancellation(record);const send=request.route.cancel;if(send===undefined)throw this.#nativeTransportError();
+@@ -977,8 +988,8 @@
+       if(!nativeReadinessTypes.isPromise(flight)||nativeReadinessTypes.isProxy(flight))throw this.#nativeTransportError();
+       const result:unknown=await new Promise((resolve,reject)=>{
+         timer=setTimeout(()=>reject(this.#nativeTransportError()),120000);
+-        void Promise.prototype.then.call(flight,resolve,reject).catch(()=>{});
+-        void Promise.prototype.then.call(invalidated,()=>reject(record.primarySet?record.primary:this.#nativeTransportError()),reject).catch(()=>{});
++        void observeNativeRendererPromise(flight,resolve,reject);
++        void observeNativeRendererPromise(invalidated,()=>reject(record.primarySet?record.primary:this.#nativeTransportError()),reject);
+       });
+       if(nativeReadinessClock.now()>=expires)throw this.#nativeTransportError();
+       if(record.phase!=="finalized"||record.sequence!==4||record.observation===undefined||record.mainRelease===undefined)throw this.#nativeTransportError();
+@@ -1042,8 +1053,8 @@
+       try{
+         result=await new Promise((resolve,reject)=>{
+           timer=setTimeout(()=>reject(this.#nativeTransportError()),5000);
+-          void Promise.prototype.then.call(flight,resolve,reject).catch(()=>{});
+-          void Promise.prototype.then.call(invalidated,()=>reject(this.#nativeTransportError()),reject).catch(()=>{});
++          void observeNativeRendererPromise(flight,resolve,reject);
++          void observeNativeRendererPromise(invalidated,()=>reject(this.#nativeTransportError()),reject);
+         });
+       }catch(primary){retryable=true;throw primary;}
+       finally{if(timer!==undefined)clearTimeout(timer);}
+@@ -1167,8 +1178,8 @@
+       try {
+         result = await new Promise<unknown>((resolve, reject) => {
+           timer = setTimeout(() => reject(this.#nativeSuccessorError("PENDING")), 5000);
+-          void Promise.prototype.then.call(flight, resolve, reject).catch(() => {});
+-          void Promise.prototype.then.call(record.invalidated, () => reject(this.#nativeSuccessorError()), reject).catch(() => {});
++          void observeNativeRendererPromise(flight, resolve, reject);
++          void observeNativeRendererPromise(record.invalidated, () => reject(this.#nativeSuccessorError()), reject);
+         });
+       } catch (primary) { retryable = true; throw primary; }
+       finally { if (timer !== undefined) clearTimeout(timer); }
+@@ -1346,10 +1357,10 @@
+       if (execute === undefined || request.admission === undefined) throw this.#nativeTransportError();
+       // The actual admission's sticky ABA signal is observed before Main can
+       // begin COPY/SQL. It carries negative information only, once per execution.
+-      void Promise.prototype.then.call(request.admission.invalidated, () => this.#holdNativeExecution(record), () => this.#holdNativeExecution(record)).catch(() => {});
++      void observeNativeRendererPromise(request.admission.invalidated, () => this.#holdNativeExecution(record), () => this.#holdNativeExecution(record));
+       const flight: unknown = Reflect.apply(execute, request.route.persist, [request.binding.transportId]);
+       if (!nativeReadinessTypes.isPromise(flight) || nativeReadinessTypes.isProxy(flight)) throw this.#nativeTransportError();
+-      const result: unknown = await new Promise((resolve, reject) => { void Promise.prototype.then.call(flight, resolve, reject).catch(reject); });
++      const result: unknown = await new Promise((resolve, reject) => { void observeNativeRendererPromise(flight, resolve, reject); });
+       const keys = ["schema", "transportId", "executionId", "operationId", "nativeJobId", "requestSHA256", "requestBytesSHA256", "archiveBytesSHA256", "recordSHA256", "fullRecordSHA256", "mainReleased", "rendererReleased", "effectsAllowed", "installationPermit", "nativeAdmission", "trackedInstallComplete", "powerLossPersistenceVerified"];
+       const data = this.#nativeTransportData(result, keys), binding = request.binding, completion = this.#mNativeCompletion;
+       if (record.phase !== "finalized" || completion === undefined || completion.phase !== "finalized" || completion.request !== request || completion.observation === undefined
