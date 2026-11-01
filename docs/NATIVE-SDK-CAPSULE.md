@@ -3,9 +3,9 @@
 This component builds and loads executable SDK bytes without reopening the
 external SDK source files during execution. It captures the existing fifteen-file
 SDK, bundles its twelve JavaScript files into closed Main and relay code, and
-adapts the three reviewed Python sources for an in-memory bootstrap. The raw SDK15
-and the [103-patch application graph](NATIVE-SOURCE-ASSEMBLY.md) remain unchanged.
-The application Main path is **not yet wired to this loader or build artifact**;
+adapts the three reviewed Python sources for an in-memory bootstrap. The fifteen raw SDK files
+remain unchanged. The prepared [105-patch application graph](NATIVE-SOURCE-ASSEMBLY.md)
+adds Main/build wiring to this loader and artifact. This is source preparation;
 the kit is not installed and adds no public MCP installation command.
 
 ## Build and load contracts
@@ -35,6 +35,43 @@ The trusted caller must retain **one Main namespace instance** across startup,
 genesis, pending reservation and terminal settlement. Loading a second copy would
 create separate journal WeakMap brands, occupied operation slots and consumed-ID
 state. A matching JSON receipt cannot bridge those process-local identities.
+
+## Prepared application Main wiring
+
+The two new patches are `native-main-sdk-capsule` and
+`native-main-sdk-capsule-build`. The Main build takes three explicit inputs:
+`NEXUS_RUNTIME_WORKSPACE`, `NEXUS_RUNTIME_CAPSULE_SHA256` and
+`NEXUS_RUNTIME_CAPSULE_LOADER_SHA256`. It reads the artifact and loader from fixed locations
+`<workspace>/local-state/native-sdk-capsule/compiled.json` and `loader.cjs`,
+validates their independently supplied digests and binding, and emits a closed
+artifact literal plus the captured CJS loader in the Main banner. An independent
+private banner constant pins the loader SHA; changing only the artifact literal's
+loader metadata cannot substitute it. The builder does not accept caller paths
+for either file.
+
+The build still verifies the fifteen raw SDK files. Runtime checks use the
+captured executable code rather than reopening those files.
+
+Main claims its private loader phase before calling the captured loader. It
+retains one validated five-namespace result across startup, genesis, pending and
+terminal settlement. Later source checks compare the captured artifact/base64,
+raw15 binding, loader function and private digest identities in memory; they do
+not re-evaluate code, use SDK `require.cache`, or repeatedly hash SDK directories.
+Changed metadata or reentry holds the original attempt without fallback. Physical
+journal, executable/core, archive and staging checks retain their contracts.
+
+Ten source cases passed without skips: five direct Main cases and five actual
+four-actor compositions, with explicit SQL/process/Electron facades. They include
+an absent or renamed SDK tree, post-load code-directory churn, physical journal
+drift, strict invalid artifact/binding/loader pins and metadata drift before the
+first COPY. An actual Main TypeScript Program check passed with 1,141 sources and
+zero diagnostics. Graph105 then passed fresh Main typecheck/build and 52 upstream
+Main tests without skips. Seven Main Program/map members were checked afresh;
+eighteen non-Main Program members, sixteen maps and four runtime output files
+retain their exact Q103 proof. All 25 source outputs and 23 maps were sampled.
+The changed Main build input emitted the exact captured loader body, independent
+private loader pin, artifact/base64 digest and all fifteen raw SDK pins. Electron
+remained cold. This does not prove installed loading or a physical installation.
 
 ## Provenance and executed bytes
 
@@ -104,11 +141,30 @@ $env:VORTEX_CAPSULE_BUILD_SOURCE = 'C:/Task/reviewed-vortex-build-workspace'
 $env:VORTEX_CAPSULE_BUILD_SDK = 'C:/Task/reviewed-sdk'
 $env:VORTEX_CAPSULE_BUILD_BINDING = 'C:/Task/pinned-runtime-binding.json'
 node --test tools/modding/vortex-agent/native-sdk-capsule-build.test.mjs
+
+# Also supply the pinned original-source export for application build-patch checks.
+$env:VORTEX_NATIVE_SOURCE_ROOT = 'C:/Task/pinned-vortex-originals'
+node --test tools/modding/vortex-agent/native-main-sdk-capsule-build.test.mjs
 ```
 
 The source workspace must already contain the reviewed compiler/dependencies.
 These inputs do not authorize an install or a package-manager download. Omitting
 inputs skips those integration cases, which must not be reported as acceptance.
-Application Main wiring, a new source/build qualification and installed-host
-acceptance remain separate work. The [internal completion route](NATIVE-EXECUTOR-COMPLETION.md)
-still describes the existing application-source generation, not a deployed capsule.
+The 46-case component matrix predates application Main wiring and remains its
+own no-START proof. The new application source has separate graph105 Main build qualification;
+installed-host acceptance remains outstanding. The
+[internal completion route](NATIVE-EXECUTOR-COMPLETION.md) is prepared source,
+not a deployed capsule or public installation permission.
+
+Graph105 qualification receipt:
+`local-state/native-capsule-main/recovery/qualification105/QUALIFICATION.json`,
+SHA-256 `deb36e910f52fcff592110ca92690c86625b4e988a1b73685080e53a59c1f325`.
+Its capsule artifact SHA-256 is
+`bb59ae71c1adec6799a2de6aa26dcfa531dc5e01a28ba63c95c9e270c9d68f41`.
+Raw SDK15 bytes are unchanged; prior SDK clones and qualification evidence remain
+preserved. Non-Main projects were not rebuilt for this two-input Main change.
+
+The final combined source matrix passed 497 tests without skips, including the
+component checks and the new Main/build/four-actor cases. The separate upstream
+Main suite passed 52 tests. Source actor tests use explicit SQL/process/Electron
+facades; the component READY/abort checks do not exercise extraction or copying.

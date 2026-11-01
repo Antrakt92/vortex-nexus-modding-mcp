@@ -1,0 +1,26 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/main/build.mjs",
+  "originalSourceSHA256": "e8d85c7eb88cc6aeb3bc5a46e976b4e2fb213166fb2b4a14457d09d058ec39e1",
+  "inputSHA256": "c1a64385de1c5da8ad95910cfad7dcba960d727213ad725ee911dc133fdd0e19",
+  "outputSHA256": "4484b33afab0290252cc8b702cc7c061d02e09da24f8f4b1c5a57bf1bef88bc9",
+  "patchSHA256": "f38f341dba2a47aa5b2fe94e56ee9877e9fe17c05f7c27f4fff6bf0449ccabca",
+  "prerequisitePatch": "native-main-runtime-binding.patch",
+  "prerequisitePatchSHA256": "1d8d55b7e2e1886f1c1e7e9efbb5cefb22a8e75b7a519d75060e93bb10541a4d",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "effectsAllowed": false,
+  "installationPermit": false,
+  "nativeAdmission": false,
+  "powerLossPersistenceVerified": false,
+  "limitations": [
+    "Build-only explicit capsule and loader digest inputs; neither file is executed during build input capture.",
+    "Captured reviewed loader is emitted into the Main CJS banner with a closed builtin union; capsule imports remain separately narrowed by the loader.",
+    "Absent runtime workspace embeds two null literals. A configured workspace must provide both independent digests; no physical SDK runtime fallback is added.",
+    "File/path generations are bounded point observations, not an OS lease or installed-host acceptance."
+  ]
+}

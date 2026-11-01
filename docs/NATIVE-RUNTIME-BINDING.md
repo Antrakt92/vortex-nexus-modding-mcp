@@ -4,19 +4,34 @@ The prepared application and standalone ZIP relay must use the same SDK and
 history directory. A renderer request, current directory or inherited environment
 must not select a different journal after an interrupted operation.
 
-The main build reads `NEXUS_RUNTIME_WORKSPACE` explicitly. Without it, the native
-integration is unconfigured. With it, the build records a closed
-`native-executor-runtime-binding/1` tuple containing the normalized workspace,
-fixed Node executable digest and hashes of the fifteen fixed SDK files under
-`tools/modding/vortex-agent`. It reads those files without executing them.
-The tuple is embedded through the main Rolldown configuration; changing the
-runtime SDK requires a matching application rebuild.
+The prepared Main build reads `NEXUS_RUNTIME_WORKSPACE`,
+`NEXUS_RUNTIME_CAPSULE_SHA256` and `NEXUS_RUNTIME_CAPSULE_LOADER_SHA256` explicitly.
+Without configured runtime binding, native integration remains unavailable.
+Configured builds retain the canonical `native-executor-runtime-binding/1` tuple:
+normalized workspace, fixed Node executable digest and original hashes of the
+fifteen fixed SDK files. They validate the independently pinned capsule and
+loader at the fixed workspace-relative locations
+`local-state/native-sdk-capsule/compiled.json` and `loader.cjs`.
 
-The bound relay accepts canonical tuple bytes and checks its physical source
-directory and hashes before starting its fixed child. The child receives the
-validated workspace in its restricted environment. The parent environment is
-unchanged. The journal uses the fixed derived path
-`local-state/vortex-agent-build/native-install-executor`.
+The [capsule build](NATIVE-SDK-CAPSULE.md) captures source bytes once, then emits
+closed Main/relay bundles and three transformed Python modules. The application
+build embeds the artifact literal and captured loader code. A separate private
+banner constant pins the loader hash independently from the mutable artifact
+metadata. Changing runtime source, artifact or loader requires a matching reviewed
+build; ambient environment or a renderer request cannot select a replacement.
+
+Main validates and loads exactly one private capsule namespace, then checks its
+retained artifact, raw15 binding, loader identity and exports in memory. The
+prepared capsule route uses no physical SDK require/cache fallback or repeated
+full SDK source scans. The journal still uses the fixed derived path
+`local-state/vortex-agent-build/native-install-executor`; its physical ancestry,
+root identity, census and database anchor remain independently checked.
+
+The older direct standalone bound-relay route still checks its physical SDK
+layout and hashes. The new capsule child route instead executes the captured
+code and receives only the validated workspace in its restricted environment.
+Neither mutates the parent environment. Actual executable/core seals, archive
+and staging custody and request scope remain physical checks in both routes.
 
 The path resolver's pure core has no import-time environment lookup. Existing
 adapter callers retain their configured environment/compiled-workspace behavior
@@ -49,16 +64,22 @@ Preserving the trusted main database remains a recovery requirement.
 
 ## Acceptance boundary
 
-File hashes and ancestor generation checks are bounded point observations, not
-an operating-system source lease or protection against privileged modification.
+Build-time file hashes and data-path ancestor generation checks are bounded
+point observations, not an operating-system lease or protection against
+privileged modification. The capsule's private expected artifact digest and
+builtin allowlist load trusted compiled code; they are not an untrusted-code
+sandbox.
 Source tests and a main build do not prove installed Electron loading or a
 successful native mod installation.
 
 The [main-owned initialization bridge](NATIVE-EXECUTOR-GENESIS.md) provisions and
-persists the first empty census under genuine ownership. The actual coordinator
-still needs a verified pending
-anchor before Python START, registration and renderer adoption, joined worker
-closure, and a terminal anchor update. Known pre-START cancellation also needs
+persists the first empty census under genuine ownership. The prepared
+[completion coordinator](NATIVE-EXECUTOR-COMPLETION.md) now connects
+a verified pending anchor before Python START, registration and Renderer
+adoption, joined worker closure and a terminal anchor update. Its capsule Main
+wiring is source-prepared and Main-build-qualified, with unchanged non-Main
+outputs retaining their Q103 proof; installed acceptance remains separate.
+Known pre-START cancellation also needs
 its own proved terminal transition. Local ZIP import remains a separate missing
 operation. None of these steps is authorized by a startup classification.
 
@@ -74,3 +95,16 @@ require the reviewed official source fixture for their integration cases, using
 the same source/dependency inputs as the
 [anchor source checks](NATIVE-EXECUTOR-ANCHOR.md#qualification--31-october-2026).
 Missing optional inputs are reported as skips, rather than native acceptance.
+
+The new Main capsule source cases cover removed/churned SDK code paths while
+retaining physical journal-drift refusal, strict build-pin failure and one-time
+namespace loading. These source cases and the 46-case capsule READY/abort matrix
+have separate scopes; neither exercised a physical installation. Graph105 passed
+fresh Main typecheck/build and 52 upstream tests without skips. Seven Main
+Program/map entries were fresh, eighteen non-Main Program entries and sixteen
+non-Main source-map entries were retained from Q103, and all 25 source outputs matched. Four non-Main
+runtime files stayed exact; Electron remained cold. The qualification receipt is
+`local-state/native-capsule-main/recovery/qualification105/QUALIFICATION.json`,
+SHA-256 `deb36e910f52fcff592110ca92690c86625b4e988a1b73685080e53a59c1f325`.
+This does not claim fresh builds of the unchanged Renderer, Preload or Shared
+projects, an installed kit or native installation acceptance.

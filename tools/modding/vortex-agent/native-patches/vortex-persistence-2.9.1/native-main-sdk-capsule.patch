@@ -1,0 +1,206 @@
+--- a/src/main/src/store/mainPersistence.ts
++++ b/src/main/src/store/mainPersistence.ts
+@@ -3,7 +3,6 @@
+ import { checkNativeExecutorFrame, holdNativeExecutorFrame } from "./persistenceIPC";
+ import * as nativeStartupFS from "node:fs";
+ import { createHash as nativeStartupHash } from "node:crypto";
+-import { createRequire } from "node:module";
+ import { types as nativeStartupTypes } from "node:util";
+ 
+ import { getErrorMessageOrDefault } from "@vortex/shared";
+@@ -45,7 +44,6 @@
+ const nativeHistoryAnchorKey = isNativeExecutorAnchorKey;
+ 
+ declare const __NEXUS_NATIVE_RUNTIME_BINDING__: unknown;
+-const nativeStartupRequire = createRequire(__filename);
+ const nativeStartupRead = LevelPersist.prototype.readNativeExecutorAnchor;
+ const nativeStartupNames = Object.freeze(['owned-zip-relay-client.mjs','owned-zip-relay-runner.mjs','child-terminal-observer.cjs','owned-zip-worker-client.mjs','owned-zip-worker.py','owned-file-transfer.py','owned-zip-extractor.py','native-executor-journal.mjs','native-intent-journal.mjs','immutable-records.mjs','paths.cjs','paths-core.cjs','native-dispatch-contract.cjs','install-job-contract.cjs','strict-json.cjs']);
+ type NativeStartupPhase = 'checking' | 'held' | 'unconfigured' | 'uninitialized' | 'initialized';
+@@ -88,23 +86,88 @@
+ function nativeStartupSame(a:Map<string,string>, b:Map<string,string>) {
+   if(a.size!==b.size || [...a].some(([p,s])=>b.get(p)!==s))throw nativeStartupError();
+ }
++declare const __NEXUS_NATIVE_CAPSULE__: unknown;
++declare const __NEXUS_NATIVE_CAPSULE_LOAD__: unknown;
++declare const __NEXUS_NATIVE_CAPSULE_LOADER_SHA256__: unknown;
++const nativeCapsuleModuleNames = Object.freeze(['native-executor-journal.mjs','owned-zip-relay-client.mjs',
++  'owned-zip-worker-client.mjs','native-dispatch-contract.cjs','install-job-contract.cjs']);
++type NativeCapsuleInput = {artifactBase64:string;artifactSHA256:string;loaderSHA256:string};
++type NativeCapsuleRecord = NativeCapsuleInput & {bindingJSON:string;loader:Function;modules:Readonly<Record<string,object>>};
++let nativeCapsulePhase:'unused'|'loading'|'ready'|'held'='unused';
++let nativeCapsuleRecord:Readonly<NativeCapsuleRecord>|undefined;
++function nativeCapsuleInput():NativeCapsuleInput {
++  const value=typeof __NEXUS_NATIVE_CAPSULE__==='undefined'?null:__NEXUS_NATIVE_CAPSULE__;
++  const data=nativeStartupData(value,['schema','artifactBase64','artifactSHA256','loaderSHA256']);
++  if(data.schema!=='native-sdk-capsule-binding/1'||typeof data.artifactBase64!=='string'
++    ||data.artifactBase64.length===0||data.artifactBase64.length>5592408
++    ||typeof data.artifactSHA256!=='string'||!/^[a-f0-9]{64}$/.test(data.artifactSHA256)
++    ||typeof data.loaderSHA256!=='string'||!/^[a-f0-9]{64}$/.test(data.loaderSHA256)
++    ||typeof __NEXUS_NATIVE_CAPSULE_LOADER_SHA256__==='undefined'
++    ||data.loaderSHA256!==__NEXUS_NATIVE_CAPSULE_LOADER_SHA256__)throw nativeStartupError('SOURCE_CLOSURE');
++  return{artifactBase64:data.artifactBase64,artifactSHA256:data.artifactSHA256,loaderSHA256:data.loaderSHA256};
++}
++function nativeCapsuleLoader():Function {
++  const loader=typeof __NEXUS_NATIVE_CAPSULE_LOAD__==='undefined'?null:__NEXUS_NATIVE_CAPSULE_LOAD__;
++  if(typeof loader!=='function'||nativeStartupTypes.isProxy(loader))throw nativeStartupError('SDK_LOAD');
++  return loader;
++}
++function nativeCapsuleBindingJSON(binding:NonNullable<ReturnType<typeof nativeStartupBinding>>):string {
++  return JSON.stringify({schema:'native-executor-runtime-binding/1',workspaceRoot:binding.workspaceRoot,
++    relayNodeSHA256:'5c976096e04e5c2c1f091938926234cc9fbebfe9787ddd149351b3b0ecc707b5',sourceSHA256:binding.sources});
++}
++function nativeCapsuleGet(binding:NonNullable<ReturnType<typeof nativeStartupBinding>>):Readonly<NativeCapsuleRecord> {
++  const bindingJSON=nativeCapsuleBindingJSON(binding);
++  if(nativeCapsulePhase==='ready'){
++    try{
++      const record=nativeCapsuleRecord,input=nativeCapsuleInput();
++      if(record===undefined||record.loader!==nativeCapsuleLoader()||record.bindingJSON!==bindingJSON
++        ||record.artifactBase64!==input.artifactBase64||record.artifactSHA256!==input.artifactSHA256
++        ||record.loaderSHA256!==input.loaderSHA256)throw nativeStartupError();
++      return record;
++    }catch(error){nativeCapsulePhase='held';throw error;}
++  }
++  if(nativeCapsulePhase!=='unused'){nativeCapsulePhase='held';throw nativeStartupError('REENTRY');}
++  nativeCapsulePhase='loading';
++  const current=()=>{if(nativeCapsulePhase!=='loading')throw nativeStartupError('REENTRY');};
++  try{
++    const input=nativeCapsuleInput(),loader=nativeCapsuleLoader();current();
++    const bytes=Buffer.from(input.artifactBase64,'base64');
++    if(bytes.length===0||bytes.length>4194304||bytes.toString('base64')!==input.artifactBase64)throw nativeStartupError();
++    // The compiled banner's source-owned loader verifies the independent artifact
++    // digest and all internal pins before evaluating its fixed module graph once.
++    const result:unknown=Reflect.apply(loader,undefined,[bytes,input.artifactSHA256,Buffer.from(bindingJSON)]);current();
++    const data=nativeStartupData(result,['artifactSHA256','binding','modules']);
++    if(!Object.isFrozen(result)||data.artifactSHA256!==input.artifactSHA256)throw nativeStartupError();
++    const rawBinding=nativeStartupData(data.binding,['schema','workspaceRoot','relayNodeSHA256','sourceSHA256']);
++    const sources=nativeStartupData(rawBinding.sourceSHA256,nativeStartupNames);
++    if(JSON.stringify({...rawBinding,sourceSHA256:sources})!==bindingJSON)throw nativeStartupError();
++    const namespaces=nativeStartupData(data.modules,nativeCapsuleModuleNames),modules:Record<string,object>=Object.create(null);
++    if(!Object.isFrozen(data.modules))throw nativeStartupError();
++    for(const name of nativeCapsuleModuleNames){
++      const namespace=namespaces[name];
++      if(namespace===null||typeof namespace!=='object'||nativeStartupTypes.isProxy(namespace)||!Object.isFrozen(namespace))throw nativeStartupError();
++      const descriptors=Object.getOwnPropertyDescriptors(namespace),keys=Reflect.ownKeys(descriptors);
++      if(keys.length>256||keys.some(k=>typeof k!=='string'||!Object.hasOwn(descriptors[k]??{},'value')))throw nativeStartupError();
++      modules[name]=namespace;
++    }
++    current();
++    const record=Object.freeze({...input,bindingJSON,loader,modules:Object.freeze(modules)});
++    nativeCapsuleRecord=record;nativeCapsulePhase='ready';return record;
++  }catch(error){nativeCapsulePhase='held';throw error;}
++}
++function nativeCapsuleModule(binding:NonNullable<ReturnType<typeof nativeStartupBinding>>,name:string):object {
++  const record=nativeCapsuleGet(binding),descriptor=Object.getOwnPropertyDescriptor(record.modules,name);
++  if(descriptor===undefined||!Object.hasOwn(descriptor,'value'))throw nativeStartupError('SDK_LOAD');
++  return descriptor.value as object;
++}
+ function nativeStartupClosure(binding:NonNullable<ReturnType<typeof nativeStartupBinding>>) {
+-  const dirs=nativeStartupAncestry(binding.sdk).pins, files=new Map<string,string>();let total=0;
+-  for(const name of nativeStartupNames){
+-    const file=path.join(binding.sdk,name),before=nativeStartupFS.lstatSync(file,{bigint:true});
+-    if(!before.isFile()||before.isSymbolicLink()||before.size<=0n||before.size>524288n)throw nativeStartupError();
+-    const size=Number(before.size);total+=size;if(total>8388608)throw nativeStartupError();
+-    const stamp=nativeStartupStamp(before),fd=nativeStartupFS.openSync(file,'r');
+-    try{if(nativeStartupStamp(nativeStartupFS.fstatSync(fd,{bigint:true}))!==stamp)throw nativeStartupError();
+-      const digest=nativeStartupHash('sha256'),chunk=Buffer.alloc(65536);let used=0;
+-      while(used<=size){const n=nativeStartupFS.readSync(fd,chunk,0,Math.min(chunk.length,size+1-used),used);if(n===0)break;used+=n;if(used>size)throw nativeStartupError();digest.update(chunk.subarray(0,n));}
+-      if(used!==size||digest.digest('hex')!==binding.sources[name]||nativeStartupStamp(nativeStartupFS.fstatSync(fd,{bigint:true}))!==stamp||nativeStartupStamp(nativeStartupFS.lstatSync(file,{bigint:true}))!==stamp)throw nativeStartupError();
+-      files.set(file,stamp);
+-    }finally{nativeStartupFS.closeSync(fd);}
+-  }
+-  for(const[file,stamp]of files)if(nativeStartupStamp(nativeStartupFS.lstatSync(file,{bigint:true}))!==stamp)throw nativeStartupError();
+-  nativeStartupSame(dirs,nativeStartupAncestry(binding.sdk).pins);return{dirs,files};
+-}
++  const record=nativeCapsuleGet(binding);
++  // These maps identify retained CODE, not physical directories. DATA ancestry
++  // checks remain in nativeStartupAncestry and the journal/custody implementations.
++  return{dirs:new Map([['capsule',record.artifactSHA256],['loader',record.loaderSHA256]]),
++    files:new Map(nativeStartupNames.map(name=>[name,String(binding.sources[name])]))};
++}
++
+ /** Read-only startup history classification, never a START or install permit. */
+ export async function verifyNativeExecutorStartup(backend:LevelPersist, maintenance=false) {
+   const old=nativeStartupAttempt;
+@@ -123,10 +186,9 @@
+     reason='SOURCE_CLOSURE';const before=nativeStartupClosure(binding);current();
+     if(anchor===null){if(root.present)throw nativeStartupError();const after=nativeStartupAncestry(binding.journal,true);if(after.present)throw nativeStartupError();nativeStartupSame(root.pins,after.pins);const final=nativeStartupClosure(binding);nativeStartupSame(before.dirs,final.dirs);nativeStartupSame(before.files,final.files);return finish('uninitialized');}
+     if(!root.present||maintenance)throw nativeStartupError();
+-    // Node24 CJS require(ESM) loads only this fixed synchronous closure. Never
+-    // reuse an earlier CommonJS cache entry or retry through another loader.
+-    reason='SDK_LOAD';for(const name of nativeStartupNames)if(Object.hasOwn(nativeStartupRequire.cache,path.join(binding.sdk,name)))throw nativeStartupError();
+-    const module:unknown=nativeStartupRequire(path.join(binding.sdk,'native-executor-journal.mjs'));const loadedCache=nativeExecutorCache(binding);current();
++    // Startup and genesis reuse the same privately retained module graph.
++    reason='SDK_LOAD';
++    const module:unknown=nativeCapsuleModule(binding,'native-executor-journal.mjs');const loadedCache=nativeExecutorCache(binding);current();
+     if(module===null||typeof module!=='object'||nativeStartupTypes.isProxy(module))throw nativeStartupError();
+     const descriptor=Object.getOwnPropertyDescriptor(module,'createNativeExecutorJournal');
+     if(descriptor===undefined||!Object.hasOwn(descriptor,'value')||typeof descriptor.value!=='function'||nativeStartupTypes.isProxy(descriptor.value))throw nativeStartupError();
+@@ -178,8 +240,7 @@
+   if(current.factory!==source.factory||current.appendTerminalAnchored!==source.appendTerminalAnchored||current.inventory!==source.inventory||current.provision!==source.provision)throw nativeGenesisError();
+ }
+ function nativeExecutorColdJournal(binding: NonNullable<ReturnType<typeof nativeStartupBinding>>): NativeExecutorJournalSource {
+-  for(const name of nativeStartupNames)if(Object.hasOwn(nativeStartupRequire.cache,path.join(binding.sdk,name)))throw nativeGenesisError();
+-  const namespace:unknown=nativeStartupRequire(path.join(binding.sdk,'native-executor-journal.mjs'));const loadedCache=nativeExecutorCache(binding);
++  const namespace:unknown=nativeCapsuleModule(binding,'native-executor-journal.mjs');const loadedCache=nativeExecutorCache(binding);
+   if(namespace===null||typeof namespace!=='object'||nativeStartupTypes.isProxy(namespace))throw nativeGenesisError();
+   const factory=Object.getOwnPropertyDescriptor(namespace,'createNativeExecutorJournal');
+   if(factory===undefined||!Object.hasOwn(factory,'value')||typeof factory.value!=='function'||nativeStartupTypes.isProxy(factory.value))throw nativeGenesisError();
+@@ -285,29 +346,24 @@
+ }
+ 
+ 
+-// Only this verified loader may add fixed SDK entries to the retained cache set.
++// Cache observations refer to the one retained capsule graph, never Node's path cache.
+ function nativeExecutorCache(binding: NonNullable<ReturnType<typeof nativeStartupBinding>>) {
+-  const cache = nativeStartupRequire.cache;
+-  if(cache===null||typeof cache!=='object'||nativeStartupTypes.isProxy(cache))throw nativeGenesisError();
+-  const found=new Map<string,{entry:unknown;exports:unknown}|null>();
++  const capsule=nativeCapsuleGet(binding),found=new Map<string,{entry:unknown;exports:unknown}|null>();
+   for(const name of nativeStartupNames){
+-    const file=path.join(binding.sdk,name),d=Object.getOwnPropertyDescriptor(cache,file);
+-    if(d===undefined){found.set(file,null);continue;}
+-    if(!Object.hasOwn(d,'value')||d.value===null||typeof d.value!=='object'||nativeStartupTypes.isProxy(d.value))throw nativeGenesisError();
+-    const e=Object.getOwnPropertyDescriptor(d.value,'exports');
+-    if(e===undefined||!Object.hasOwn(e,'value'))throw nativeGenesisError();
+-    found.set(file,{entry:d.value,exports:e.value});
++    const namespace=Object.getOwnPropertyDescriptor(capsule.modules,name)?.value;
++    found.set(path.join(binding.sdk,name),namespace===undefined?null:{entry:namespace,exports:namespace});
+   }
+   return found;
+ }
+ function nativeExecutorCheckCache(source: NativeExecutorJournalSource) {
+-  if(source.cache===undefined)throw nativeGenesisError();
++  const binding=nativeStartupBinding();
++  if(source.cache===undefined||binding===null)throw nativeGenesisError();
++  const current=nativeExecutorCache(binding);
++  if(current.size!==source.cache.size)throw nativeGenesisError();
+   for(const[file,want]of source.cache){
+-    const d=Object.getOwnPropertyDescriptor(nativeStartupRequire.cache,file);
+-    if(want===null){if(d!==undefined)throw nativeGenesisError();continue;}
+-    if(d===undefined||!Object.hasOwn(d,'value')||d.value!==want.entry)throw nativeGenesisError();
+-    const e=Object.getOwnPropertyDescriptor(want.entry as object,'exports');
+-    if(e===undefined||!Object.hasOwn(e,'value')||e.value!==want.exports)throw nativeGenesisError();
++    const have=current.get(file);
++    if(want===null){if(have!==null)throw nativeGenesisError();continue;}
++    if(have===null||have===undefined||have.entry!==want.entry||have.exports!==want.exports)throw nativeGenesisError();
+   }
+ }
+ function nativeExecutorEnsureJournal(startup: NativeExecutorStartupAttempt): NativeExecutorJournalSource {
+@@ -323,14 +379,14 @@
+   nativeExecutorCheckSource(source);const before=nativeStartupClosure(binding);
+   const old=source.modules?.get(entry);
+   if(old!==undefined){if(old.name!==name)throw nativeGenesisError();return old.method;}
+-  const namespace:unknown=nativeStartupRequire(path.join(binding.sdk,entry));
++  const namespace:unknown=nativeCapsuleModule(binding,entry);
+   const loadedCache=nativeExecutorCache(binding);
+   if(namespace===null||typeof namespace!=='object'||nativeStartupTypes.isProxy(namespace))throw nativeGenesisError();
+   const descriptor=Object.getOwnPropertyDescriptor(namespace,name);
+   if(descriptor===undefined||!Object.hasOwn(descriptor,'value')||typeof descriptor.value!=='function'||nativeStartupTypes.isProxy(descriptor.value))throw nativeGenesisError();
+   const after=nativeStartupClosure(binding);nativeStartupSame(before.dirs,after.dirs);nativeStartupSame(before.files,after.files);
+-  // Existing entries may not be replaced by a nested require. Only new entries
+-  // materialized by this exact, source-checked load are admitted.
++  // Every method comes from the already validated capsule namespace; no new
++  // module instance or physical source path is admitted during an operation.
+   nativeExecutorCheckCache({...source,cache:loadedCache});const current=loadedCache;
+   for(const[file,want]of source.cache??[]){if(want!==null){const have=current.get(file);if(have===null||have===undefined||have.entry!==want.entry||have.exports!==want.exports)throw nativeGenesisError();}}
+   source.cache=current;source.modules??=new Map();source.modules.set(entry,{namespace,method:descriptor.value,name});
