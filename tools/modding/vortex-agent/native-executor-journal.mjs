@@ -26,6 +26,16 @@ const HELD_TERMINAL_KEYS = TERMINAL_KEYS.map(key => key === 'releaseObservationS
 const encoded = value => Buffer.from(JSON.stringify(value) + '\n');
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const rootId = value => typeof value === 'string' && /^[0-9]+:[0-9]+$/.test(value) && value.length <= 100;
+// Only a journal made by this module instance can enter the anchored writer.
+// This is a historical disk transition, never completion or release authority.
+const anchoredTerminalWriters = new WeakMap();
+export function appendNativeExecutorTerminalAnchored(journal, binding, evidenceBytes, expectedAnchorBytes) {
+  need(arguments.length === 4, 'INVALID_ARGUMENTS');
+  need(journal !== null && typeof journal === 'object' && !types.isProxy(journal), 'INVALID_JOURNAL');
+  const write = anchoredTerminalWriters.get(journal);
+  need(write !== undefined, 'INVALID_JOURNAL');
+  return write(binding, evidenceBytes, expectedAnchorBytes);
+}
 function codeOf(error) {
   if (error === null || typeof error !== 'object' || types.isProxy(error)) return 'NATIVE_EXECUTOR_IO_FAILED';
   const descriptor = Object.getOwnPropertyDescriptor(error, 'message');
@@ -126,9 +136,24 @@ export function createNativeExecutorJournal(options = {}) {
   const seenJobs = new Set();
   let rootPins, jobsPins, terminalsPins, pendingReservationInProgress = false;
   let provisionPhase = 'unused';
-  function writable() {
+  let terminalTransition, activeWriters = 0;
+  const attemptedTerminalOperations = new Set(), attemptedTerminalJobs = new Set();
+  function terminalWritable(token) {
+    if (terminalTransition?.phase === 'active' && token !== terminalTransition.token) {
+      terminalTransition.phase = 'held'; need(false, 'TERMINAL_TRANSITION_BUSY');
+    }
+    need(terminalTransition?.phase !== 'held', 'TERMINAL_TRANSITION_HELD');
+  }
+  function writable(token) {
+    terminalWritable(token);
     if (provisionPhase === 'checking') provisionPhase = 'held';
     need(provisionPhase !== 'held', 'PROVISION_HELD');
+  }
+  function writeScope(body, token) {
+    return safe(() => {
+      terminalWritable(token); ++activeWriters;
+      try {return body();} finally {--activeWriters;}
+    });
   }
   function roots(create) {
     const current = io.ancestry(root, create);
@@ -200,7 +225,7 @@ export function createNativeExecutorJournal(options = {}) {
     });
   }
   function begin(requestBytes, workerLifetime, packetSHA256) {
-    return safe(() => {
+    return writeScope(() => {
       writable();
       const request = checked(requestBytes);
       need(id(workerLifetime, 'worker'), 'INVALID_WORKER_LIFETIME');
@@ -264,8 +289,11 @@ export function createNativeExecutorJournal(options = {}) {
     return record;
   }
   function appendTerminal(originalBinding, evidenceBytes) {
-    return safe(() => {
-      writable();
+    return writeTerminal(originalBinding, evidenceBytes);
+  }
+  function writeTerminal(originalBinding, evidenceBytes, token) {
+    return writeScope(() => {
+      writable(token);
       const binding = bindingSnapshot(originalBinding), evidence = evidenceSnapshot(evidenceBytes);
       const status = read(binding.operationId, binding.requestSHA256, binding.nativeJobId, binding.packetSHA256);
       need(status.state === 'reserved' && status.workerLifetime === binding.workerLifetime, 'TERMINAL_NOT_RESERVED');
@@ -295,11 +323,12 @@ export function createNativeExecutorJournal(options = {}) {
       const final = inventory({expectedRootId: rootPins.get(root)});
       need(final.complete && final.records.some(row => row.operationId === binding.operationId
         && row.state === 'historical_closed' && row.evidenceSHA256 === record.evidenceSHA256), 'CHANGED');
-      return Object.freeze({schema: 'native-executor-terminal-observation/1', ...binding,
+      const observation = Object.freeze({schema: 'native-executor-terminal-observation/1', ...binding,
         state: 'historical_closed', evidenceSHA256: record.evidenceSHA256,
         historicalOnly: true, independentCompletionVerified: false, currentStateVerified: false,
         canReplay: false, effectsAllowed: false, installationPermit: false, powerLossPersistenceVerified: false});
-    });
+      return token === undefined ? observation : Object.freeze({observation, terminalRecordSHA256: hash(encoded(record))});
+    }, token);
   }
   function inspectInventory(options = {}) {
     let expectedRootId, expectedInventorySHA256;
@@ -465,11 +494,65 @@ export function createNativeExecutorJournal(options = {}) {
     } catch (error) {return response(false, [], codeOf(error));}
   }
   function inventory(options = {}) {return inspectInventory(options).observation;}
+  function appendAnchored(originalBinding, evidenceBytes, expectedAnchorBytes) {
+    return safe(() => {
+      if (terminalTransition?.phase === 'active') {
+        terminalTransition.phase = 'held'; need(false, 'TERMINAL_TRANSITION_BUSY');
+      }
+      need(terminalTransition?.phase !== 'held', 'TERMINAL_TRANSITION_HELD');
+      if (activeWriters !== 0) {
+        terminalTransition = {phase: 'held'}; need(false, 'TERMINAL_TRANSITION_BUSY');
+      }
+      // Pure intrinsic snapshots precede the claim; no getters, I/O or caller callbacks.
+      const binding = bindingSnapshot(originalBinding), evidence = evidenceSnapshot(evidenceBytes), anchor = anchorSnapshot(expectedAnchorBytes);
+      need(evidence.schema === 'native-executor-terminal-evidence/2', 'INVALID_TERMINAL');
+      need(!attemptedTerminalOperations.has(binding.operationId) && !attemptedTerminalJobs.has(binding.nativeJobId), 'TERMINAL_TRANSITION_CONSUMED');
+      const attempt = {token: Object.freeze({}), phase: 'active'};
+      terminalTransition = attempt;
+      attemptedTerminalOperations.add(binding.operationId); attemptedTerminalJobs.add(binding.nativeJobId);
+      const current = () => need(terminalTransition === attempt && attempt.phase === 'active', 'TERMINAL_TRANSITION_HELD');
+      try {
+        writable(attempt.token);
+        const before = inspectInventory({expectedRootId: anchor.rootId, expectedInventorySHA256: anchor.inventorySHA256}); current();
+        need(before.observation.complete && before.observation.historySealVerified && before.census !== null, 'PREDECESSOR_NOT_SEALED');
+        const pending = before.observation.records.filter(row => row.state === 'unresolved');
+        need(pending.length === 1 && Object.keys(binding).every(key => pending[0][key] === binding[key]), 'TERMINAL_PREDECESSOR_MISMATCH');
+        need(before.observation.records.every(row => row.state === 'historical_closed' || row === pending[0]), 'TERMINAL_PREDECESSOR_MISMATCH');
+        const priorTarget = before.census.records.find(row => row.operationId === binding.operationId);
+        need(priorTarget && sha(priorTarget.intentRecordSHA256) && sha(priorTarget.jobRecordSHA256) && priorTarget.terminalRecordSHA256 === null, 'TERMINAL_PREDECESSOR_MISMATCH');
+        current();
+        const written = writeTerminal(binding, Buffer.from(JSON.stringify(evidence)), attempt.token); current();
+        const observed = written.observation;
+        const evidenceSHA256 = hash(Buffer.from(JSON.stringify(evidence)));
+        need(observed.state === 'historical_closed' && observed.evidenceSHA256 === evidenceSHA256, 'TERMINAL_TRANSITION_CHANGED');
+        const after = inspectInventory({expectedRootId: anchor.rootId}); current();
+        need(after.observation.complete && after.observation.unresolvedCount === 0 && after.census !== null, 'TERMINAL_TRANSITION_CHANGED');
+        const indexes = [...new Set([...before.census.indexes, 'terminals'])].sort();
+        need(JSON.stringify(after.census.indexes) === JSON.stringify(indexes) && after.census.records.length === before.census.records.length, 'TERMINAL_TRANSITION_CHANGED');
+        for (const prior of before.census.records) {
+          const next = after.census.records.find(row => row.operationId === prior.operationId);
+          if (prior.operationId === binding.operationId) {
+            need(next && next.terminalRecordSHA256 === written.terminalRecordSHA256
+              && JSON.stringify({...next, terminalRecordSHA256: null}) === JSON.stringify(prior), 'TERMINAL_TRANSITION_CHANGED');
+          } else need(next && JSON.stringify(next) === JSON.stringify(prior), 'TERMINAL_TRANSITION_CHANGED');
+        }
+        const target = after.observation.records.find(row => row.operationId === binding.operationId);
+        need(target && target.state === 'historical_closed' && target.evidenceSHA256 === evidenceSHA256
+          && Object.keys(binding).every(key => target[key] === binding[key])
+          && sha(after.observation.observedInventorySHA256) && after.observation.observedInventorySHA256 !== anchor.inventorySHA256,
+        'TERMINAL_TRANSITION_CHANGED');
+        current(); attempt.phase = 'complete';
+        return Object.freeze({schema: 'native-executor-terminal-transition/1', rootId: anchor.rootId,
+          previousInventorySHA256: anchor.inventorySHA256, inventorySHA256: after.observation.observedInventorySHA256,
+          ...binding, evidenceSHA256});
+      } catch (error) {attempt.phase = 'held'; throw error;}
+    });
+  }
   // The caller supplies the independently retained main anchor, never a seal
   // discovered and automatically echoed from this journal. This verifies only
   // the disk transition; main must still COMMIT/read back its successor anchor.
   function reservePending(requestBytes, workerLifetime, packetSHA256, anchorBytes) {
-    return safe(() => {
+    return writeScope(() => {
       writable();
       const anchor = anchorSnapshot(anchorBytes), request = checked(requestBytes);
       need(id(workerLifetime, 'worker') && sha(packetSHA256), 'INVALID_BINDING');
@@ -508,7 +591,7 @@ export function createNativeExecutorJournal(options = {}) {
   // caller setup precondition; this method never recursively creates/adopts it.
   // Main must independently CAS the returned anchor before any pending START.
   function provision() {
-    return safe(() => {
+    return writeScope(() => {
       if (provisionPhase !== 'unused') {provisionPhase = 'held'; need(false, 'PROVISION_REFUSED');}
       provisionPhase = 'checking';
       const current = () => need(provisionPhase === 'checking', 'PROVISION_HELD');
@@ -552,5 +635,7 @@ export function createNativeExecutorJournal(options = {}) {
       } catch (error) {provisionPhase = 'held'; throw error;}
     });
   }
-  return Object.freeze({begin, read, appendTerminal, inventory, reservePending, provision});
+  const journal = Object.freeze({begin, read, appendTerminal, inventory, reservePending, provision});
+  anchoredTerminalWriters.set(journal, appendAnchored);
+  return journal;
 }

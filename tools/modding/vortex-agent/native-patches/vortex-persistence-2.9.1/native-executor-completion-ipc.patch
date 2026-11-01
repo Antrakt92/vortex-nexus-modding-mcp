@@ -1,0 +1,214 @@
+--- a/src/main/src/store/persistenceIPC.ts
++++ b/src/main/src/store/persistenceIPC.ts
+@@ -13,13 +13,13 @@
+  * 3. Main process applies operations to LevelDB via ReduxPersistorIPC
+  */
+ 
+-import type { DiffOperation, NativeMainReadinessObservation, NativeExecutorChallenge, NativeExecutorPreparation } from "@vortex/shared/ipc";
++import type { DiffOperation, NativeMainReadinessObservation, NativeExecutorChallenge, NativeExecutorPreparation, NativeExecutorExecutionChallenge, NativeExecutorExecutionResponse, NativeExecutorExecutionResult } from "@vortex/shared/ipc";
+ import type { PersistedHive, PersistedState } from "@vortex/shared/state";
+ import { ipcMain, type WebContents } from "electron";
+ 
+ import { betterIpcMain } from "../ipc";
+ import { log } from "../logging";
+-import { registerAllPersistedHives, getMainPersistor, waitForNativeMainPersistenceReady, checkNativeMainPersistenceReady, preflightNativeExecutorTransport, getNativeExecutorTransportBinding, checkNativeExecutorTransport, holdNativeExecutorTransport, reserveNativeExecutorTransport, prepareNativeExecutorTransportPending } from "./mainPersistence";
++import { registerAllPersistedHives, getMainPersistor, waitForNativeMainPersistenceReady, checkNativeMainPersistenceReady, preflightNativeExecutorTransport, getNativeExecutorTransportBinding, checkNativeExecutorTransport, holdNativeExecutorTransport, reserveNativeExecutorTransport, prepareNativeExecutorTransportPending, copyNativeExecutorTransport, registerNativeExecutorTransportCopied, closeNativeExecutorTransportWorker, sealNativeExecutorTransportTerminal, releaseNativeExecutorTransport, getNativeExecutorTransportMainRelease } from "./mainPersistence";
+ import type ReduxPersistorIPC from "./ReduxPersistorIPC";
+ 
+ let acknowledgementOwner: WebContents | undefined;
+@@ -154,6 +154,7 @@
+   return Object.freeze({schema:"native-executor-challenge/1",transportId:a.transportId,challengeId:nativeTransportNonce("challenge"),round,stage,...b});
+ }
+ function nativeTransportHold(a:NativeTransportAttempt):void {
++  if(nativeExecutionAttempt?.transport===a){nativeExecutionHold(nativeExecutionAttempt);return;}
+   a.phase="held";
+   if(a.frameOwner!==undefined&&!a.frameHeld)try{a.frameHeld=true;holdNativeExecutorFrame(a.frameOwner);}catch{/* Retain original failure. */}
+   if(a.ticket!==undefined&&!a.ticketHeld)try{a.ticketHeld=true;holdNativeExecutorTransport(a.ticket);}catch{/* Retain original failure. */}
+@@ -244,6 +245,162 @@
+   }catch(primary){nativeTransportHold(a);throw primary;}finally{if(timer!==undefined)clearTimeout(timer);}
+ }
+ 
++interface NativeExecutionAttempt {
++  transport: NativeTransportAttempt; event: Electron.IpcMainInvokeEvent; executionId: string;
++  phase: "running" | "held" | "completed"; checking: boolean; deadline: number;
++  invalidated: Promise<void>; invalidate: ()=>void; primarySet: boolean; primary?: unknown;
++  mainReleased: boolean; holdSent: boolean; frameHeld: boolean; ticketHeld: boolean;
++  holdStarted: boolean; releaseSampled: boolean;
++  responses: Set<string>;
++  challenge?: {value:NativeExecutorExecutionChallenge;resolve:(value:Record<string,unknown>)=>void;reject:(error:unknown)=>void};
++  adoption?: Readonly<Record<string,unknown>>; observed?: Readonly<Record<string,unknown>>;
++  result?: Readonly<NativeExecutorExecutionResult>;
++}
++let nativeExecutionAttempt: NativeExecutionAttempt | undefined;
++let nativeExecutionInvalidation: (()=>void) | undefined;
++let nativeExecutionListenersInstalled = false;
++const nativeExecutionStages = ["check-preparation-before-start","check-preparation-after-copy","adopt","check-adoption-before-close","check-adoption-after-close","check-adoption-before-release","finalize","hold"] as const;
++function nativeExecutionAuthentic(event:Electron.IpcMainEvent|Electron.IpcMainInvokeEvent,t:NativeTransportAttempt):boolean {
++  try{return event.sender===t.owner&&t.owner!==undefined&&event.senderFrame===t.frame&&t.frame!==undefined;}catch{return false;}
++}
++function nativeExecutionChallenge(a:NativeExecutionAttempt,sequence:NativeExecutorExecutionChallenge["sequence"],payloadJSON:string|null=null):NativeExecutorExecutionChallenge {
++  const b=a.transport.binding,stage=nativeExecutionStages[sequence-1];if(b===undefined||stage===undefined)throw nativeTransportError();
++  return Object.freeze({schema:"native-executor-execution-challenge/1",transportId:a.transport.transportId,executionId:a.executionId,
++    challengeId:nativeTransportNonce("challenge"),sequence,stage,payloadJSON,...b});
++}
++function nativeExecutionHold(a:NativeExecutionAttempt,primary?:unknown,retain=false):void {
++  if(a.phase==="completed")return;
++  if(retain&&!a.primarySet){a.primarySet=true;a.primary=primary;}
++  if(a.holdStarted)return;a.holdStarted=true;
++  a.phase="held";a.transport.phase="held";a.invalidate();
++  // Historical ACK only, never a permission or a reason to finalize on failure.
++  // This read can itself fail; it must not replace the original failure.
++  if(!a.mainReleased&&!a.releaseSampled&&a.observed!==undefined&&a.transport.ticket!==undefined){
++    a.releaseSampled=true;
++    try{const raw=getNativeExecutorTransportMainRelease(a.transport.ticket);if(raw!==null){nativeExecutionRelease(a,raw);a.mainReleased=true;}}catch{/* Unknown release retains the original primary. */}
++  }
++  const pending=a.challenge;a.challenge=undefined;pending?.reject(a.primarySet?a.primary:nativeTransportError());
++  if(!a.frameHeld&&a.transport.frameOwner!==undefined){a.frameHeld=true;try{holdNativeExecutorFrame(a.transport.frameOwner);}catch{/* Preserve first outcome. */}}
++  // A known Main release is irreversible here. Never pretend to reacquire it.
++  if(!a.mainReleased&&!a.ticketHeld&&a.transport.ticket!==undefined){a.ticketHeld=true;try{holdNativeExecutorTransport(a.transport.ticket);}catch{/* Preserve first outcome. */}}
++  if(!a.holdSent&&a.transport.owner!==undefined){a.holdSent=true;try{betterIpcMain.send(a.transport.owner,"persist:native-executor-execution-challenge",nativeExecutionChallenge(a,8));}catch{/* Unknown delivery retains holds. */}}
++}
++function nativeExecutionCheck(a:NativeExecutionAttempt):void {
++  if(a.checking){nativeExecutionHold(a);throw nativeTransportError();}a.checking=true;
++  try{
++    const valid=()=>nativeExecutionAttempt===a&&a.phase==="running"&&performance.now()<a.deadline;
++    if(!valid()||a.transport.frameOwner===undefined||a.transport.ticket===undefined)throw nativeTransportError();
++    checkNativeExecutorFrame(a.transport.frameOwner);checkNativeExecutorTransport(a.transport.ticket);
++    if(!valid())throw nativeTransportError();
++  }catch(primary){nativeExecutionHold(a,primary,true);throw primary;}finally{a.checking=false;}
++}
++async function nativeExecutionAwait<T>(a:NativeExecutionAttempt,work:Promise<T>):Promise<T>{
++  // Attach before racing so every late rejection is observed after timeout/HOLD.
++  void work.catch(()=>{});
++  const value=await Promise.race([work,a.invalidated.then(()=>{throw a.primarySet?a.primary:nativeTransportError();})]);
++  nativeExecutionCheck(a);return value;
++}
++function nativeExecutionData(raw:unknown,keys:string[]):Record<string,unknown>{return nativeTransportData(raw,keys);}
++function nativeExecutionObserved(a:NativeExecutionAttempt,raw:unknown):Readonly<Record<string,unknown>> {
++  const d=nativeExecutionData(raw,["schema","operationId","nativeJobId","requestSHA256","recordSHA256","recordJSON","fullRecordSHA256","commitObserved","readbackVerified","trackedAssociationVerified","trackedInstallComplete","effectsAllowed","installationPermit","powerLossPersistenceVerified"]),b=a.transport.binding;
++  if(b===undefined||d.schema!=="native-tracked-mod-registration-observed/2"||d.operationId!==b.operationId||d.nativeJobId!==b.nativeJobId||d.requestSHA256!==b.requestSHA256
++    ||typeof d.recordJSON!=="string"||Buffer.byteLength(d.recordJSON)>16384||d.commitObserved!==true||d.readbackVerified!==true||d.trackedAssociationVerified!==true
++    ||d.trackedInstallComplete!==false||d.effectsAllowed!==false||d.installationPermit!==false||d.powerLossPersistenceVerified!==false)throw nativeTransportError();
++  for(const key of ["recordSHA256","fullRecordSHA256"])if(typeof d[key]!=="string"||!/^[a-f0-9]{64}$/.test(d[key]))throw nativeTransportError();
++  return Object.freeze(d);
++}
++function nativeExecutionObservation(a:NativeExecutionAttempt,c:NativeExecutorExecutionChallenge,raw:unknown):Record<string,unknown>{
++  const b=a.transport.binding;if(b===undefined)throw nativeTransportError();
++  if(c.sequence<=2){
++    const d=nativeExecutionData(raw,["schema","gameId","modId","profileId","managerScopeId","rendererGeneration","effectsAllowed","installationPermit"]);
++    if(d.schema!=="native-renderer-executor-admission/1"||d.gameId!==b.gameId||d.modId!==b.modId||d.profileId!==b.profileId||d.managerScopeId!==b.managerScope||d.rendererGeneration!==b.rendererGeneration||d.effectsAllowed!==false||d.installationPermit!==false)throw nativeTransportError();return Object.freeze(d);
++  }
++  const keys=["schema","transportId","operationId","nativeJobId","requestSHA256","recordSHA256","fullRecordSHA256","effectsAllowed","installationPermit"];
++  if(c.sequence===7)keys.push("released","trackedInstallComplete");
++  const d=nativeExecutionData(raw,keys),observed=a.observed;
++  if(observed===undefined||d.schema!==(c.sequence===7?"native-executor-renderer-completion/1":"native-executor-renderer-adoption/1")||d.transportId!==a.transport.transportId
++    ||d.operationId!==b.operationId||d.nativeJobId!==b.nativeJobId||d.requestSHA256!==b.requestSHA256||d.recordSHA256!==observed.recordSHA256||d.fullRecordSHA256!==observed.fullRecordSHA256
++    ||d.effectsAllowed!==false||d.installationPermit!==false||(c.sequence===7&&(d.released!==true||d.trackedInstallComplete!==false)))throw nativeTransportError();
++  if(c.sequence!==7&&a.adoption!==undefined&&JSON.stringify(d)!==JSON.stringify(a.adoption))throw nativeTransportError();
++  return Object.freeze(d);
++}
++function nativeExecutionRespond(event:Electron.IpcMainEvent,...args:unknown[]):void {
++  const a=nativeExecutionAttempt,pending=a?.challenge;if(a===undefined||a.phase!=="running"||!nativeExecutionAuthentic(event,a.transport))return;
++  try{
++    if(args.length!==1)throw nativeTransportError();
++    const d=nativeExecutionData(args[0],["schema","transportId","executionId","challengeId","sequence","stage","requestSHA256","requestBytesSHA256","archiveBytesSHA256","state","observation","errorCode"]);
++    if(d.transportId!==a.transport.transportId||d.executionId!==a.executionId)return;
++    if(typeof d.challengeId==="string"&&a.responses.has(d.challengeId))throw nativeTransportError();
++    if(pending===undefined)return;const c=pending.value;
++    // A stale response cannot consume a later nonce. A conflicting current
++    // nonce/stage from this actual frame poisons its own execution.
++    if(d.challengeId!==c.challengeId)return;
++    for(const key of ["sequence","stage","requestSHA256","requestBytesSHA256","archiveBytesSHA256"] as const)if(d[key]!==c[key])throw nativeTransportError();
++    if(d.schema!=="native-executor-execution-response/1"||d.errorCode!==null||d.state!==(c.sequence===3?"adopted":c.sequence===7?"finalized":"checked"))throw nativeTransportError();
++    nativeExecutionCheck(a);const observation=nativeExecutionObservation(a,c,d.observation);nativeExecutionCheck(a);
++    if(a.challenge!==pending)throw nativeTransportError();a.responses.add(c.challengeId);a.challenge=undefined;pending.resolve(observation);
++  }catch(primary){nativeExecutionHold(a,primary,true);}
++}
++function nativeExecutionInvalidate(event:Electron.IpcMainEvent,...args:unknown[]):void {
++  const a=nativeExecutionAttempt;if(a===undefined||a.phase!=="running"||!nativeExecutionAuthentic(event,a.transport))return;
++  try{
++    if(args.length!==1)throw nativeTransportError();
++    const d=nativeExecutionData(args[0],["schema","transportId","executionId","operationId","nativeJobId","requestSHA256","requestBytesSHA256","archiveBytesSHA256","reasonCode"]),b=a.transport.binding;
++    if(b===undefined||d.transportId!==a.transport.transportId||d.executionId!==a.executionId)return;
++    if(d.schema!=="native-executor-execution-invalidated/1"||d.reasonCode!=="NATIVE_EXECUTOR_RENDERER_FAILED")throw nativeTransportError();
++    for(const key of ["operationId","nativeJobId","requestSHA256","requestBytesSHA256","archiveBytesSHA256"] as const)if(d[key]!==b[key])throw nativeTransportError();
++    nativeExecutionHold(a,nativeTransportError(),true);
++  }catch(primary){nativeExecutionHold(a,primary,true);}
++}
++function nativeExecutionRound(a:NativeExecutionAttempt,sequence:1|2|3|4|5|6|7,payloadJSON:string|null=null):Promise<Record<string,unknown>> {
++  nativeExecutionCheck(a);if(a.challenge!==undefined||a.transport.owner===undefined)throw nativeTransportError();
++  if(payloadJSON!==null&&Buffer.byteLength(payloadJSON)>(sequence===3?32768:8192))throw nativeTransportError();
++  const value=nativeExecutionChallenge(a,sequence,payloadJSON),work=new Promise<Record<string,unknown>>((resolve,reject)=>{a.challenge={value,resolve,reject};});
++  void work.catch(()=>{});
++  try{betterIpcMain.send(a.transport.owner,"persist:native-executor-execution-challenge",value);nativeExecutionCheck(a);}catch(primary){nativeExecutionHold(a,primary,true);}
++  return nativeExecutionAwait(a,work);
++}
++function nativeExecutionRelease(a:NativeExecutionAttempt,raw:unknown):Record<string,unknown>{
++  const d=nativeExecutionData(raw,["schema","operationId","nativeJobId","requestSHA256","recordSHA256","fullRecordSHA256","released","consumedIDsRetained","durableConsumedIDsVerified","effectsAllowed","installationPermit","trackedInstallComplete"]),b=a.transport.binding,o=a.observed;
++  if(b===undefined||o===undefined||d.schema!=="native-registration-release-observed/1"||d.operationId!==b.operationId||d.nativeJobId!==b.nativeJobId||d.requestSHA256!==b.requestSHA256
++    ||d.recordSHA256!==o.recordSHA256||d.fullRecordSHA256!==o.fullRecordSHA256||d.released!==true||d.consumedIDsRetained!==true||d.durableConsumedIDsVerified!==false||d.effectsAllowed!==false||d.installationPermit!==false||d.trackedInstallComplete!==false)throw nativeTransportError();
++  return Object.freeze(d);
++}
++async function nativeExecutionInvoke(event:Electron.IpcMainInvokeEvent,...args:unknown[]):Promise<NativeExecutorExecutionResult>{
++  const previous=nativeExecutionAttempt;
++  if(previous!==undefined){if(previous.phase!=="completed"&&(event===previous.event||nativeExecutionAuthentic(event,previous.transport)))nativeExecutionHold(previous);throw nativeTransportError();}
++  const t=nativeTransportAttempt;
++  if(t===undefined||!nativeExecutionAuthentic(event,t))throw nativeTransportError();
++  let invalidate!:()=>void;
++  const a:NativeExecutionAttempt={transport:t,event,executionId:nativeTransportNonce("execution"),phase:"running",checking:false,deadline:performance.now()+120000,
++    invalidated:new Promise<void>(resolve=>{invalidate=resolve;}),invalidate:()=>invalidate(),primarySet:false,mainReleased:false,holdSent:false,frameHeld:false,ticketHeld:false,holdStarted:false,releaseSampled:false,responses:new Set()};
++  nativeExecutionAttempt=a;nativeExecutionInvalidation=()=>nativeExecutionHold(a);let timer:ReturnType<typeof setTimeout>|undefined;
++  try{
++    if(args.length!==1||args[0]!==t.transportId||t.phase!=="prepared"||t.ticket===undefined||t.binding===undefined)throw nativeTransportError();
++    nativeExecutionCheck(a);timer=setTimeout(()=>nativeExecutionHold(a,nativeTransportError(),true),Math.max(0,a.deadline-performance.now()));
++    await nativeExecutionRound(a,1);
++    await nativeExecutionAwait(a,Promise.resolve(copyNativeExecutorTransport(t.ticket)));
++    await nativeExecutionRound(a,2);
++    a.observed=nativeExecutionObserved(a,await nativeExecutionAwait(a,Promise.resolve(registerNativeExecutorTransportCopied(t.ticket))));nativeExecutionCheck(a);
++    a.adoption=await nativeExecutionRound(a,3,JSON.stringify(a.observed));
++    const beforeClose=await nativeExecutionRound(a,4);
++    await nativeExecutionAwait(a,Promise.resolve(closeNativeExecutorTransportWorker(t.ticket,Buffer.from(JSON.stringify(beforeClose)))));
++    const afterClose=await nativeExecutionRound(a,5);
++    await nativeExecutionAwait(a,Promise.resolve(sealNativeExecutorTransportTerminal(t.ticket,Buffer.from(JSON.stringify(afterClose)))));
++    await nativeExecutionRound(a,6);nativeExecutionCheck(a);
++    const rawRelease=releaseNativeExecutorTransport(t.ticket);
++    // Only an actual closed receipt (or the historical getter in the catch
++    // path) establishes known release. No callback/await separates this mark.
++    const release=nativeExecutionRelease(a,rawRelease);a.mainReleased=true;nativeExecutionCheck(a);
++    await nativeExecutionRound(a,7,JSON.stringify(release));nativeExecutionCheck(a);
++    const b=t.binding,o=a.observed;
++    const result:Readonly<NativeExecutorExecutionResult>=Object.freeze({schema:"native-executor-execution-result/1",transportId:t.transportId,executionId:a.executionId,
++      operationId:b.operationId,nativeJobId:b.nativeJobId,requestSHA256:b.requestSHA256,requestBytesSHA256:b.requestBytesSHA256,archiveBytesSHA256:b.archiveBytesSHA256,
++      recordSHA256:o.recordSHA256 as string,fullRecordSHA256:o.fullRecordSHA256 as string,mainReleased:true,rendererReleased:true,effectsAllowed:false,installationPermit:false,nativeAdmission:false,trackedInstallComplete:false,powerLossPersistenceVerified:false});
++    a.result=result;a.phase="completed";return result;
++  }catch(primary){nativeExecutionHold(a,primary,true);throw a.primarySet?a.primary:primary;}finally{if(timer!==undefined)clearTimeout(timer);}
++}
++
+ function watchNativeReadinessOwner(owner: WebContents): void {
+   if (nativeReadWatchOwner !== undefined) return;
+   nativeReadWatchOwner = owner;
+@@ -252,6 +409,7 @@
+     else ++nativeReadFrameEpoch;
+     nativeExecutorFrameInvalidation?.();
+     nativeTransportInvalidation?.();
++    nativeExecutionInvalidation?.();
+     nativeReadInvalidation?.();
+   };
+   try {
+@@ -290,6 +448,8 @@
+  * @param persistor - The ReduxPersistorIPC instance to use for persistence
+  */
+ export function setupPersistenceIPC(persistor: ReduxPersistorIPC): void {
++  if(!nativeExecutionListenersInstalled){nativeExecutionListenersInstalled=true;ipcMain.on("persist:native-executor-execution-response",nativeExecutionRespond);ipcMain.on("persist:native-executor-execution-invalidated",nativeExecutionInvalidate);}
++  betterIpcMain.handle("persist:native-executor-execute",nativeExecutionInvoke);
+   if(!nativeTransportResponseInstalled){nativeTransportResponseInstalled=true;ipcMain.on("persist:native-executor-response",nativeTransportRespond);}
+   betterIpcMain.handle("persist:native-executor-prepare",nativeTransportInvoke);
+   if (nativeExecutorFramePersistor === undefined && !nativeExecutorFramePersistorInvalid) nativeExecutorFramePersistor = persistor;
+@@ -297,6 +457,7 @@
+     nativeExecutorFramePersistorInvalid = true;
+     nativeExecutorFrameInvalidation?.();
+     nativeTransportInvalidation?.();
++    nativeExecutionInvalidation?.();
+   }
+   // One retained main readiness observation, one bounded active reader. Timeout
+   // abandons only this read; the actual main initialization is never cancelled.

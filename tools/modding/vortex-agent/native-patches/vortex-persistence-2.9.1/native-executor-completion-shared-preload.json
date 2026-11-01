@@ -1,0 +1,28 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/shared/src/types/preload.ts",
+  "originalSourceSHA256": "06493d6bfd8db9ed898fbadcd565f4881566984969a6f0fbb300ea70fd8ba45a",
+  "inputSHA256": "0d337a5bd21c57ce1053eee956e696d635b93ac890cd3e06637deb3767b3e269",
+  "outputSHA256": "f431bf21adc25b1ad422b355e2ba2781db927f11567ab04dfa57f2f58ad99861",
+  "patchSHA256": "a86850414040f8e930deaf1d4dcd837154e215cdaf1010158a7efb1c575b21bd",
+  "prerequisitePatch": "native-executor-transport-shared-preload.patch",
+  "prerequisitePatchSHA256": "d1e4f30a58e54589d80d9afac410ec51f08f97f5e131254bfc2c2cdbddf59b18",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "effectsAllowed": false,
+  "installationPermit": false,
+  "nativeAdmission": false,
+  "powerLossPersistenceVerified": false,
+  "limitations": [
+    "Fixed source-owned execution/completion protocol; no MCP tool or installed-host acceptance.",
+    "Actual frame correlation assumes reviewed source handlers, not isolation against privileged compromised JavaScript.",
+    "Observation timeout retains unknown work and holds; after known Main release it cannot restore ownership."
+  ],
+  "requiredCompanionPatch": "native-executor-completion-shared-ipc.patch",
+  "requiredCompanionPatchSHA256": "9f80a23b38783b8abf1a4bb51ca9263beb2dd2baf4b387c709d2364424703406",
+  "requiredCompanionOutputSHA256": "a31672b19e46b39d0482ccee39b28290661f504d1eae17db8f9cdae96d8c2ab1"
+}

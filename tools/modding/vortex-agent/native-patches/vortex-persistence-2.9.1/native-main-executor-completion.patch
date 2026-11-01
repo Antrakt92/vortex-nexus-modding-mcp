@@ -1,0 +1,263 @@
+--- a/src/main/src/store/mainPersistence.ts
++++ b/src/main/src/store/mainPersistence.ts
+@@ -144,7 +144,7 @@
+ const nativeGenesisCheckReservation = ReduxPersistorIPC.prototype.checkNativeModPersistenceReservation;
+ const nativeGenesisWriteAnchor = ReduxPersistorIPC.prototype.writeNativeExecutorAnchor;
+ const nativeGenesisHoldReservation = ReduxPersistorIPC.prototype.holdNativeModPersistenceReservation;
+-type NativeExecutorJournalSource = { namespace: object; factory: (options: {root: string}) => unknown;
++type NativeExecutorJournalSource = { namespace: object; factory: (options: {root: string}) => unknown; appendTerminalAnchored: (journal: object,binding: object,evidence: Uint8Array,anchor: Uint8Array) => unknown;
+   journal: object; inventory: (options: {expectedRootId: string; expectedInventorySHA256: string}) => unknown;
+   provision: () => unknown; cache?: Map<string, {entry: unknown; exports: unknown} | null>;
+   modules?: Map<string, {namespace: object; method: Function; name: string}> };
+@@ -162,18 +162,20 @@
+   if(namespace===null||typeof namespace!=='object'||nativeStartupTypes.isProxy(namespace)
+     ||journal===null||typeof journal!=='object'||nativeStartupTypes.isProxy(journal)||!Object.isFrozen(journal))throw nativeGenesisError();
+   const factory=Object.getOwnPropertyDescriptor(namespace,'createNativeExecutorJournal');
++  const anchored=Object.getOwnPropertyDescriptor(namespace,'appendNativeExecutorTerminalAnchored');
+   const data=nativeStartupData(journal,['begin','read','appendTerminal','inventory','reservePending','provision']);
+-  if(factory===undefined||!Object.hasOwn(factory,'value')||typeof factory.value!=='function'||nativeStartupTypes.isProxy(factory.value)
++  if(anchored===undefined||!Object.hasOwn(anchored,'value')||typeof anchored.value!=='function'||nativeStartupTypes.isProxy(anchored.value)
++    ||factory===undefined||!Object.hasOwn(factory,'value')||typeof factory.value!=='function'||nativeStartupTypes.isProxy(factory.value)
+     ||typeof data.inventory!=='function'||nativeStartupTypes.isProxy(data.inventory)
+     ||typeof data.provision!=='function'||nativeStartupTypes.isProxy(data.provision))throw nativeGenesisError();
+-  return {namespace,factory:factory.value,journal,inventory:data.inventory as NativeExecutorJournalSource['inventory'],
++  return {namespace,factory:factory.value,appendTerminalAnchored:anchored.value as NativeExecutorJournalSource['appendTerminalAnchored'],journal,inventory:data.inventory as NativeExecutorJournalSource['inventory'],
+     provision:data.provision as NativeExecutorJournalSource['provision']};
+ }
+ function nativeExecutorCheckSource(source: NativeExecutorJournalSource): void {
+   const current=nativeExecutorCapture(source.namespace,source.journal);
+   if(source.cache!==undefined)nativeExecutorCheckCache(source);
+   if(source.modules!==undefined)for(const row of source.modules.values()){const descriptor=Object.getOwnPropertyDescriptor(row.namespace,row.name);if(descriptor===undefined||!Object.hasOwn(descriptor,"value")||descriptor.value!==row.method)throw nativeGenesisError();}
+-  if(current.factory!==source.factory||current.inventory!==source.inventory||current.provision!==source.provision)throw nativeGenesisError();
++  if(current.factory!==source.factory||current.appendTerminalAnchored!==source.appendTerminalAnchored||current.inventory!==source.inventory||current.provision!==source.provision)throw nativeGenesisError();
+ }
+ function nativeExecutorColdJournal(binding: NonNullable<ReturnType<typeof nativeStartupBinding>>): NativeExecutorJournalSource {
+   for(const name of nativeStartupNames)if(Object.hasOwn(nativeStartupRequire.cache,path.join(binding.sdk,name)))throw nativeGenesisError();
+@@ -452,7 +454,7 @@
+ const nativeTransportReserve = ReduxPersistorIPC.prototype.reserveNativeModPersistence;
+ const nativeTransportPrepare = prepareNativeExecutorPending;
+ type NativeExecutorTransportAttempt = {
+-  owner:object;mainReadyOwner:object;phase:'preflighting'|'ready'|'reserving'|'reserved'|'preparing'|'prepared'|'executing'|'copied'|'registering'|'committed'|'held';checking:boolean;
++  owner:object;mainReadyOwner:object;phase:'preflighting'|'ready'|'reserving'|'reserved'|'preparing'|'prepared'|'executing'|'copied'|'registering'|'committed'|'closing'|'closed'|'sealing'|'sealed'|'releasing'|'main_released'|'held';checking:boolean;
+   requestBytes?:Buffer;archiveBytes?:Buffer;binding?:Readonly<NativeExecutorTransportBinding>;
+   ready?:NativeMainAttempt;startup?:NativeExecutorStartupAttempt;source?:NativeExecutorJournalSource;
+   closure?:ReturnType<typeof nativeStartupClosure>;modOwner?:object;reserveStarted:boolean;prepareStarted:boolean;
+@@ -499,12 +501,15 @@
+     const observed=nativeStartupClosure(startup.binding);nativeStartupSame(closure.dirs,observed.dirs);nativeStartupSame(closure.files,observed.files);
+     if(attempt.modOwner!==undefined){
+       if(attempt.phase==='registering')nativeContinuationRegistrationCheck.call(ready.main,attempt.modOwner);
+-      else if(attempt.phase==='committed'){
++      else if(['committed','closing','closed','sealing','sealed','releasing'].includes(attempt.phase)){
+         const continuation=attempt.continuation;if(continuation===undefined||continuation.terminalOwner===undefined)throw nativeTransportError();
+         nativeContinuationTerminalCheck.call(ready.main,continuation.terminalOwner);
+-      }else nativePendingCheckTarget.call(ready.main,attempt.modOwner,binding.gameId,binding.modId);
++      }else if(attempt.phase!=='main_released')nativePendingCheckTarget.call(ready.main,attempt.modOwner,binding.gameId,binding.modId);
+     }
+-    if(attempt.continuation!==undefined){nativeContinuationStable(attempt.continuation);if(attempt.continuation.proofBytes!==undefined)nativeContinuationSDK(attempt.continuation);}
++    if(attempt.continuation!==undefined){
++      const c=attempt.continuation;nativeContinuationStable(c);if(c.proofBytes!==undefined&&!c.completion?.closeInvoked)nativeContinuationSDK(c);
++      nativeCompletionCheck(attempt,c);
++    }
+     if(attempt.frameOwner!==undefined)checkNativeExecutorFrame(attempt.frameOwner);
+     if(attempt.pending!==undefined){
+       if(nativeTransportMatchingPending(attempt)!==attempt.pending||attempt.pending.phase==='held')throw nativeTransportError();
+@@ -1066,7 +1071,7 @@
+ const nativeContinuationTerminalCheck=ReduxPersistorIPC.prototype.checkNativeExecutorTerminalWindow;
+ type NativeExecutorContinuation={relay:object;methods:Map<string,Function>;namespace:object;helpers:Map<string,Function>;
+   payloadDigest?:Function;prepared:Readonly<Record<string,unknown>>;anchor:Readonly<{schema:string;rootId:string;inventorySHA256:string}>;
+-  proofBytes?:Buffer;registerStarted?:boolean;observed?:Readonly<Record<string,unknown>>;terminalOwner?:object};
++  proofBytes?:Buffer;registerStarted?:boolean;observed?:Readonly<Record<string,unknown>>;terminalOwner?:object;completion?:NativeExecutorCompletion};
+ function nativeContinuationFunction(object:object,name:string):Function{
+   if(nativeStartupTypes.isProxy(object))throw nativeTransportError();const d=Object.getOwnPropertyDescriptor(object,name);
+   if(d===undefined||!Object.hasOwn(d,'value')||typeof d.value!=='function'||nativeStartupTypes.isProxy(d.value))throw nativeTransportError();return d.value;
+@@ -1103,8 +1108,8 @@
+   try{
+     nativeTransportCheck(attempt);
+     const row=source.modules?.get('owned-zip-relay-client.mjs');if(row===undefined)throw nativeTransportError();c.namespace=row.namespace;
+-    for(const name of ['startPrepared','waitFor','handoff','copyProof','status'])c.methods.set(name,nativeContinuationFunction(c.relay,name));
+-    for(const name of ['validateRelayCopyProof','relayCopyProofBytes'])c.helpers.set(name,nativeContinuationFunction(c.namespace,name));
++    for(const name of ['startPrepared','waitFor','handoff','copyProof','status','release'])c.methods.set(name,nativeContinuationFunction(c.relay,name));
++    for(const name of ['validateRelayCopyProof','relayCopyProofBytes','validateRelaySDKStatus','validateRelayWorkerTerminal'])c.helpers.set(name,nativeContinuationFunction(c.namespace,name));
+     if(startup.binding===undefined)throw nativeTransportError();c.payloadDigest=nativeExecutorMethod(source,startup.binding,'install-job-contract.cjs','installPayloadDigest');
+     nativeTransportCheck(attempt);
+     const raw=await nativeHistoryAnchorRead.call(startup.backend);nativeTransportCheck(attempt);
+@@ -1170,3 +1175,179 @@
+     attempt.phase='committed';nativeTransportCheck(attempt);return c.observed;
+   }catch(primary){nativeTransportHold(attempt);throw primary;}
+ }
++
++const nativeCompletionRead = ReduxPersistorIPC.prototype.readNativeExecutorTerminalAnchor;
++const nativeCompletionWrite = ReduxPersistorIPC.prototype.writeNativeExecutorTerminalAnchor;
++const nativeCompletionRelease = ReduxPersistorIPC.prototype.releaseNativeExecutorTerminalWindow;
++type NativeExecutorCompletion = {
++  closeInvoked: boolean; sealStarted: boolean; releaseStarted: boolean;
++  adoptionJSON?: string; adoption?: Readonly<Record<string,unknown>>;
++  destinationJSON?: string; proofMetadataJSON?: string;
++  relayIdentity?: Readonly<{relayPid:number;relayLifetime:string;startSHA256:string}>;
++  closedJSON?: string; transition?: Readonly<Record<string,unknown>>;
++  next?: Readonly<{schema:string;rootId:string;inventorySHA256:string}>;
++  releaseReceipt?: Readonly<Record<string,unknown>>;
++};
++const nativeCompletionStatusKeys=['schema','binding','mode','relayLifetime','relayPid','startSHA256','startAttempted','startSent','cancelAttempted','handoffAttempted','releaseAttempted','controllerEnded','phase','relayTerminal','sdk','errorCode','stderrObserved','effectsAllowed','nativeInstallAccepted','persistenceVerified'];
++const nativeCompletionReleaseKeys=['schema','operationId','nativeJobId','requestSHA256','recordSHA256','fullRecordSHA256','released','consumedIDsRetained','durableConsumedIDsVerified','effectsAllowed','installationPermit','trackedInstallComplete'];
++// Snapshot SDK observations without executing accessors/toJSON or accepting proxies.
++function nativeCompletionSnapshot(value:unknown):Record<string,unknown> {
++  let nodes=0;
++  const visit=(v:unknown,depth:number):unknown=>{
++    if(++nodes>4096||depth>16)throw nativeTransportError();
++    if(v===null||typeof v==='boolean'||typeof v==='string'&&v.length<=65536||typeof v==='number'&&Number.isSafeInteger(v))return v;
++    if(v===null||typeof v!=='object'||nativeStartupTypes.isProxy(v))throw nativeTransportError();
++    const fields=Object.getOwnPropertyDescriptors(v),keys=Reflect.ownKeys(fields);
++    if(Array.isArray(v)){
++      const length=fields.length;if(length===undefined||!Object.hasOwn(length,'value')||!Number.isSafeInteger(length.value)||length.value<0||length.value>4096||keys.length!==length.value+1)throw nativeTransportError();
++      return Array.from({length:length.value},(_,i)=>{const d=fields[String(i)];if(d===undefined||!Object.hasOwn(d,'value')||!d.enumerable)throw nativeTransportError();return visit(d.value,depth+1);});
++    }
++    if(keys.length>128)throw nativeTransportError();const copy:Record<string,unknown>=Object.create(null);
++    for(const k of keys){if(typeof k!=='string'||k.length>128)throw nativeTransportError();const d=fields[k];if(d===undefined||!Object.hasOwn(d,'value')||!d.enumerable)throw nativeTransportError();copy[k]=visit(d.value,depth+1);}
++    return copy;
++  };
++  const copy=visit(value,0);if(copy===null||typeof copy!=='object'||Array.isArray(copy)||Buffer.byteLength(JSON.stringify(copy))>65536)throw nativeTransportError();
++  return copy as Record<string,unknown>;
++}
++function nativeCompletionAdoption(c:NativeExecutorContinuation,bytes:Uint8Array) {
++  const copy=nativeTransportCopy(bytes,32768),data=nativeStartupData(JSON.parse(copy.toString('utf8')),
++    ['schema','transportId','operationId','nativeJobId','requestSHA256','recordSHA256','fullRecordSHA256','effectsAllowed','installationPermit']);
++  const observed=c.observed;
++  if(observed===undefined||!Buffer.from(JSON.stringify(data)).equals(copy)||data.schema!=='native-executor-renderer-adoption/1'
++    ||typeof data.transportId!=='string'||!/^transport_[a-f0-9]{32}$/.test(data.transportId)||data.effectsAllowed!==false||data.installationPermit!==false
++    ||!['operationId','nativeJobId','requestSHA256','recordSHA256','fullRecordSHA256'].every(k=>data[k]===observed[k]))throw nativeTransportError();
++  return {json:copy.toString('utf8'),data:Object.freeze(data)};
++}
++function nativeCompletionReceipt(c:NativeExecutorContinuation,raw:unknown) {
++  const data=nativeStartupData(raw,nativeCompletionReleaseKeys),observed=c.observed;
++  if(observed===undefined||data.schema!=='native-registration-release-observed/1'||data.released!==true||data.consumedIDsRetained!==true
++    ||data.durableConsumedIDsVerified!==false||data.effectsAllowed!==false||data.installationPermit!==false||data.trackedInstallComplete!==false
++    ||!['operationId','nativeJobId','requestSHA256','recordSHA256','fullRecordSHA256'].every(k=>data[k]===observed[k]))throw nativeTransportError();
++  return Object.freeze(data);
++}
++function nativeCompletionCanonical(value:unknown):string {
++  const order=(v:unknown):unknown=>Array.isArray(v)?v.map(order):v!==null&&typeof v==='object'
++    ?Object.fromEntries(Object.keys(v).sort().map(k=>[k,order((v as Record<string,unknown>)[k])])):v;
++  return JSON.stringify(order(value));
++}
++function nativeCompletionClosed(c:NativeExecutorContinuation,raw:unknown):string {
++  const e=c.completion;if(e===undefined||e.relayIdentity===undefined)throw nativeTransportError();
++  const value=nativeCompletionSnapshot(raw),status=nativeStartupData(value,nativeCompletionStatusKeys),binding=nativeCompletionSnapshot(c.prepared.binding);
++  const relayBinding=nativeStartupData(status.binding,['operationId','nativeJobId','requestSHA256','rendererGeneration']);
++  const sdk=status.sdk;if(sdk===null||typeof sdk!=='object'||Array.isArray(sdk))throw nativeTransportError();
++  const sdkData=sdk as Record<string,unknown>;
++  if(e.destinationJSON===undefined||e.proofMetadataJSON===undefined||nativeCompletionCanonical(sdkData.destination)!==e.destinationJSON
++    ||sdkData.copyProof!==null&&nativeCompletionCanonical(sdkData.copyProof)!==e.proofMetadataJSON)throw nativeTransportError();
++  const validator=c.helpers.get('validateRelaySDKStatus'),terminalValidator=c.helpers.get('validateRelayWorkerTerminal');
++  if(validator===undefined||terminalValidator===undefined)throw nativeTransportError();
++  Reflect.apply(validator,c.namespace,[sdk,binding,'staging']);Reflect.apply(terminalValidator,c.namespace,[status.relayTerminal,binding]);
++  if(status.schema!=='owned-zip-relay-owner-status/1'||!Object.keys(relayBinding).every(k=>relayBinding[k]===binding[k])||status.mode!=='staging'
++    ||status.phase!=='released'||status.relayPid!==e.relayIdentity.relayPid||status.relayLifetime!==e.relayIdentity.relayLifetime||status.startSHA256!==e.relayIdentity.startSHA256
++    ||status.startAttempted!==true||status.startSent!==true||status.handoffAttempted!==true||status.cancelAttempted!==false||status.releaseAttempted!==true||status.controllerEnded!==true
++    ||status.errorCode!==null||status.effectsAllowed!==false||status.nativeInstallAccepted!==false||status.persistenceVerified!==false
++    ||sdkData.phase!=='released'||sdkData.childClosed!==true||sdkData.releaseAttempted!==true||sdkData.cancelAttempted!==false||sdkData.startSent!==true
++    ||sdkData.errorCode!==null||sdkData.childExitCode!==0||sdkData.childSignal!==null
++    ||!['workerLifetime','workerPid','creationTime','packetSHA256'].every(k=>sdkData[k]===c.prepared[k]))throw nativeTransportError();
++  for(const terminal of [status.relayTerminal,sdkData.workerTerminal]){
++    const row=terminal as Record<string,unknown>;
++    if(row===null||typeof row!=='object'||row.spawnObserved!==true||row.exitObserved!==true||row.closeObserved!==true||row.childResourcesClosed!==true
++      ||row.exitSucceeded!==true||row.childErrorObserved!==false||row.held!==false||row.exitCode!==0||row.closeCode!==0||row.exitSignal!==null||row.closeSignal!==null||row.outcome!=='exited')throw nativeTransportError();
++    const pipes=nativeStartupData(row.pipes,['stdin','stdout','stderr']);
++    for(const pipe of Object.values(pipes)){const p=nativeStartupData(pipe,['closeObserved','errorObserved','errorCode']);if(p.closeObserved!==true||p.errorObserved!==false||p.errorCode!==null)throw nativeTransportError();}
++  }
++  return JSON.stringify(value);
++}
++function nativeCompletionCheck(attempt:NativeExecutorTransportAttempt,c:NativeExecutorContinuation):void {
++  const e=c.completion;if(e===undefined)return;
++  if(e.adoptionJSON===undefined||e.adoption===undefined||c.observed===undefined||c.terminalOwner===undefined)throw nativeTransportError();
++  if(e.closedJSON!==undefined&&nativeCompletionClosed(c,nativeContinuationCall(c,'status'))!==e.closedJSON)throw nativeTransportError();
++  if(e.next!==undefined){
++    for(const anchor of [attempt.startup?.anchor,attempt.pending?.anchor,attempt.pending?.genesis?.anchor])if(anchor!==e.next)throw nativeTransportError();
++  }
++  if(attempt.phase==='main_released'){
++    if(!e.releaseStarted||e.releaseReceipt===undefined||e.next===undefined||e.transition===undefined)throw nativeTransportError();
++    nativeCompletionReceipt(c,e.releaseReceipt);
++  }
++}
++/** Fixed coordinator only: adoption bytes must come from its actual frame exchange. */
++export async function closeNativeExecutorTransportWorker(ticket:object,adoptionBytes:Uint8Array) {
++  const attempt=nativeTransportTicket(ticket),c=attempt.continuation;
++  if(c===undefined||attempt.phase!=='committed'||c.completion!==undefined){nativeTransportHold(attempt);throw nativeTransportError();}
++  const e:NativeExecutorCompletion={closeInvoked:false,sealStarted:false,releaseStarted:false};c.completion=e;attempt.phase='closing';
++  try{
++    const adoption=nativeCompletionAdoption(c,adoptionBytes);e.adoptionJSON=adoption.json;e.adoption=adoption.data;nativeTransportCheck(attempt);
++    const status=nativeStartupData(nativeCompletionSnapshot(nativeContinuationCall(c,'status')),nativeCompletionStatusKeys);
++    if(!Number.isSafeInteger(status.relayPid)||(status.relayPid as number)<=0||typeof status.relayLifetime!=='string'||!/^relay_[a-f0-9]{32}$/.test(status.relayLifetime)
++      ||typeof status.startSHA256!=='string'||!/^[a-f0-9]{64}$/.test(status.startSHA256))throw nativeTransportError();
++    e.relayIdentity=Object.freeze({relayPid:status.relayPid as number,relayLifetime:status.relayLifetime,startSHA256:status.startSHA256});
++    if(c.proofBytes===undefined)throw nativeTransportError();
++    const proof=JSON.parse(c.proofBytes.toString('utf8')),sdk=status.sdk as Record<string,unknown>;
++    e.destinationJSON=nativeCompletionCanonical(nativeStartupData(proof.destination,['parent','leaf','parentIdentity','directoryIdentity']));
++    if(sdk===null||typeof sdk!=='object'||nativeCompletionCanonical(sdk.destination)!==e.destinationJSON)throw nativeTransportError();
++    const metadata=nativeStartupData(sdk.copyProof,['identity','bytes','sha256','files','totalBytes']);
++    if(metadata.bytes!==c.proofBytes.length||metadata.sha256!==nativeStartupHash('sha256').update(c.proofBytes).digest('hex')
++      ||metadata.files!==proof.copiedFiles||metadata.totalBytes!==proof.totalBytes)throw nativeTransportError();
++    e.proofMetadataJSON=nativeCompletionCanonical(metadata);
++    nativeTransportCheck(attempt);e.closeInvoked=true;
++    const raw=await nativeContinuationCall(c,'release');
++    e.closedJSON=nativeCompletionClosed(c,raw);nativeTransportCheck(attempt);
++    if(nativeTransportHeld(attempt))throw nativeTransportError();attempt.phase='closed';nativeTransportCheck(attempt);
++    const b=attempt.binding;if(b===undefined)throw nativeTransportError();
++    return Object.freeze({schema:'native-executor-worker-closed/1',operationId:b.operationId,nativeJobId:b.nativeJobId,requestSHA256:b.requestSHA256,
++      workerClosureObservationSHA256:nativeStartupHash('sha256').update(e.closedJSON).digest('hex'),effectsAllowed:false,installationPermit:false,nativeAdmission:false});
++  }catch(primary){nativeTransportHold(attempt);throw primary;}
++}
++/** Publish only the bound B-to-C journal transition, then owned CAS and readback. */
++export async function sealNativeExecutorTransportTerminal(ticket:object,adoptionBytes:Uint8Array) {
++  const attempt=nativeTransportTicket(ticket),c=attempt.continuation,e=c?.completion;
++  if(c===undefined||e===undefined||attempt.phase!=='closed'||e.sealStarted){nativeTransportHold(attempt);throw nativeTransportError();}e.sealStarted=true;
++  try{
++    if(nativeCompletionAdoption(c,adoptionBytes).json!==e.adoptionJSON)throw nativeTransportError();nativeTransportCheck(attempt);
++    const ready=attempt.ready,source=attempt.source,startup=attempt.startup,pending=attempt.pending,b=attempt.binding;
++    if(ready===undefined||source===undefined||startup===undefined||pending===undefined||b===undefined||c.terminalOwner===undefined||c.observed===undefined||c.proofBytes===undefined||e.closedJSON===undefined)throw nativeTransportError();
++    const before=Buffer.from(JSON.stringify(c.anchor)),raw=await nativeCompletionRead.call(ready.main,c.terminalOwner);nativeTransportCheck(attempt);
++    if(raw===null||!nativeTransportCopy(raw,1024).equals(before))throw nativeTransportError();nativePendingInventory(source,c.anchor,true);nativeTransportCheck(attempt);
++    const held={schema:'native-executor-ownership-hold-observation/1',operationId:b.operationId,nativeJobId:b.nativeJobId,requestSHA256:b.requestSHA256,
++      fullRecordSHA256:c.observed.fullRecordSHA256,rootId:c.anchor.rootId,inventorySHA256:c.anchor.inventorySHA256,mainTerminalWindowHeld:true,frameHeld:true,
++      rendererAdoptionSHA256:nativeStartupHash('sha256').update(e.adoptionJSON as string).digest('hex'),copyProofSHA256:nativeStartupHash('sha256').update(c.proofBytes).digest('hex')};
++    const evidence={schema:'native-executor-terminal-evidence/2',outcome:'committed_adopted_worker_closed',fullRecordSHA256:c.observed.fullRecordSHA256,
++      registrationObservationSHA256:nativeStartupHash('sha256').update(JSON.stringify(c.observed)).digest('hex'),
++      adoptionObservationSHA256:nativeStartupHash('sha256').update(e.adoptionJSON as string).digest('hex'),workerClosureObservationSHA256:nativeStartupHash('sha256').update(e.closedJSON).digest('hex'),
++      ownershipHoldObservationSHA256:nativeStartupHash('sha256').update(JSON.stringify(held)).digest('hex')};
++    const evidenceBytes=Buffer.from(JSON.stringify(evidence)),binding={operationId:b.operationId,nativeJobId:b.nativeJobId,requestSHA256:b.requestSHA256,
++      packetSHA256:c.prepared.packetSHA256,workerLifetime:c.prepared.workerLifetime};
++    attempt.phase='sealing';nativeTransportCheck(attempt);
++    const result=source.appendTerminalAnchored(source.journal,binding,evidenceBytes,before);nativeTransportCheck(attempt);
++    const transition=nativeStartupData(result,['schema','rootId','previousInventorySHA256','inventorySHA256','operationId','nativeJobId','requestSHA256','packetSHA256','workerLifetime','evidenceSHA256']);
++    if(transition.schema!=='native-executor-terminal-transition/1'||transition.rootId!==c.anchor.rootId||transition.previousInventorySHA256!==c.anchor.inventorySHA256
++      ||typeof transition.inventorySHA256!=='string'||!/^[a-f0-9]{64}$/.test(transition.inventorySHA256)||transition.inventorySHA256===c.anchor.inventorySHA256
++      ||!Object.keys(binding).every(k=>transition[k]===binding[k as keyof typeof binding])||transition.evidenceSHA256!==nativeStartupHash('sha256').update(evidenceBytes).digest('hex'))throw nativeTransportError();
++    e.transition=Object.freeze(transition);
++    const next=nativeHistoryAnchorSnapshot(Buffer.from(JSON.stringify({schema:'native-executor-anchor/1',rootId:transition.rootId,inventorySHA256:transition.inventorySHA256}))),after=Buffer.from(JSON.stringify(next));
++    nativePendingInventory(source,next,false);nativeTransportCheck(attempt);
++    const ack=nativeStartupData(await nativeCompletionWrite.call(ready.main,c.terminalOwner,before,after),['schema','previousSHA256','anchorSHA256','rootId','inventorySHA256','commitObserved','readbackVerified','effectsAllowed','installationPermit','powerLossPersistenceVerified']);nativeTransportCheck(attempt);
++    if(ack.schema!=='native-executor-anchor-write/1'||ack.previousSHA256!==nativeStartupHash('sha256').update(before).digest('hex')||ack.anchorSHA256!==nativeStartupHash('sha256').update(after).digest('hex')
++      ||ack.rootId!==next.rootId||ack.inventorySHA256!==next.inventorySHA256||ack.commitObserved!==true||ack.readbackVerified!==true||ack.effectsAllowed!==false||ack.installationPermit!==false||ack.powerLossPersistenceVerified!==false)throw nativeTransportError();
++    const readback=await nativeCompletionRead.call(ready.main,c.terminalOwner);nativeTransportCheck(attempt);
++    if(readback===null||!nativeTransportCopy(readback,1024).equals(after))throw nativeTransportError();nativePendingInventory(source,next,false);nativeTransportCheck(attempt);
++    if(pending.genesis===undefined)throw nativeTransportError();startup.anchor=next;pending.genesis.anchor=next;pending.anchor=next;e.next=next;attempt.phase='sealed';nativeTransportCheck(attempt);
++    return e.transition;
++  }catch(primary){nativeTransportHold(attempt);throw primary;}
++}
++/** Synchronous source-owned release; no renderer owner is opened by this method. */
++export function releaseNativeExecutorTransport(ticket:object) {
++  const attempt=nativeTransportTicket(ticket),c=attempt.continuation,e=c?.completion;
++  if(c===undefined||e===undefined||attempt.phase!=='sealed'||e.releaseStarted||c.terminalOwner===undefined||attempt.ready===undefined){nativeTransportHold(attempt);throw nativeTransportError();}e.releaseStarted=true;
++  try{
++    nativeTransportCheck(attempt);attempt.phase='releasing';
++    const raw=nativeCompletionRelease.call(attempt.ready.main,c.terminalOwner);
++    e.releaseReceipt=nativeCompletionReceipt(c,raw);
++    // Retain actual release before observing a later hold; never fabricate re-lock.
++    if(nativeTransportHeld(attempt))throw nativeTransportError();attempt.phase='main_released';return e.releaseReceipt;
++  }catch(primary){nativeTransportHold(attempt);throw primary;}
++}
++/** Historical known ACK only; permits neither a release retry nor finalization. */
++export function getNativeExecutorTransportMainRelease(ticket:object) {
++  const attempt=nativeTransportTicket(ticket),c=attempt.continuation;
++  return c?.completion?.releaseReceipt===undefined?null:nativeCompletionReceipt(c,c.completion.releaseReceipt);
++}
