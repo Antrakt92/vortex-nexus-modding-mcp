@@ -196,7 +196,7 @@
     },
     {
       "path": "docs/AGENT-WORKFLOW.md",
-      "sha256_lf": "7a7ca9a1b825877dcc42819f8f39c5428c55f2b67a8d7cadb01a4febac46e590"
+      "sha256_lf": "06c7d27ebc9ce7b120680a5b5e9d1eb4bf37c1c2adcb0742537ea3431170dafc"
     },
     {
       "path": "docs/ARCHIVE-TEMP-CUSTODY.md",
@@ -276,7 +276,7 @@
     },
     {
       "path": "docs/LOCAL-INSTALL-IMPLEMENTATION.md",
-      "sha256_lf": "a80e5c2a792d38a3a00976d366e94ad40f59cd894ba94ac676c86482d4f9d959"
+      "sha256_lf": "feeb7402b12e075d98dd5864908a41a2dc7cf226c2ded3b9666a209d85f2f3fc"
     },
     {
       "path": "docs/MAINTENANCE.md",
@@ -373,6 +373,10 @@
     {
       "path": "docs/NATIVE-RUNTIME-BINDING.md",
       "sha256_lf": "1f2cdfe23417495049e6b01d8e519ae9fba808e3a29b97d3b8f45a52482db609"
+    },
+    {
+      "path": "docs/NATIVE-SDK-CAPSULE.md",
+      "sha256_lf": "a1736225550a94b5cde6ab71428690ca12648a596edda0f763469fc39012a64b"
     },
     {
       "path": "docs/NATIVE-SOURCE-ASSEMBLY.md",
@@ -2185,6 +2189,46 @@
     {
       "path": "tools/modding/vortex-agent/native-runtime-binding.test.mjs",
       "sha256_lf": "be18bb4e6f81d989140b4b9f0ed11b946f6139968eee2168c7a4d5cc96b70fc7"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-sdk-capsule-build.mjs",
+      "sha256_lf": "642521d3b6d27ed563678327740974cec87bd2bb8d6f987148be55ff949ac1da"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-sdk-capsule-build.test.mjs",
+      "sha256_lf": "c7adc86d248ebea02035af6101b24ba1cbce3ab2d9dcd956a0c927a2ae538a0d"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-sdk-capsule-load.cjs",
+      "sha256_lf": "74830d23c15d8e17d87a5d770771040ccd3469ae181d205e433f6d7fa3e76fbf"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-sdk-capsule-load.test.mjs",
+      "sha256_lf": "c9d3262760d05ff0ba680c75c53371ef376c5e6d1cbbdfddd464603dcf481e4d"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-sdk-capture.mjs",
+      "sha256_lf": "8df499fa7d68a7cd13fee3baa942cd99187750069253248bdd6eadec2dba0715"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-sdk-capture.test.mjs",
+      "sha256_lf": "bc4ba6bbd7391ddd496ad9768960d1455d301b9ee6cd663f99389a3af6cfa24e"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-sdk-node-bootstrap.mjs",
+      "sha256_lf": "63aeaef1da70edd367313da20a1443a6498781e6d89d67f415fcd4d6ac265a35"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-sdk-node-bootstrap.test.mjs",
+      "sha256_lf": "c897cba4313bb91ddbab895f3040b288f363d4cfc3e4ef127774d7c007d4d3ea"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-sdk-python-capsule.mjs",
+      "sha256_lf": "9d3a683042b406a93edce023366a9993599a16bb6917f05018c5b806375e59df"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-sdk-python-capsule.test.mjs",
+      "sha256_lf": "22078b5024df5e458bc640608db067131e64c29efa2fefb3cac670ed3e204a2a"
     },
     {
       "path": "tools/modding/vortex-agent/native-singleton-sql-admission.test.mjs",
