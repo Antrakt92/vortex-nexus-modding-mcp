@@ -12,7 +12,7 @@ const PACKETS = Object.freeze({
   lifecycle: path.join(HERE, 'native-patches/vortex-2.9.1'),
   persistence: path.join(HERE, 'native-patches/vortex-persistence-2.9.1'),
 });
-const SERIES_SHA256 = '7da7ee06fdc9c44da6de06a4cbd58e939eb6bade8cf94b99777a30c89ac56527';
+const SERIES_SHA256 = 'bff8348d64fdc5ba64cb1f1ac596c535cd420ea4f1366e1360460d2a6805a09e';
 export const NATIVE_SOURCE_PATHS = Object.freeze([
   "src/renderer/src/extensions/mod_management/eventHandlers.ts",
   "src/renderer/src/extensions/mod_management/index.ts",
@@ -117,12 +117,12 @@ function readPacket() {
   need(sha(raw) === SERIES_SHA256, 'SERIES');
   const series = strict.parseStrictJSON(raw, {maxBytes: 96*1024, maxDepth: 8, maxTokens: 8000});
   need(series.schema === 'native-source-series/2' && series.files.length === 26
-    && series.patches.length === 129 && exact(Object.fromEntries(series.files.map(row => [row.path, true])), NATIVE_SOURCE_PATHS), 'SERIES');
+    && series.patches.length === 131 && exact(Object.fromEntries(series.files.map(row => [row.path, true])), NATIVE_SOURCE_PATHS), 'SERIES');
   const inventory = () => {
     for (const {id, directory: packet} of roots) {
       const names = series.patches.filter(row => row.packet === id)
         .flatMap(row => [row.name+'.json', row.name+'.patch']).sort();
-      need(names.length === (id === 'lifecycle' ? 76 : 182), 'SERIES');
+      need(names.length === (id === 'lifecycle' ? 76 : 186), 'SERIES');
       const directory = fs.opendirSync(packet), actual = [];
       try {
         for (let entry = directory.readSync(); entry !== null; entry = directory.readSync()) {
@@ -138,7 +138,9 @@ function readPacket() {
   const records = series.patches.map(row => {
     // New graph rows omit absent optional edges to retain the fixed byte cap.
     // Normalize before matching manifests and enforcing every dependency edge.
-    row = {requiredManagerPatchSHA256: null, requiredCompanionPatch: null,
+    need(Object.hasOwn(row, 'prerequisitePatch') === Object.hasOwn(row, 'prerequisitePatchSHA256'), 'GRAPH');
+    row = {prerequisitePatch: null, prerequisitePatchSHA256: null,
+      requiredManagerPatchSHA256: null, requiredCompanionPatch: null,
       requiredCompanionPatchSHA256: null, requiredCompanionOutputSHA256: null,
       requiredCompanionPacket: null, ...row};
     need(/^[a-z][a-z-]{0,63}$/.test(row.name) && NATIVE_SOURCE_PATHS.includes(row.path)
@@ -248,7 +250,7 @@ export function assembleNativeSources(input) {
     return Object.freeze({sources: Object.freeze(sources), receipt: frozen({
       schema: 'native-source-assembly-receipt/2', sourceSeriesSHA256: SERIES_SHA256,
       upstreamRepository: series.upstreamRepository, upstreamTag: series.upstreamTag, upstreamCommit: series.upstreamCommit,
-      patches: series.patches.map(row => ({...row})), sources: sourceReceipt,
+      patches: series.patches.map(row => ({prerequisitePatch: null, prerequisitePatchSHA256: null, ...row})), sources: sourceReceipt,
       preparedOnly: true, nativeAdmission: false, effectsAllowed: false,
       installationPermit: false, globalSQLIsolationVerified: false, powerLossPersistenceVerified: false,
       typecheckVerified: false, nativeAcceptanceVerified: false, installed: false,

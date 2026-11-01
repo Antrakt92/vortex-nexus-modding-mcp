@@ -1,0 +1,48 @@
+--- a/src/preload/src/index.ts
++++ b/src/preload/src/index.ts
+@@ -34,6 +34,18 @@
+   callback: rendererCallback,
+ };
+ 
++// Preload executes before renderer imports telemetry/Zone.js in this shared
++// context. Retain the genuine native constructor/method before global Promise
++// and its prototype methods can be replaced. Never borrow a later Zone then.
++const nativeExecutorPreloadPromise: PromiseConstructor = Promise;
++const nativeExecutorPreloadThen = nativeExecutorPreloadPromise.prototype.then;
++function nativeExecutorPreloadObserve(flight: Promise<unknown>, settled: (value: unknown) => void, failed: () => void): void {
++  const observed = nativeExecutorPreloadThen.call(flight, settled, failed);
++  // Observe callback failures with the same captured intrinsic. A dynamic
++  // .catch would borrow the possibly patched Promise.prototype.then again.
++  void nativeExecutorPreloadThen.call(observed, undefined, () => {});
++}
++
+ let nativeExecutorReceiverBound = false;
+ function nativeExecutorPreloadData(value: unknown, keys: string[]): Record<string, unknown> | undefined {
+   if(value===null||typeof value!=="object"||nativeExecutorPreloadTypes.isProxy(value)||Array.isArray(value))return;
+@@ -79,7 +91,7 @@
+     const send=(value:unknown)=>betterIpcRenderer.send("persist:native-executor-response",nativeExecutorPreloadResponse(value,challenge)??nativeExecutorPreloadFailure(challenge));
+     try {const flight=handler(challenge);
+       if(!nativeExecutorPreloadTypes.isPromise(flight)||nativeExecutorPreloadTypes.isProxy(flight)){send(nativeExecutorPreloadFailure(challenge));return;}
+-      void Promise.prototype.then.call(flight,send,()=>send(nativeExecutorPreloadFailure(challenge))).catch(()=>{});
++      nativeExecutorPreloadObserve(flight,send,()=>send(nativeExecutorPreloadFailure(challenge)));
+     }
+     catch {try{send(nativeExecutorPreloadFailure(challenge));}catch{/* Main retains its observation deadline and ownership. */}}
+   };
+@@ -140,7 +152,7 @@
+     const send=(raw:unknown)=>betterIpcRenderer.send("persist:native-executor-execution-response",nativeExecutionResponse(raw,c)??nativeExecutionFailure(c));
+     try{const flight=handler(c);
+       if(!nativeExecutorPreloadTypes.isPromise(flight)||nativeExecutorPreloadTypes.isProxy(flight)){send(nativeExecutionFailure(c));return;}
+-      void Promise.prototype.then.call(flight,send,()=>send(nativeExecutionFailure(c))).catch(()=>{});
++      nativeExecutorPreloadObserve(flight,send,()=>send(nativeExecutionFailure(c)));
+     }catch{try{send(nativeExecutionFailure(c));}catch{/* Main remains held on unknown delivery. */}}
+   };
+   betterIpcRenderer.on("persist:native-executor-execution-challenge",listener);
+@@ -208,7 +220,7 @@
+     try {
+       const flight = handler(c);
+       if (!nativeExecutorPreloadTypes.isPromise(flight) || nativeExecutorPreloadTypes.isProxy(flight)) {send(nativeCancellationFailure(c)); return;}
+-      void Promise.prototype.then.call(flight, send, () => send(nativeCancellationFailure(c))).catch(() => {});
++      nativeExecutorPreloadObserve(flight, send, () => send(nativeCancellationFailure(c)));
+     } catch {try {send(nativeCancellationFailure(c));} catch {/* Main retains ownership on unknown delivery. */}}
+   };
+   betterIpcRenderer.on("persist:native-executor-cancellation-challenge", listener);
