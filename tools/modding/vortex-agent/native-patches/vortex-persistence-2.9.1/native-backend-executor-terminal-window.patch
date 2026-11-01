@@ -1,0 +1,183 @@
+--- a/src/main/src/store/LevelPersist.ts
++++ b/src/main/src/store/LevelPersist.ts
+@@ -193,12 +193,19 @@
+   phase: "claimed" | "writing" | "committed" | "held";
+   transaction: "not_started" | "begin_pending" | "open" | "commit_pending" | "committed" | "rollback_pending" | "rolled_back" | "unknown";
+   commitAttempted: boolean;
++  terminalWindow?: NativeExecutorTerminalWindow;
+   trackedRequest?: NativeTrackedModRegistrationRequest;
+   trackedResult?: Readonly<{ operationId: string; nativeJobId: string; requestSHA256: string;
+     recordSHA256: string; fullRecordSHA256: string; recordJSON: string }>;
+ }
+ 
++interface NativeExecutorTerminalWindow {
++  owner: object; registration: NativeRegistrationAttempt; backendOwner: object; sqlOwner: object; registry: QueryRegistry;
++  phase: "opening" | "open" | "reading" | "writing" | "committed" | "held"; checking: boolean; writeAttempted: boolean;
++  active?: NativeRegistrationAttempt; next?: Buffer; readbackVerified: boolean;
++}
+ class LevelPersist implements IPersistor {
++  #mNativeTerminalWindow: NativeExecutorTerminalWindow | undefined;
+   public static async create(
+     persistPath: string,
+     tries: number = 10,
+@@ -305,6 +312,83 @@
+     return this.#mInTransaction;
+   }
+ 
++
++  #terminalAnchorContext(attempt:NativeRegistrationAttempt):boolean {
++    const window=attempt.terminalWindow;
++    if(window===undefined)return this.#mNativeTerminalWindow===undefined&&this.#mNativeRegistration===undefined;
++    return this.#mNativeTerminalWindow===window&&window.active===attempt&&window.registration===this.#mNativeRegistration
++      &&window.registration.phase==="committed"&&window.registration.transaction==="committed"
++      &&["reading","writing"].includes(window.phase);
++  }
++  #holdTerminalWindow(window:NativeExecutorTerminalWindow):void {
++    window.phase="held";window.registration.phase="held";this.#mNativeWriteFailed=true;
++    if(this.#mNativeWriteHold!==undefined)this.#mNativeWriteHold.phase="held";
++    if(window.active!==undefined)window.active.phase="held";
++  }
++  #terminalWindow(owner:object):NativeExecutorTerminalWindow {
++    if(this===null||typeof this!=="object"||nativeRegistrationTypes.isProxy(this)||!(#mNativeTerminalWindow in this))throw new Error("NATIVE_TERMINAL_WINDOW_OWNER");
++    const window=this.#mNativeTerminalWindow;if(window===undefined||window.owner!==owner)throw new Error("NATIVE_TERMINAL_WINDOW_OWNER");return window;
++  }
++  #checkTerminalWindow(window:NativeExecutorTerminalWindow,transition=false):void {
++    if(window.checking){this.#holdTerminalWindow(window);throw new Error("NATIVE_TERMINAL_WINDOW_HELD");}
++    window.checking=true;
++    try {
++      const valid=()=>this.#mNativeTerminalWindow===window&&window.registration===this.#mNativeRegistration
++        &&window.registration.phase==="committed"&&window.registration.transaction==="committed"
++        &&(window.phase==="opening"||window.phase==="open"||window.phase==="committed"||(transition&&window.phase==="writing"))
++        &&window.active===undefined&&this.#mNativeAnchor===undefined;
++      if(!valid())throw new Error("NATIVE_TERMINAL_WINDOW_HELD");
++      LevelPersist.prototype.checkNativeNewModRegistration.call(this,window.backendOwner,window.sqlOwner,window.registry);
++      if(!valid())throw new Error("NATIVE_TERMINAL_WINDOW_HELD");
++    }catch(primary){this.#holdTerminalWindow(window);throw primary;}
++    finally{window.checking=false;}
++  }
++  /** Genuine committed tracked registration only; all lower holds remain reserved. */
++  public beginNativeExecutorTerminalWindow(backendOwner:object,sqlOwner:object,registry:QueryRegistry):object {
++    if(this===null||typeof this!=="object"||nativeRegistrationTypes.isProxy(this)||!(#mNativeTerminalWindow in this))throw new Error("NATIVE_TERMINAL_WINDOW_OWNER");
++    const registration=this.#mNativeRegistration,hold=this.#mNativeWriteHold,sql=this.#mNativeSQL;
++    if(hold===undefined||hold.owner!==backendOwner||sql===undefined||sql.owner!==sqlOwner||sql.registry!==registry||sql.backendOwner!==backendOwner)throw new Error("NATIVE_TERMINAL_WINDOW_OWNER");
++    if(this.#mNativeTerminalWindow!==undefined){this.#holdTerminalWindow(this.#mNativeTerminalWindow);throw new Error("NATIVE_TERMINAL_WINDOW_HELD");}
++    if(registration===undefined||registration.phase!=="committed"||registration.transaction!=="committed"
++      ||registration.trackedRequest===undefined||registration.trackedResult===undefined)throw new Error("NATIVE_TERMINAL_WINDOW_REFUSED");
++    const window:NativeExecutorTerminalWindow={owner:Object.freeze({}),registration,backendOwner,sqlOwner,registry,phase:"opening",checking:false,writeAttempted:false,readbackVerified:false};
++    this.#mNativeTerminalWindow=window;
++    this.#checkTerminalWindow(window);window.phase="open";return window.owner;
++  }
++  public checkNativeExecutorTerminalWindow(owner:object):void {this.#checkTerminalWindow(this.#terminalWindow(owner));}
++  public async readNativeExecutorTerminalAnchor(owner:object):Promise<Uint8Array|null> {
++    const window=this.#terminalWindow(owner);this.#checkTerminalWindow(window);
++    const previous=window.phase;
++    const attempt:NativeRegistrationAttempt={backendOwner:window.backendOwner,sqlOwner:window.sqlOwner,registry:window.registry,
++      phase:"claimed",transaction:"not_started",commitAttempted:false,terminalWindow:window};
++    window.phase="reading";window.active=attempt;this.#mNativeAnchor=attempt;this.#mNativeActive++;
++    try {
++      const bytes=await this.#readAnchorValue(attempt);this.#checkOwnedAnchor(attempt);
++      if(previous==="committed"&&(bytes===null||window.next===undefined||!Buffer.from(bytes).equals(window.next)))throw this.#anchorHold();
++      this.#mNativeAnchor=undefined;window.active=undefined;window.phase=previous;
++      if(previous==="committed")window.readbackVerified=true;
++      return bytes===null?null:new Uint8Array(bytes);
++    }catch(primary){this.#holdTerminalWindow(window);throw primary;}
++    finally{this.#mNativeActive--;this.#anchorDrained();}
++  }
++  public async writeNativeExecutorTerminalAnchor(owner:object,expectedBytes:Uint8Array,nextBytes:Uint8Array) {
++    const window=this.#terminalWindow(owner);this.#checkTerminalWindow(window);
++    if(window.writeAttempted){this.#holdTerminalWindow(window);throw new Error("NATIVE_TERMINAL_WINDOW_HELD");}
++    window.writeAttempted=true;
++    try {
++      const previous=snapshotNativeExecutorAnchor(expectedBytes),next=snapshotNativeExecutorAnchor(nextBytes);
++      if(previous.rootId!==next.rootId||previous.inventorySHA256===next.inventorySHA256)throw this.#anchorHold();
++      const before=Buffer.from(JSON.stringify(previous)),after=Buffer.from(JSON.stringify(next));window.next=after;window.phase="writing";
++      const result=await this.#writeNativeExecutorAnchor(window.backendOwner,window.sqlOwner,window.registry,before,after,window);
++      this.#checkTerminalWindow(window,true);window.phase="committed";return result;
++    }catch(primary){this.#holdTerminalWindow(window);throw primary;}
++  }
++  public prepareNativeExecutorTerminalRelease(owner:object):()=>void {
++    const window=this.#terminalWindow(owner);this.#checkTerminalWindow(window);
++    if(window.phase!=="committed"||!window.readbackVerified)throw new Error("NATIVE_TERMINAL_WINDOW_REFUSED");
++    return this.#prepareNativeTrackedRelease(window.backendOwner,window.sqlOwner,window.registry,window);
++  }
++
+   #anchorHold(): Error { return new Error("NATIVE_EXECUTOR_ANCHOR_HOLD"); }
+   #anchorConnectionValid(): boolean {
+     return this.#mAnchorRun !== undefined && this.#mAnchorRead !== undefined
+@@ -333,12 +417,12 @@
+     try {
+       const pending = ["begin_pending", "commit_pending"].includes(attempt.transaction) ? 1 : 0;
+       const open = ["open", "commit_pending"].includes(attempt.transaction);
+-      if (this.#mNativeAnchor !== attempt || this.#mNativeRegistration !== undefined || hold === undefined
++      if (this.#mNativeAnchor !== attempt || !this.#terminalAnchorContext(attempt) || hold === undefined
+         || hold.owner !== attempt.backendOwner || hold.phase !== "reserved" || attempt.phase === "held"
+         || this.#mNativeActive !== 1 || this.#mNativeTransactionPending !== pending || this.#mInTransaction !== open
+         || this.#mNativeWriteFailed || this.#mNativeRawExposed || this.#mNativeCloseAttempted || !this.#anchorConnectionValid()) throw this.#anchorHold();
+       this.#checkNativeSQLIdentity(attempt.sqlOwner, attempt.backendOwner, attempt.registry);
+-      if (this.#mNativeAnchor !== attempt || hold.phase !== "reserved" || this.#nativeRegistrationHeld(attempt)
++      if (this.#mNativeAnchor !== attempt || !this.#terminalAnchorContext(attempt) || hold.phase !== "reserved" || this.#nativeRegistrationHeld(attempt)
+         || this.#mNativeActive !== 1 || !this.#anchorConnectionValid()) throw this.#anchorHold();
+     } catch (error) {
+       attempt.phase = "held";
+@@ -394,15 +478,21 @@
+     } finally { this.#mNativeAnchorReading = false; this.#mNativeActive--; this.#anchorDrained(); }
+   }
+   public async writeNativeExecutorAnchor(backendOwner: object, sqlOwner: object, registry: QueryRegistry, expectedBytes: Uint8Array | null, nextBytes: Uint8Array) {
++    if(this===null||typeof this!=="object"||nativeRegistrationTypes.isProxy(this)||!(#mConnection in this))throw new Error("NATIVE_EXECUTOR_ANCHOR_HOLD");
++    return this.#writeNativeExecutorAnchor(backendOwner,sqlOwner,registry,expectedBytes,nextBytes);
++  }
++  async #writeNativeExecutorAnchor(backendOwner: object, sqlOwner: object, registry: QueryRegistry, expectedBytes: Uint8Array | null, nextBytes: Uint8Array, window?: NativeExecutorTerminalWindow) {
+     if (this === null || typeof this !== "object" || nativeRegistrationTypes.isProxy(this) || !(#mConnection in this)) throw new Error("NATIVE_EXECUTOR_ANCHOR_HOLD");
+     const hold = this.#mNativeWriteHold, sql = this.#mNativeSQL;
+     if (this.#mNativeAnchor !== undefined) {
+       this.#mNativeAnchor.phase = "held"; if (hold !== undefined) hold.phase = "held"; throw this.#anchorHold();
+     }
+     if (hold === undefined || hold.owner !== backendOwner || hold.phase !== "reserved" || sql === undefined
+-      || sql.owner !== sqlOwner || sql.backendOwner !== backendOwner || sql.registry !== registry || this.#mNativeRegistration !== undefined
+-      || this.#mNativeAnchorReading || this.#mNativeActive !== 0) throw this.#anchorHold();
+-    const attempt: NativeRegistrationAttempt = {backendOwner,sqlOwner,registry,phase:"claimed",transaction:"not_started",commitAttempted:false};
++      || sql.owner !== sqlOwner || sql.backendOwner !== backendOwner || sql.registry !== registry
++      || this.#mNativeTerminalWindow !== window || this.#mNativeRegistration !== window?.registration
++      || (window !== undefined && window.phase !== "writing") || this.#mNativeAnchorReading || this.#mNativeActive !== 0) throw this.#anchorHold();
++    const attempt: NativeRegistrationAttempt = {backendOwner,sqlOwner,registry,phase:"claimed",transaction:"not_started",commitAttempted:false,terminalWindow:window};
++    if(window!==undefined)window.active=attempt;
+     this.#mNativeAnchor = attempt; this.#mNativeActive++;
+     try {
+       this.#checkOwnedAnchor(attempt);
+@@ -435,7 +525,7 @@
+       const result = Object.freeze({schema:"native-executor-anchor-write/1",previousSHA256:expected === null ? null : nativeRegistrationHash("sha256").update(expected).digest("hex"),
+         anchorSHA256:nativeRegistrationHash("sha256").update(bytes).digest("hex"),rootId:next.rootId,inventorySHA256:next.inventorySHA256,
+         commitObserved:true,readbackVerified:true,effectsAllowed:false,installationPermit:false,powerLossPersistenceVerified:false});
+-      this.#checkOwnedAnchor(attempt); attempt.phase = "committed"; this.#mNativeAnchor = undefined;
++      this.#checkOwnedAnchor(attempt); attempt.phase = "committed"; this.#mNativeAnchor = undefined;if(window!==undefined)window.active=undefined;
+       return result;
+     } catch (primary) {
+       attempt.phase = "held"; this.#mNativeWriteFailed = true; hold.phase = "held";
+@@ -753,6 +843,10 @@
+ 
+   /** Successful tracked-only release. Unknown/failed attempts have no finalizer. */
+   public prepareNativeTrackedRegistrationRelease(backendOwner: object, sqlOwner: object, registry: QueryRegistry): () => void {
++    if(this.#mNativeTerminalWindow!==undefined)throw new Error("NATIVE_TERMINAL_WINDOW_HELD");
++    return this.#prepareNativeTrackedRelease(backendOwner,sqlOwner,registry);
++  }
++  #prepareNativeTrackedRelease(backendOwner: object, sqlOwner: object, registry: QueryRegistry, window?:NativeExecutorTerminalWindow): () => void {
+     LevelPersist.prototype.checkNativeNewModRegistration.call(this, backendOwner, sqlOwner, registry);
+     const attempt = this.#mNativeRegistration, hold = this.#mNativeWriteHold, sql = this.#mNativeSQL;
+     if (attempt === undefined || hold === undefined || sql === undefined || attempt.phase !== "committed"
+@@ -761,7 +855,8 @@
+     LevelPersist.prototype.checkNativeNewModRegistration.call(this, backendOwner, sqlOwner, registry);
+     let consumed = false;
+     return () => {
+-      if (consumed || this.#mNativeRegistration !== attempt || this.#mNativeWriteHold !== hold || this.#mNativeSQL !== sql
++      if (consumed || this.#mNativeTerminalWindow !== window || (window!==undefined&&(window.phase!=="committed"||!window.readbackVerified))
++          || this.#mNativeRegistration !== attempt || this.#mNativeWriteHold !== hold || this.#mNativeSQL !== sql
+           || hold.owner !== backendOwner || hold.phase !== "reserved" || attempt.phase !== "committed" || attempt.transaction !== "committed"
+           || this.#mNativeActive !== 0 || this.#mNativeTransactionPending !== 0 || this.#mInTransaction
+           || this.#mNativeWriteFailed || this.#mNativeRawExposed || this.#mNativeCloseAttempted) throw new Error("NATIVE_REGISTRATION_RELEASE_REFUSED");
+@@ -771,5 +866,6 @@
+       this.#mNativeSQL = undefined;
+       this.#mNativeSQLAttempted = false;
+       this.#mNativeWriteHold = undefined;
++      this.#mNativeTerminalWindow = undefined;
+     };
+   }

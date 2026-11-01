@@ -1,0 +1,25 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/main/src/store/LevelPersist.ts",
+  "originalSourceSHA256": "742929670876a79c7332a13d16381cf2098ee55f57f838e3e35668853d1455a1",
+  "inputSHA256": "ce2c560f068f1d9867b902ce9975c47cb39b458497da90573e4a39c83b5691fb",
+  "outputSHA256": "ebd5f18a2f599c89733854e2bb7069000118165cc3b0d0ddebe750f2ce329a5a",
+  "patchSHA256": "ddfa2d0ca7e06f5573d2ad00e28ab6368d52d96421cab24b382a7a192aaf61a7",
+  "prerequisitePatch": "native-executor-anchor-storage.patch",
+  "prerequisitePatchSHA256": "2dda802a76e811070e5f2987cfdfc49689d2c8db50c640e21a0a562525cd8751",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "installationPermit": false,
+  "effectsAllowed": false,
+  "nativeAdmission": false,
+  "powerLossPersistenceVerified": false,
+  "limitations": [
+    "Fixed committed-tracked-registration anchor window only; no journal, adoption, worker closure or START proof.",
+    "Existing ordinary SQL/backend/query owners remain held until a changed same-root nonnull CAS and exact post-CAS readback are known.",
+    "Unknown outcomes, reentry and source failure remain held; no refund, retry or generic SQL/anchor bypass."
+  ]
+}

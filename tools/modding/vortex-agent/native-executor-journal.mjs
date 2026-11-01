@@ -19,8 +19,10 @@ const io = createImmutableRecordIO({maxBytes: 8192, prefix: 'NATIVE_EXECUTOR_'})
 export const INVENTORY_LIMITS = Object.freeze({records: 1024, bytes: 32 * 1024 * 1024});
 const EVIDENCE_KEYS = ['schema', 'outcome', 'fullRecordSHA256', 'registrationObservationSHA256',
   'adoptionObservationSHA256', 'workerClosureObservationSHA256', 'releaseObservationSHA256'];
+const HELD_EVIDENCE_KEYS = [...EVIDENCE_KEYS.slice(0, -1), 'ownershipHoldObservationSHA256'];
 const TERMINAL_KEYS = ['schema', ...BINDING_KEYS.slice(1, 6), 'rootId', 'jobsRootId', 'jobDirectoryId',
   'terminalsRootId', 'directoryId', ...EVIDENCE_KEYS.slice(1), 'evidenceSHA256'];
+const HELD_TERMINAL_KEYS = TERMINAL_KEYS.map(key => key === 'releaseObservationSHA256' ? 'ownershipHoldObservationSHA256' : key);
 const encoded = value => Buffer.from(JSON.stringify(value) + '\n');
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const rootId = value => typeof value === 'string' && /^[0-9]+:[0-9]+$/.test(value) && value.length <= 100;
@@ -53,12 +55,26 @@ function evidenceSnapshot(bytes) {
     need(size > 0 && size <= 8192 && !types.isSharedArrayBuffer(backing), 'INVALID_TERMINAL');
     const copy = new Uint8Array(size); Uint8Array.prototype.set.call(copy, bytes);
     const value = strictJSON.parseStrictJSON(copy, {maxBytes: 8192, maxDepth: 4, maxTokens: 100});
-    need(exact(value, EVIDENCE_KEYS) && value.schema === 'native-executor-terminal-evidence/1'
-      && value.outcome === 'committed_adopted_closed' && EVIDENCE_KEYS.slice(2).every(key => sha(value[key])), 'INVALID_TERMINAL');
-    const result = Object.fromEntries(EVIDENCE_KEYS.map(key => [key, value[key]]));
+    const keys = value?.schema === 'native-executor-terminal-evidence/2' ? HELD_EVIDENCE_KEYS : EVIDENCE_KEYS;
+    need(exact(value, keys) && (value.schema === 'native-executor-terminal-evidence/1'
+      ? value.outcome === 'committed_adopted_closed'
+      : value.schema === 'native-executor-terminal-evidence/2' && value.outcome === 'committed_adopted_worker_closed')
+      && keys.slice(2).every(key => sha(value[key])), 'INVALID_TERMINAL');
+    const result = Object.fromEntries(keys.map(key => [key, value[key]]));
     need(Buffer.from(copy).equals(Buffer.from(JSON.stringify(result))), 'INVALID_TERMINAL');
     return Object.freeze(result);
   } catch {throw Error('NATIVE_EXECUTOR_INVALID_TERMINAL');}
+}
+// Version 2 records completion while volatile writer ownership is retained.
+// Neither version authenticates producer observations or grants a release.
+function terminalEvidence(record) {
+  const held = record.schema === 'native-executor-terminal/2';
+  need(exact(record, held ? HELD_TERMINAL_KEYS : TERMINAL_KEYS)
+    && (held || record.schema === 'native-executor-terminal/1'), 'TERMINAL_BINDING_MISMATCH');
+  const evidence = Object.fromEntries((held ? HELD_EVIDENCE_KEYS : EVIDENCE_KEYS).map(key => [key,
+    key === 'schema' ? 'native-executor-terminal-evidence/' + (held ? '2' : '1') : record[key]]));
+  evidenceSnapshot(Buffer.from(JSON.stringify(evidence)));
+  need(hash(Buffer.from(JSON.stringify(evidence))) === record.evidenceSHA256, 'TERMINAL_CORRUPT');
 }
 function anchorSnapshot(bytes) {
   try {
@@ -235,15 +251,11 @@ export function createNativeExecutorJournal(options = {}) {
     io.sameAncestry(root, rootPins); io.sameAncestry(terminalsRoot, terminalsPins);
     need(JSON.stringify(names(dir)) === '["terminal.json"]', 'TERMINAL_CORRUPT');
     const record = reader(file, observations);
-    need(exact(record, TERMINAL_KEYS) && record.schema === 'native-executor-terminal/1'
-      && Object.keys(binding).every(key => record[key] === binding[key])
+    terminalEvidence(record);
+    need(Object.keys(binding).every(key => record[key] === binding[key])
       && record.rootId === rootPins.get(root) && record.jobsRootId === jobsPins.get(jobsRoot)
       && record.jobDirectoryId === job.directoryId && record.terminalsRootId === terminalsPins.get(terminalsRoot)
       && record.directoryId === identity(stat) && sha(record.evidenceSHA256), 'TERMINAL_BINDING_MISMATCH');
-    const evidence = Object.fromEntries(EVIDENCE_KEYS.map(key => [key,
-      key === 'schema' ? 'native-executor-terminal-evidence/1' : record[key]]));
-    evidenceSnapshot(Buffer.from(JSON.stringify(evidence)));
-    need(hash(Buffer.from(JSON.stringify(evidence))) === record.evidenceSHA256, 'TERMINAL_CORRUPT');
     io.sameAncestry(dir, pins);
     need(JSON.stringify(names(dir)) === '["terminal.json"]'
       && generation(fs.lstatSync(file, {bigint: true})) === observations.get(file), 'CHANGED');
@@ -265,10 +277,11 @@ export function createNativeExecutorJournal(options = {}) {
       catch (error) {if (error.code === 'EEXIST') throw Error('NATIVE_EXECUTOR_TERMINAL_EXISTS_HOLD'); throw error;}
       const pins = io.ancestry(dir);
       io.sameAncestry(root, rootPins); io.sameAncestry(jobsRoot, jobsPins); io.sameAncestry(terminalsRoot, terminalsPins);
-      const record = {schema: 'native-executor-terminal/1', ...binding,
+      const record = {schema: evidence.schema === 'native-executor-terminal-evidence/2' ? 'native-executor-terminal/2' : 'native-executor-terminal/1', ...binding,
         rootId: rootPins.get(root), jobsRootId: jobsPins.get(jobsRoot), jobDirectoryId: job.directoryId,
         terminalsRootId: terminalsPins.get(terminalsRoot), directoryId: pins.get(dir),
-        ...Object.fromEntries(EVIDENCE_KEYS.slice(1).map(key => [key, evidence[key]])),
+        ...Object.fromEntries((evidence.schema === 'native-executor-terminal-evidence/2'
+          ? HELD_EVIDENCE_KEYS : EVIDENCE_KEYS).slice(1).map(key => [key, evidence[key]])),
         evidenceSHA256: hash(Buffer.from(JSON.stringify(evidence)))};
       const guard = () => {
         io.sameAncestry(dir, pins); io.sameAncestry(root, rootPins); io.sameAncestry(jobsRoot, jobsPins);
@@ -413,18 +426,14 @@ export function createNativeExecutorJournal(options = {}) {
         let terminal = null;
         if (records.terminals.has(opId)) {
           const cached = records.terminals.get(opId); terminal = cached.record;
-          need(exact(terminal, TERMINAL_KEYS) && terminal.schema === 'native-executor-terminal/1'
-            && Object.keys(binding).every(key => terminal[key] === binding[key])
+          terminalEvidence(terminal);
+          need(Object.keys(binding).every(key => terminal[key] === binding[key])
             && terminal.rootId === observedRootId
             && terminal.jobsRootId === directories.get(jobsRoot).pins.get(jobsRoot)
             && terminal.jobDirectoryId === job.record.directoryId
             && terminal.terminalsRootId === directories.get(terminalsRoot).pins.get(terminalsRoot)
             && terminal.directoryId === directories.get(path.dirname(cached.file)).pins.get(path.dirname(cached.file))
             && sha(terminal.evidenceSHA256), 'TERMINAL_BINDING_MISMATCH');
-          const evidence = Object.fromEntries(EVIDENCE_KEYS.map(key => [key,
-            key === 'schema' ? 'native-executor-terminal-evidence/1' : terminal[key]]));
-          evidenceSnapshot(Buffer.from(JSON.stringify(evidence)));
-          need(hash(Buffer.from(JSON.stringify(evidence))) === terminal.evidenceSHA256, 'TERMINAL_CORRUPT');
         }
         rows.push(Object.freeze({...binding, state: terminal ? 'historical_closed' : 'unresolved',
           reason: terminal ? null : 'terminal_missing', evidenceSHA256: terminal?.evidenceSHA256 ?? null}));

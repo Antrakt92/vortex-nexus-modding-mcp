@@ -913,3 +913,83 @@ test('two actual processes can provision a shared fresh root only once', {timeou
       expectedInventorySHA256:winner.anchor.inventorySHA256}).historySealVerified,true);
   }finally{runners.forEach(r=>{if(r.child.exitCode===null)r.child.kill();});}
 });
+
+
+const heldEvidence = () => ({schema: 'native-executor-terminal-evidence/2', outcome: 'committed_adopted_worker_closed',
+  fullRecordSHA256: '1'.repeat(64), registrationObservationSHA256: '2'.repeat(64),
+  adoptionObservationSHA256: '3'.repeat(64), workerClosureObservationSHA256: '4'.repeat(64), ownershipHoldObservationSHA256: '6'.repeat(64)});
+
+test('v2 terminal records completion while ownership remains held without asserting release or allowing replay', () => {
+  const {root, store} = fixture(), r = request(); store.begin(encode(r), worker, packet);
+  const observed = store.appendTerminal(binding(r), encode(heldEvidence())); noAuthority(observed);
+  const record = JSON.parse(fs.readFileSync(terminalPath(root)));
+  assert.equal(record.schema, 'native-executor-terminal/2');
+  assert.equal(record.outcome, 'committed_adopted_worker_closed');
+  assert.equal(record.ownershipHoldObservationSHA256, '6'.repeat(64));
+  assert.equal(Object.hasOwn(record, 'releaseObservationSHA256'), false);
+  const fresh = createNativeExecutorJournal({root}), census = fresh.inventory();
+  assert.equal(census.complete, true); assert.equal(census.closedCount, 1); assert.equal(census.startupHoldRequired, true);
+  const anchored = fresh.inventory({expectedRootId:census.observedRootId, expectedInventorySHA256:census.observedInventorySHA256});
+  assert.equal(anchored.historySealVerified, true); assert.equal(anchored.startupHoldRequired, false); noAuthority(anchored);
+  assert.throws(() => fresh.begin(encode(r), worker, packet), /INTENT_EXISTS_HOLD/);
+  assert.throws(() => createNativeExecutorJournal({root}).appendTerminal(binding(r), encode(heldEvidence())), /TERMINAL_EXISTS_HOLD/);
+});
+
+test('mixed v1 released and v2 ownership-held history preserves exact old terminal bytes and pending seal', () => {
+  const {root, store} = fixture(), a=request(1), b=request(2);
+  store.begin(encode(a), worker, packet); store.appendTerminal(binding(a), encode(evidence()));
+  const old=fs.readFileSync(terminalPath(root,a)); store.begin(encode(b), worker, packet);
+  const pending=store.inventory(); store.appendTerminal(binding(b), encode(heldEvidence()));
+  assert(fs.readFileSync(terminalPath(root,a)).equals(old));
+  const fresh=createNativeExecutorJournal({root}), stale=fresh.inventory({expectedRootId:pending.observedRootId, expectedInventorySHA256:pending.observedInventorySHA256});
+  assert.equal(stale.historySealVerified,false); assert.equal(stale.startupHoldRequired,true);
+  const closed=fresh.inventory(); assert.equal(closed.complete,true); assert.equal(closed.closedCount,2); assert.equal(closed.unresolvedCount,0);
+});
+
+test('terminal evidence versions cannot mix ownership hold and release claims or accept unknown outcomes', () => {
+  const {store}=fixture(); store.begin(encode(request()),worker,packet);
+  const values=[{...heldEvidence(),schema:'native-executor-terminal-evidence/1'},
+    {...evidence(),schema:'native-executor-terminal-evidence/2'}, {...heldEvidence(),outcome:'committed_adopted_closed'},
+    {...heldEvidence(),releaseObservationSHA256:'5'.repeat(64)}, {...heldEvidence(),ownershipHoldObservationSHA256:'bad'},
+    {...heldEvidence(),released:true}];
+  for(const value of values)assert.throws(()=>store.appendTerminal(binding(),encode(value)),/INVALID_TERMINAL/);
+  assert.equal(store.inventory().unresolvedCount,1);
+});
+
+
+test('v2 cached inventory rejects record version substitution and missing or mixed evidence', () => {
+  const changes=[record=>{record.schema='native-executor-terminal/1';},
+    record=>{record.schema='native-executor-terminal/3';},
+    record=>{record.releaseObservationSHA256='5'.repeat(64);},
+    record=>{delete record.ownershipHoldObservationSHA256;},
+    record=>{record.ownershipHoldObservationSHA256='7'.repeat(64);},
+    record=>{record.outcome='committed_adopted_closed';}];
+  for(const change of changes){
+    const {root,store}=fixture();store.begin(encode(request()),worker,packet);store.appendTerminal(binding(),encode(heldEvidence()));
+    const file=terminalPath(root),value=JSON.parse(fs.readFileSync(file));change(value);fs.writeFileSync(file,JSON.stringify(value)+'\n');
+    const observed=createNativeExecutorJournal({root}).inventory();assert.equal(observed.complete,false);assert.equal(observed.startupHoldRequired,true);
+    assert.equal(observed.observedInventorySHA256,null);
+  }
+});
+
+test('v2 evidence requires exact canonical bytes and rejects BOM, duplicate or reordered fields before terminal creation', () => {
+  const {root,store}=fixture();store.begin(encode(request()),worker,packet);const value=heldEvidence(),raw=JSON.stringify(value);
+  const bytes=[Buffer.concat([Buffer.from([0xef,0xbb,0xbf]),Buffer.from(raw)]),Buffer.from(raw+'\n'),
+    Buffer.from(raw.replace('{','{"outcome":"committed_adopted_worker_closed",')),
+    encode(Object.fromEntries(Object.entries(value).reverse()))];
+  for(const bad of bytes)assert.throws(()=>store.appendTerminal(binding(),bad),/INVALID_TERMINAL/);
+  assert.equal(fs.existsSync(path.dirname(terminalPath(root))),false);
+});
+
+
+test('a valid terminal version rewrite cannot preserve a separately retained census seal', () => {
+  const {root,store}=fixture();store.begin(encode(request()),worker,packet);store.appendTerminal(binding(),encode(heldEvidence()));
+  const before=store.inventory(),file=terminalPath(root),record=JSON.parse(fs.readFileSync(file));
+  record.schema='native-executor-terminal/1';record.outcome='committed_adopted_closed';
+  delete record.ownershipHoldObservationSHA256;record.releaseObservationSHA256='5'.repeat(64);
+  record.evidenceSHA256=crypto.createHash('sha256').update(encode(evidence())).digest('hex');
+  fs.writeFileSync(file,JSON.stringify(record)+'\n');
+  const fresh=createNativeExecutorJournal({root}),valid=fresh.inventory();assert.equal(valid.complete,true);assert.equal(valid.closedCount,1);
+  const anchored=fresh.inventory({expectedRootId:before.observedRootId,expectedInventorySHA256:before.observedInventorySHA256});
+  assert.equal(anchored.historySealVerified,false);assert.equal(anchored.startupHoldRequired,true);noAuthority(anchored);
+});

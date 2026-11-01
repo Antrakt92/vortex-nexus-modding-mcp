@@ -1,6 +1,6 @@
 # Assemble the reviewed Vortex source patches
 
-`native-source-series.mjs` applies the fixed sequence of 87 reviewed patches to
+`native-source-series.mjs` applies the fixed sequence of 89 reviewed patches to
 25 original files from Vortex `v2.9.1`, commit
 `c80326367cbe6d96621ad6cf4a5488ef49bac110`. It replaces manually composing separate
 patch chains before compilation. It does not change an installed application or
@@ -585,3 +585,39 @@ The repaired renderer passed a fresh TypeScript check and webpack build. All
 fifteen selected renderer Program/map entries matched; unchanged main, preload,
 shared, SDK and compiler inputs retained exact prior evidence. Installed Vortex
 was not modified.
+
+## Terminal anchor ownership — 1 November 2026
+
+The 89-patch graph adds Main and Level terminal-window mechanisms. Genuine
+committed tracked registration ownership stays reserved while one nonnull,
+same-root, changed-census anchor is committed and read back. Only a separate
+exact post-CAS read allows the source-created release finalizer. The ordinary
+anchor/release paths cannot bypass an active window; failures keep ownership.
+
+[Terminal evidence version 2](NATIVE-EXECUTOR-TERMINAL.md#completion-with-retained-writer-ownership)
+records known registration, renderer adoption and worker closure while writer
+barriers remain held. Version 1 still requires executed release evidence. Both
+versions remain immutable and externally census-anchored; neither observation
+hashes nor an opaque window alone authenticate completion.
+
+Independent review exposed accepted substitution of Main's committed record after
+opening the window. Four regressions failed before the repair. Main now pins the
+original registration slot, binding and observed record, including descriptors
+and field values, and rechecks them after callbacks/awaits and before release.
+Window/composed checks passed 23 cases; graph checks passed 23. Journal checks
+passed 57 and related intent/plan checks passed 32. The source regression matrix
+passed 434 checks. Native SDK/relay checks passed 49 with two optional fixtures
+skipped. A failed strict TypeScript check caught three unchecked index accesses;
+explicit guards replaced them without changing test expectations. Failed build
+inputs and logs were retained.
+
+The journal/window composition uses the actual journal and composed owner classes
+with a controlled transactional database. Its renderer and worker observations
+are fixture claims. Installed-host loading, actual renderer/worker completion,
+full transport/START/terminal coordination and known inert-cancel closure remain
+separate gates. Installed Vortex and game files were not changed.
+
+The final Main source passed the real TypeScript target and its seven prerequisites,
+Rolldown build and all 52 upstream main tests. All seven selected Main Program/map
+entries matched the final graph, alongside all 25 source outputs and fifteen SDK
+pins. Eighteen unchanged renderer/preload/shared entries retained their prior proof.

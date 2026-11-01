@@ -1,0 +1,28 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/main/src/store/ReduxPersistorIPC.ts",
+  "originalSourceSHA256": "2a86c8e57e643172e8babf3474bd2e697a1cf8b3f3e3f3ea1f44934781a737e3",
+  "inputSHA256": "ef990b8d48a492bb582ca8e9bc54c19c669b2213836ac98d5224ba9c04334fae",
+  "outputSHA256": "0079084dee06bed5b96b560fe576f4e0b8734ab3363fa6c9e89af8c7adff2b5d",
+  "patchSHA256": "93466fb7d9eda396ed8e9fd4d873c7ab6735b982f57ca1a894eb4d73b4eaa343",
+  "prerequisitePatch": "native-main-executor-target.patch",
+  "prerequisitePatchSHA256": "7067e37b9fc5bdfcb232cda2d05089e2cb92c2b512e476658d8b84eeb91c65e6",
+  "requiredCompanionPatch": "native-backend-executor-terminal-window.patch",
+  "requiredCompanionPatchSHA256": "ddfa2d0ca7e06f5573d2ad00e28ab6368d52d96421cab24b382a7a192aaf61a7",
+  "requiredCompanionOutputSHA256": "ebd5f18a2f599c89733854e2bb7069000118165cc3b0d0ddebe750f2ce329a5a",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "installationPermit": false,
+  "effectsAllowed": false,
+  "nativeAdmission": false,
+  "powerLossPersistenceVerified": false,
+  "limitations": [
+    "Fixed committed-tracked-registration anchor window only; no journal, adoption, worker closure or START proof.",
+    "Existing ordinary SQL/backend/query owners remain held until a changed same-root nonnull CAS and exact post-CAS readback are known.",
+    "Unknown outcomes, reentry and source failure remain held; no refund, retry or generic SQL/anchor bypass."
+  ]
+}
