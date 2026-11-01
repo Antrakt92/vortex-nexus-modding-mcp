@@ -16,6 +16,43 @@ function fixture() {
   return{root,roots,state,api,selectors,util,native,live,timers,options:{getWindow:()=>({api:native}),timers},setTable:v=>{table=v;},run(options){return readNativePreflight(api,selectors,util,options??this.options);}};
 }
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
+
+test('missing staging tag is observed before native calls without initializing the directory',async()=>{
+ const f=fixture(),before=fs.readdirSync(f.roots.stagingPath);
+ const r=await f.run();
+ assert.deepEqual(r.staging,{available:true,tagStatus:'missing',code:'NATIVE_PREFLIGHT_STAGING_TAG_MISSING',nativeInitializationRequired:true,readinessVerified:false});
+ assert.deepEqual(fs.readdirSync(f.roots.stagingPath),before);
+});
+
+test('an existing tag is only metadata, without content reads or readiness authority',async()=>{
+ const f=fixture();fs.writeFileSync(path.join(f.roots.stagingPath,'__vortex_staging_folder'),'not-json');
+ const r=await f.run();
+ assert.deepEqual(r.staging,{available:true,tagStatus:'present',code:null,nativeInitializationRequired:null,readinessVerified:false});
+});
+
+test('tag changes while native getters run are unavailable rather than stale initialization advice',async()=>{
+ const f=fixture();f.native.updater.getStatus=()=>{fs.writeFileSync(path.join(f.roots.stagingPath,'__vortex_staging_folder'),'new');return{seq:0,snapshot:{state:{type:'idle'}}};};
+ const r=await f.run();assert.equal(r.status,'partial');
+ assert.deepEqual(r.staging,{available:false,tagStatus:'unknown',code:'NATIVE_PREFLIGHT_STAGING_TAG_CHANGED',nativeInitializationRequired:null,readinessVerified:false});
+});
+
+test('directory-shaped tag is unsafe, never missing or initialized',async()=>{
+ const f=fixture();fs.mkdirSync(path.join(f.roots.stagingPath,'__vortex_staging_folder'));
+ const r=await f.run();assert.equal(r.status,'partial');assert.equal(r.staging.code,'NATIVE_PREFLIGHT_STAGING_TAG_UNSAFE');assert.equal(r.staging.nativeInitializationRequired,null);
+});
+
+test('unreadable tag remains unknown even if a later observation reports absence',async t=>{
+ const f=fixture(),tag=path.join(f.roots.stagingPath,'__vortex_staging_folder'),original=fs.lstatSync;let calls=0;
+ t.mock.method(fs,'lstatSync',function(p,...args){if(p===tag&&++calls===1)throw Object.assign(Error('private detail'),{code:'EACCES'});return original.call(fs,p,...args);});
+ const r=await f.run();assert.equal(r.status,'partial');assert.equal(r.staging.code,'NATIVE_PREFLIGHT_STAGING_TAG_UNAVAILABLE');assert.equal(r.staging.nativeInitializationRequired,null);assert.equal(JSON.stringify(r).includes('private detail'),false);
+});
+
+test('tag symlinks and inaccessible error descriptors do not become missing',async t=>{
+ const f=fixture(),tag=path.join(f.roots.stagingPath,'__vortex_staging_folder'),original=fs.lstatSync;
+ fs.writeFileSync(tag,'own');let mode='link',reads=0;
+ t.mock.method(fs,'lstatSync',function(p,...args){if(p===tag){if(mode==='link'){const s=original.call(fs,p,...args);return Object.assign(Object.create(s),{isSymbolicLink:()=>true});}throw Object.defineProperty(Error('private'),'code',{get(){reads++;assert.fail('error getter');}});}return original.call(fs,p,...args);});
+ assert.equal((await f.run()).staging.code,'NATIVE_PREFLIGHT_STAGING_TAG_UNSAFE');mode='accessor';assert.equal((await f.run()).staging.code,'NATIVE_PREFLIGHT_STAGING_TAG_UNAVAILABLE');assert.equal(reads,0);
+});
 test('active native projection retains aliases, actual version and detached context without authority',async()=>{
  const f=fixture(),r=await f.run();assert.equal(r.status,'ok');assert.deepEqual(r.appVersion,{available:true,value:'2.9.1'});
  assert.deepEqual(r.updater,{available:true,state:'idle',sequence:7});assert.deepEqual(r.deploymentTargets.map(x=>x.typeId),['','dinput','enb']);

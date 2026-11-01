@@ -83,6 +83,12 @@ test('built extension wire: allowlist, SDK2 HTTP, legacy bridge, schemas and bro
     assert.deepEqual(native.deploymentTargets.map(row=>row.typeId),['','own_alias']);
     assert.equal(native.deploymentTargets[0].path,await fs.realpath(modelDir));
     assert.equal(native.shutdownPermit,false); assert.equal(native.sourceAdmissionVerified,false);
+    assert.equal(native.staging.tagStatus,'missing');assert.equal(native.staging.nativeInitializationRequired,true);
+    assert.equal(native.staging.readinessVerified,false);
+    await fs.writeFile(modelDir+'/__vortex_staging_folder','own-invalid-content');
+    const tagged=JSON.parse((await call('tools/call',{name:'read_native_preflight',arguments:{}})).content[0].text);
+    assert.equal(tagged.staging.tagStatus,'present');assert.equal(tagged.staging.nativeInitializationRequired,null);
+    assert.equal(tagged.staging.readinessVerified,false);
     for (const marker of ['unknown-private','private-updater-error','private.invalid']) assert.ok(!nativeResult.content[0].text.includes(marker));
     const gettersBeforeInvalid=nativeGetterCalls;
     const invalidNative=await call('tools/call',{name:'read_native_preflight',arguments:{dispatch:'anything'}});
@@ -188,6 +194,7 @@ test('built extension wire: allowlist, SDK2 HTTP, legacy bridge, schemas and bro
     const stdioNative=JSON.parse(messages.find(item=>item.id===6).result.content[0].text);
     assert.deepEqual(stdioNative.deploymentTargets.map(row=>row.typeId),['','own_alias']);
     assert.equal(stdioNative.updater.state,'idle');assert.equal(stdioNative.shutdownPermit,false);
+    assert.equal(stdioNative.staging.tagStatus,'present');assert.equal(stdioNative.staging.readinessVerified,false);
     for (const args of [['--health'], ['--call', 'list_dialogs', '{}']]) {
       const cli = spawn(process.execPath, ['--import', pathToFileURL(preload).href, bridge, ...args]);
       let stdout = '', stderr = ''; cli.stdout.on('data', data => stdout += data); cli.stderr.on('data', data => stderr += data);

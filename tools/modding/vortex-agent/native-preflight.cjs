@@ -1,5 +1,6 @@
 'use strict';
 const path = require('node:path');
+const fs = require('node:fs');
 const {types} = require('node:util');
 const {performance} = require('node:perf_hooks');
 const {context: readContext} = require('./guard.cjs');
@@ -68,6 +69,31 @@ function targets(util, c) {
 const sameContext = (a,b) => a.gameId === b.gameId && a.profileId === b.profileId
   && ROOTS.every(k => norm(a[k]) === norm(b[k]) && a.filesystemIds[k] === b.filesystemIds[k]);
 const sameTargets = (a,b) => a.length === b.length && a.every((row,i) => row.typeId === b[i].typeId && norm(row.path) === norm(b[i].path));
+const stagingUnknown = code => ({available:false,tagStatus:'unknown',code,nativeInitializationRequired:null,readinessVerified:false});
+const fileStamp = s => [s.dev,s.ino,s.size,s.mtimeNs,s.ctimeNs,s.nlink].join(':');
+function stagingTag(c) {
+  try {
+    const root = fs.lstatSync(c.stagingPath,{bigint:true});
+    if (root.isSymbolicLink() || !root.isDirectory()) return {value:stagingUnknown('NATIVE_PREFLIGHT_STAGING_TAG_UNSAFE')};
+    if (root.dev + ':' + root.ino !== c.filesystemIds.stagingPath) return {value:stagingUnknown('NATIVE_PREFLIGHT_STAGING_TAG_CHANGED')};
+    let tag, missing = false;
+    try {tag = fs.lstatSync(path.join(c.stagingPath,'__vortex_staging_folder'),{bigint:true});}
+    catch (error) {
+      const code = error !== null && typeof error === 'object' && !types.isProxy(error)
+        ? Object.getOwnPropertyDescriptor(error,'code') : undefined;
+      if (!code || !Object.hasOwn(code,'value') || code.value !== 'ENOENT') return {value:stagingUnknown('NATIVE_PREFLIGHT_STAGING_TAG_UNAVAILABLE')};
+      missing = true;
+    }
+    if (tag && (tag.isSymbolicLink() || !tag.isFile() || tag.nlink !== 1n)) return {value:stagingUnknown('NATIVE_PREFLIGHT_STAGING_TAG_UNSAFE')};
+    const after = fs.lstatSync(c.stagingPath,{bigint:true});
+    if (after.isSymbolicLink() || !after.isDirectory() || fileStamp(root) !== fileStamp(after)) return {value:stagingUnknown('NATIVE_PREFLIGHT_STAGING_TAG_CHANGED')};
+    // Native ensureStagingDirectory waits for explicit input when an existing
+    // directory lacks this tag. Existence alone proves neither ownership nor readiness.
+    return {stamp:fileStamp(root)+'|'+(missing ? 'missing' : fileStamp(tag)),value:{available:true,
+      tagStatus:missing ? 'missing' : 'present',code:missing ? 'NATIVE_PREFLIGHT_STAGING_TAG_MISSING' : null,
+      nativeInitializationRequired:missing ? true : null,readinessVerified:false}};
+  } catch {return {value:stagingUnknown('NATIVE_PREFLIGHT_STAGING_TAG_UNAVAILABLE')};}
+}
 function bounded(call, project, label, timers) {
   const now = timers.now ?? (() => performance.now()), deadline = now() + TIMEOUT_MS;
   const expired = () => now() >= deadline;
@@ -85,6 +111,7 @@ function bounded(call, project, label, timers) {
 }
 async function readNativePreflight(api, selectors, util, options = {}) {
   const initial = current(api,selectors), initialTargets = targets(util,initial);
+  const initialStaging = stagingTag(initial);
   const timers = options.timers ?? {setTimeout,clearTimeout};
   insist(typeof timers.setTimeout === 'function' && typeof timers.clearTimeout === 'function', 'NATIVE_PREFLIGHT_OPTIONS_INVALID');
   let native;
@@ -113,8 +140,11 @@ async function readNativePreflight(api, selectors, util, options = {}) {
   insist(sameContext(initial,final), 'NATIVE_PREFLIGHT_CONTEXT_CHANGED');
   const finalTargets = targets(util,final);
   insist(sameTargets(initialTargets,finalTargets), 'NATIVE_PREFLIGHT_TARGETS_CHANGED');
+  const finalStaging = stagingTag(final);
+  const staging = !initialStaging.value.available ? initialStaging.value : !finalStaging.value.available ? finalStaging.value
+    : initialStaging.stamp !== finalStaging.stamp ? stagingUnknown('NATIVE_PREFLIGHT_STAGING_TAG_CHANGED') : finalStaging.value;
   return {protocol:'vortex-agent/1',schema:'native-preflight/1',observedAtUTC:new Date().toISOString(),
-    context:final,appVersion,deploymentTargets:finalTargets,updater,snapshotAtomic:false,nativeEffects:false,
-    shutdownPermit:false,sourceAdmissionVerified:false,status:appVersion.available && updater.available ? 'ok' : 'partial'};
+    context:final,appVersion,deploymentTargets:finalTargets,updater,staging,snapshotAtomic:false,nativeEffects:false,
+    shutdownPermit:false,sourceAdmissionVerified:false,status:appVersion.available && updater.available && staging.available ? 'ok' : 'partial'};
 }
 module.exports = {TIMEOUT_MS,readNativePreflight};

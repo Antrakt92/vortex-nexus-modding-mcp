@@ -51,7 +51,7 @@ function register(server, api, options = {}) {
   add('health', {}, operations.health);
   add('read_native_preflight', {}, () => readNativePreflight(api, selectors, util,
     options.nativePreflightWindow === undefined ? {} : {getWindow: options.nativePreflightWindow}), false,
-    'Read native deployment target aliases, actual app version and allowlisted updater status from the running renderer. Partial observations stay explicit. No installation, source admission, shutdown permission or native effects.');
+    'Read native deployment targets, app version, updater status and fixed staging-tag metadata. A missing tag requires native initialization; a present tag does not prove readiness. No installation, source admission, shutdown permission or native effects.');
   add('reconcile_operation', { requestId: z.string().regex(/^[a-zA-Z0-9_-]{8,80}$/) }, operations.reconcile_operation);
   add('list_profiles', { gameId: id.optional() }, a => control.listProfiles(api, a.gameId));
   add('list_mods', { ...read, enabledOnly: z.boolean().optional(), nameFilter: id.optional() }, a => {

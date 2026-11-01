@@ -27,6 +27,12 @@ refresh its MCP discovery separately.
 - `updater`: `{available:true,state,sequence}` from its native status getter.
   Only the fixed state and sequence are returned; messages, release notes, URLs,
   release payloads and history are omitted.
+- `staging`: metadata for the fixed `__vortex_staging_folder` file. A missing tag
+  reports `nativeInitializationRequired:true`: Vortex normally waits for an
+  initialization dialog for an existing untagged folder. Use `list_dialogs` to
+  inspect actual pending dialogs; this prediction does not prove one is open.
+  A present tag leaves initialization unknown (`null`), since contents and
+  ownership are not inspected. `readinessVerified` is always `false`.
 
 The fixed native calls are `window.api.app.getVersion()` and
 `window.api.updater.getStatus()`. Each has a two-second wait budget and an explicit
@@ -45,6 +51,11 @@ static health label. Unsafe target tables refuse rather than silently omit rows.
 `status:"ok"` means the requested metadata was available and matched the final
 samples. It does not mean a lifecycle operation is approved. In particular, an
 observed `staged` updater needs review before a separately authorized shutdown.
+An observed missing staging tag can therefore accompany `status:"ok"`. An unsafe,
+unreadable or changing tag reports `tagStatus:"unknown"` and `status:"partial"`.
+The tag is sampled before and after native calls without reading its contents,
+creating files or answering dialogs. Initialization of a real staging folder
+requires its own reviewed native workflow.
 The response always states:
 
 ```json
