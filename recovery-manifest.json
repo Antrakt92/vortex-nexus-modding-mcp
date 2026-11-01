@@ -316,7 +316,7 @@
     },
     {
       "path": "docs/NATIVE-EXECUTOR-CANCELLATION.md",
-      "sha256_lf": "7c1dd9d28f00dc4ceb173f72a42cb5a7e62bd2af0d2d274894882733a912e6bd"
+      "sha256_lf": "cf255e980d70c38841ef6bb2a4508ea5d585f30965befbe079f295643296df45"
     },
     {
       "path": "docs/NATIVE-EXECUTOR-COMPLETION.md",
@@ -349,6 +349,10 @@
     {
       "path": "docs/NATIVE-HELPER-PREPARATION.md",
       "sha256_lf": "ae52753a117b8a4a56505f16d42dc99cbb035dee4f99cbbcc578268e4096e1de"
+    },
+    {
+      "path": "docs/NATIVE-INSTALL-STATUS.md",
+      "sha256_lf": "2ab106a56e7e5504125340341beb6c2c901d6e4599439fef7a633da7baecbdc0"
     },
     {
       "path": "docs/NATIVE-LEVEL-PIVOT-TRANSACTIONS.md",

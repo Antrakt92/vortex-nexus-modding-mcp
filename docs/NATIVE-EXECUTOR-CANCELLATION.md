@@ -5,9 +5,12 @@ starts. It closes its existing workers, records cancellation and releases its
 Main and Renderer reservations. The installed adapter still reports
 `installSupported:false`; these internal methods are not public MCP commands.
 
-The current graph has 122 patches over the same 25 Vortex 2.9.1 files. Source
+The current graph has 132 patches over 26 Vortex 2.9.1 files. Source
 composition, combined cancellation tests and full application compilation have
 passed. Installed-host acceptance remains unfinished.
+
+For the isolated runtime result and the remaining postexit checks, see the
+[installation checkpoint](NATIVE-INSTALL-STATUS.md).
 
 ## Protocol
 
