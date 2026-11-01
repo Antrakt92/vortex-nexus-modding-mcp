@@ -168,3 +168,35 @@ The final combined source matrix passed 497 tests without skips, including the
 component checks and the new Main/build/four-actor cases. The separate upstream
 Main suite passed 52 tests. Source actor tests use explicit SQL/process/Electron
 facades; the component READY/abort checks do not exercise extraction or copying.
+
+## Physical capsule ZIP checks
+
+`native-sdk-capsule-native.test.mjs` separately exercises the real bound staging
+SDK over new, task-owned filesystem directories. It builds a capsule with no SDK
+source directory at its runtime workspace, prepares a pending job, explicitly
+sends START, extracts a generated compressed ZIP, copies two files and verifies
+their hashes against the plan and CopyProof. Release must observe exit zero and
+all three pipe closures for both the Node relay and Python worker.
+
+A second physical case cancels after preparation without START. It checks the
+absence of target/work output after release and closure of both processes. A
+separate regression ensures an identity-probe failure cannot lose the already
+spawned child before the SDK receives it. All three checks passed without skips.
+
+Each attempt retains its capsule bytes, canonical runtime binding, request,
+helper/test/compiler/source pins, process identity and outcome under ignored
+`local-state/owned-zip-relay-tests/run-*`. Existing identity-checked fixture
+retirement is a failure-only cleanup route; it is never normal release or an
+installation permit. Successful attempts leave pending journal history intact:
+filesystem copying alone supplies no Vortex commit/adoption or terminal anchor.
+
+Use the reviewed compiler/SDK/binding inputs above, then explicitly opt in:
+
+```powershell
+$env:VORTEX_CAPSULE_NATIVE_TEST = '1'
+node --test --test-concurrency=1 tools/modding/vortex-agent/native-sdk-capsule-native.test.mjs
+```
+
+These checks create no Vortex mod record, use no installed game/staging paths and
+do not start Vortex or a game. They qualify physical SDK preparation/copy/closure,
+not the complete application installation or repeated-operation handoff.
