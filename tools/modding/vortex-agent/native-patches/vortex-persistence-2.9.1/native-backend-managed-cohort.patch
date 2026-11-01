@@ -1,0 +1,93 @@
+--- a/src/main/src/store/LevelPersist.ts
++++ b/src/main/src/store/LevelPersist.ts
+@@ -299,7 +299,10 @@
+ 
+       const alias = singleton.nextAlias();
+       const connection = await singleton.attachDatabase(persistPath, alias);
+-      return new LevelPersist(connection, alias);
++      const level = new LevelPersist(connection, alias);
++      nativeManagedRegister.call(singleton, connection, alias, level);
++      level.#mNativeManagedPool = singleton;
++      return level;
+     } catch (unknownErr) {
+       const err = unknownToError(unknownErr);
+       if (err instanceof DataInvalid) {
+@@ -339,6 +342,7 @@
+     }
+   }
+ 
++  #mNativeManagedPool: DuckDBSingleton | undefined;
+   #mConnection: DuckDBConnection;
+   #mAlias: string;
+   #mInTransaction: boolean = false;
+@@ -378,6 +382,8 @@
+       this.#mNativeWriteHold.phase = "held";
+       throw new Error("NATIVE_BACKEND_WRITE_HELD");
+     }
++    if (this.#mNativeManagedPool !== undefined)
++      nativeManagedExpose.call(this.#mNativeManagedPool, this.#mConnection, this.#mAlias);
+     // Cached Table/View/raw SQL capabilities cannot subsequently be revoked.
+     this.#mNativeRawExposed = true;
+     return this.#mConnection;
+@@ -625,10 +631,13 @@
+     this.#mNativeWriteHold = hold;
+     if (this.#mNativeWriteFailed || this.#mNativeRawExposed || this.#mNativeCloseAttempted
+         || this.#mInTransaction || this.#mNativeTransactionPending !== 0) hold.phase = "held";
++    const pool = this.#mNativeManagedPool;
++    const managedDrain = pool === undefined ? Promise.resolve()
++      : nativeManagedReserve.call(pool, this.#mConnection, this.#mAlias, this);
+     const drained = this.#mNativeActive === 0 ? Promise.resolve() : new Promise<void>((resolve) => {
+       this.#mNativeDrain = resolve;
+     });
+-    return drained.then(() => {
++    return Promise.all([drained, managedDrain]).then(() => {
+       if (hold.phase !== "pending" || this.#mNativeActive !== 0 || this.#mNativeIneligible()) {
+         hold.phase = "held";
+         throw new Error("NATIVE_BACKEND_WRITE_HELD");
+@@ -647,6 +656,8 @@
+     if (hold === undefined || owner !== hold.owner || hold.phase !== "reserved") {
+       throw new Error("NATIVE_BACKEND_WRITE_REFUSED");
+     }
++    if (this.#mNativeManagedPool !== undefined)
++      nativeManagedCheck.call(this.#mNativeManagedPool, this.#mConnection, this.#mAlias, this);
+     if(this.#mNativeUnregisteredRelease!==undefined){this.#holdUnregisteredRelease(this.#mNativeUnregisteredRelease);throw new Error("NATIVE_UNREGISTERED_RELEASE_BUSY");}
+     if (this.#mNativeRegistration !== undefined && ["claimed", "writing"].includes(this.#mNativeRegistration.phase)) throw new Error("NATIVE_REGISTRATION_BUSY");
+     if (this.#mNativeActive !== 0 || this.#mNativeIneligible()) {
+@@ -982,11 +993,15 @@
+       hold.phase = "held";
+       if (kind !== "terminal" || !this.#mInTransaction) throw new Error("NATIVE_BACKEND_WRITE_HELD");
+     }
++    const pool = this.#mNativeManagedPool;
++    const managedTicket = pool === undefined ? undefined
++      : nativeManagedEnter.call(pool, this.#mConnection, this.#mAlias, kind);
++    let managedOK = false;
+     this.#mNativeActive++;
+     if (kind === "begin" || kind === "terminal") this.#mNativeTransactionPending++;
+     if (kind === "close") this.#mNativeCloseAttempted = true;
+     try {
+-      return await operation();
++      const value = await operation(); managedOK = true; return value;
+     } catch (err) {
+       this.#mNativeWriteFailed = true;
+       if (this.#mNativeWriteHold !== undefined) this.#mNativeWriteHold.phase = "held";
+@@ -994,6 +1009,8 @@
+     } finally {
+       if (kind === "begin" || kind === "terminal") this.#mNativeTransactionPending--;
+       this.#mNativeActive--;
++      if (pool !== undefined && managedTicket !== undefined)
++        nativeManagedFinish.call(pool, managedTicket, managedOK, this.#mInTransaction);
+       if (this.#mNativeActive === 0 && this.#mNativeDrain !== undefined) {
+         const resolve = this.#mNativeDrain;
+         this.#mNativeDrain = undefined;
+@@ -1333,3 +1350,11 @@
+ const nativeRegistrationGetPool = DuckDBSingleton.getInstance;
+ 
+ export default LevelPersist;
++
++// Fixed source methods; instance/prototype replacements cannot redirect admission.
++const nativeManagedRegister = DuckDBSingleton.prototype.registerNativeManagedBackend;
++const nativeManagedExpose = DuckDBSingleton.prototype.exposeNativeManagedConnection;
++const nativeManagedReserve = DuckDBSingleton.prototype.reserveNativeManagedWriters;
++const nativeManagedCheck = DuckDBSingleton.prototype.checkNativeManagedWriters;
++const nativeManagedEnter = DuckDBSingleton.prototype.enterNativeManagedWriter;
++const nativeManagedFinish = DuckDBSingleton.prototype.finishNativeManagedWriter;

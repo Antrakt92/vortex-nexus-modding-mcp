@@ -12,7 +12,7 @@ const PACKETS = Object.freeze({
   lifecycle: path.join(HERE, 'native-patches/vortex-2.9.1'),
   persistence: path.join(HERE, 'native-patches/vortex-persistence-2.9.1'),
 });
-const SERIES_SHA256 = '83cba522b45d7662a7a11c31f31a9246b36018e24d6ff1f18961328b10880eb3';
+const SERIES_SHA256 = '0c98213c6456d2d08ce0c80ec457d25eecb50a1a85867c0a9e85422af5afe2c3';
 export const NATIVE_SOURCE_PATHS = Object.freeze([
   "src/renderer/src/extensions/mod_management/eventHandlers.ts",
   "src/renderer/src/extensions/mod_management/index.ts",
@@ -116,12 +116,12 @@ function readPacket() {
   need(sha(raw) === SERIES_SHA256, 'SERIES');
   const series = strict.parseStrictJSON(raw, {maxBytes: 96*1024, maxDepth: 8, maxTokens: 8000});
   need(series.schema === 'native-source-series/2' && series.files.length === 25
-    && series.patches.length === 122 && exact(Object.fromEntries(series.files.map(row => [row.path, true])), NATIVE_SOURCE_PATHS), 'SERIES');
+    && series.patches.length === 124 && exact(Object.fromEntries(series.files.map(row => [row.path, true])), NATIVE_SOURCE_PATHS), 'SERIES');
   const inventory = () => {
     for (const {id, directory: packet} of roots) {
       const names = series.patches.filter(row => row.packet === id)
         .flatMap(row => [row.name+'.json', row.name+'.patch']).sort();
-      need(names.length === (id === 'lifecycle' ? 68 : 176), 'SERIES');
+      need(names.length === (id === 'lifecycle' ? 68 : 180), 'SERIES');
       const directory = fs.opendirSync(packet), actual = [];
       try {
         for (let entry = directory.readSync(); entry !== null; entry = directory.readSync()) {
