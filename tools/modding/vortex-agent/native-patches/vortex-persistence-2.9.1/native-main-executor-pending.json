@@ -1,0 +1,38 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/main/src/store/mainPersistence.ts",
+  "originalSourceSHA256": "7d3e28cb829914fb092774eca3fc357645fa7ef508177d1a0e3b32eed58f05fe",
+  "inputSHA256": "cdeb90fba95101071dd1ade1cf9cd051707e652efc452599931bbcfc8225b353",
+  "outputSHA256": "b8fe62b0e8da9e149bd432d6e66a58bd226bb53c16de5b08578551a5644ac8a0",
+  "patchSHA256": "6b0cfd524ad923daff9aaf2ae7979547655dfbe228116d31938ca5aa39c17307",
+  "prerequisitePatch": "native-main-executor-genesis.patch",
+  "prerequisitePatchSHA256": "56879d2888d0b2d7956825cfbac4451c4c4986c4969077a689c48c1c527defba",
+  "requiredCompanionPatch": "native-executor-frame-owner.patch",
+  "requiredCompanionPatchSHA256": "5ce5e1484d03cb497152579d422371bfa3df176ebeae8c20d054ef668045e211",
+  "requiredCompanionOutputSHA256": "37c89a2326ff68ece390363bdef409a3d25e13ef7799c5aa38cfe4ad31450c03",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "installationPermit": false,
+  "powerLossPersistenceVerified": false,
+  "startupGateSupported": false,
+  "effectsAllowed": false,
+  "nativeAdmission": false,
+  "limitations": [
+    "Internal source-owned pending preparation only; no START, public IPC endpoint, renderer handshake or installation permit.",
+    "Pure archive bindings establish metadata consistency only; held SHA256/MD5 checks occur later in the physical worker.",
+    "Exact prior-record byte preservation is checked by actual journal reservePending; main independently checks successor digest and public binding membership.",
+    "Relay and continuation are retained in this main lifetime; uncertain failures hold all genuine owners and never cancel, refund or replay."
+  ],
+  "additionalCompanions": [
+    {
+      "packet": "persistence",
+      "name": "native-main-executor-target",
+      "patchSHA256": "7067e37b9fc5bdfcb232cda2d05089e2cb92c2b512e476658d8b84eeb91c65e6",
+      "outputSHA256": "ef990b8d48a492bb582ca8e9bc54c19c669b2213836ac98d5224ba9c04334fae"
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/renderer/src/ExtensionManager.ts",
+  "originalSourceSHA256": "5d0de2194cf413938e61a398494196af07677dc6d0d014216ba3b25b5a211b95",
+  "inputSHA256": "551ddd8fbbcc1ee1e74a87a33b3b561bf7bf9dca815756f3f96ff440e0b83b3c",
+  "outputSHA256": "d03396e968c9fe0a59512d565de4821423e98c9c32b71866a45aa862fde4c31d",
+  "patchSHA256": "fec839675e9ed434efb09bea77d33331c57fdc6d28159f9503ac99660063543f",
+  "prerequisitePatch": "native-static-manager-binding.patch",
+  "prerequisitePatchSHA256": "efd45f2c3a7354faa0c3e7aa1d30166c3e605efc908689080f84268dbea65ce7",
+  "requiredCompanionPatch": "renderer-registration-release.patch",
+  "requiredCompanionPatchSHA256": "9627e58347f3c88c016fb1165163478899901a0cf17e5e5115f8da27cc47131b",
+  "requiredCompanionOutputSHA256": "36290d8a0a158bfd87f2024461bcf6a711913841f5f94048f9b20e139a8fca69",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "installationPermit": false,
+  "powerLossPersistenceVerified": false,
+  "releaseSupported": false,
+  "limitations": [
+    "Source-owned renderer admission only; opaque owners remain in the actual ExtensionManager instance.",
+    "No IPC, main freeze, archive/paths admission, START, adoption or release is granted.",
+    "Failure preserves acquired holds; known-success slot finalization remains a later coordinated source step.",
+    "Trusted source integration and actual Redux store identity are required; no arbitrary privileged JavaScript isolation claim.",
+    "Invalidation rejects only the waiting admission observer; actual renderer load and acknowledged persistence work are never cancelled or refunded."
+  ]
+}

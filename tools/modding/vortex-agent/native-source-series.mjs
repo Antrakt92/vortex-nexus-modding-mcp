@@ -12,7 +12,7 @@ const PACKETS = Object.freeze({
   lifecycle: path.join(HERE, 'native-patches/vortex-2.9.1'),
   persistence: path.join(HERE, 'native-patches/vortex-persistence-2.9.1'),
 });
-const SERIES_SHA256 = 'e714d67f133e780daf95f5a8c6bc4df0b9b7b220c678185db3a02d9db37d2c3c';
+const SERIES_SHA256 = '7e8701d7b03edf151ab6eb9e7c3b34bcd4dfa2732569408510d79f49adb3ca00';
 export const NATIVE_SOURCE_PATHS = Object.freeze([
   "src/renderer/src/extensions/mod_management/eventHandlers.ts",
   "src/renderer/src/extensions/mod_management/index.ts",
@@ -116,12 +116,12 @@ function readPacket() {
   need(sha(raw) === SERIES_SHA256, 'SERIES');
   const series = strict.parseStrictJSON(raw, {maxBytes: 96*1024, maxDepth: 8, maxTokens: 8000});
   need(series.schema === 'native-source-series/2' && series.files.length === 25
-    && series.patches.length === 83 && exact(Object.fromEntries(series.files.map(row => [row.path, true])), NATIVE_SOURCE_PATHS), 'SERIES');
+    && series.patches.length === 87 && exact(Object.fromEntries(series.files.map(row => [row.path, true])), NATIVE_SOURCE_PATHS), 'SERIES');
   const inventory = () => {
     for (const {id, directory: packet} of roots) {
       const names = series.patches.filter(row => row.packet === id)
         .flatMap(row => [row.name+'.json', row.name+'.patch']).sort();
-      need(names.length === (id === 'lifecycle' ? 66 : 100), 'SERIES');
+      need(names.length === (id === 'lifecycle' ? 66 : 108), 'SERIES');
       const directory = fs.opendirSync(packet), actual = [];
       try {
         for (let entry = directory.readSync(); entry !== null; entry = directory.readSync()) {
@@ -153,6 +153,19 @@ function readPacket() {
         .every(key => (manifest[key] ?? null) === row[key]), 'GRAPH');
     need((manifest.requiredCompanionPacket ?? null) === (row.requiredCompanionPacket ?? null)
       && (row.requiredCompanionPacket == null || Object.hasOwn(PACKETS, row.requiredCompanionPacket)), 'GRAPH');
+    const additional = row.additionalCompanions ?? [];
+    need(Array.isArray(additional) && additional.length <= 8
+      && JSON.stringify(additional) === JSON.stringify(manifest.additionalCompanions ?? []), 'GRAPH');
+    const dependencies = new Set();
+    for (const companion of additional) {
+      need(exact(companion, ['packet', 'name', 'patchSHA256', 'outputSHA256'])
+        && typeof companion.packet === 'string' && Object.hasOwn(PACKETS, companion.packet)
+        && typeof companion.name === 'string' && /^[a-z][a-z-]{0,63}$/.test(companion.name)
+        && typeof companion.patchSHA256 === 'string' && /^[a-f0-9]{64}$/.test(companion.patchSHA256)
+        && typeof companion.outputSHA256 === 'string' && /^[a-f0-9]{64}$/.test(companion.outputSHA256), 'GRAPH');
+      const key = companion.packet + ':' + companion.name;
+      need(!dependencies.has(key), 'GRAPH'); dependencies.add(key);
+    }
     return {row, patch: decode(patchBytes)};
   });
   const verify = () => {
@@ -204,6 +217,12 @@ export function assembleNativeSources(input) {
           && companion.outputSHA256 === row.requiredCompanionOutputSHA256, 'GRAPH');
       } else need(row.requiredCompanionPatchSHA256 === null
         && row.requiredCompanionOutputSHA256 === null && row.requiredCompanionPacket == null, 'GRAPH');
+      for (const dependency of row.additionalCompanions ?? []) {
+        const companion = applied.get(dependency.name);
+        need(companion && companion.packet === dependency.packet
+          && companion.patchSHA256 === dependency.patchSHA256
+          && companion.outputSHA256 === dependency.outputSHA256, 'GRAPH');
+      }
       const source = texts.get(row.path);
       need(sha(source) === row.inputSHA256, 'PATCH');
       const output = applyExact(source, patch, row.path);

@@ -1,6 +1,6 @@
 # Assemble the reviewed Vortex source patches
 
-`native-source-series.mjs` applies the fixed sequence of 83 reviewed patches to
+`native-source-series.mjs` applies the fixed sequence of 87 reviewed patches to
 25 original files from Vortex `v2.9.1`, commit
 `c80326367cbe6d96621ad6cf4a5488ef49bac110`. It replaces manually composing separate
 patch chains before compilation. It does not change an installed application or
@@ -539,3 +539,49 @@ remain separate from Node filesystem labels.
 No Vortex application was started or replaced. Pending transition coordination,
 renderer ownership transport, terminal ownership and native host acceptance are
 still required before an installation endpoint can be enabled.
+
+## Renderer admission and pending preparation — 31 October 2026
+
+The 87-patch graph adds four source changes. The renderer acquires actual
+manager exclusion, reserves the requested target and waits for the previous
+acknowledged persistence flush before issuing an opaque admission token.
+A source-owned store listener detects profile/game changes, including a change
+away and back while an acknowledgement is pending. The main frame lease pins
+the bound window, frame and persistence source and remains held after invalidation.
+
+Main preparation checks genuine reservation ownership against the exact game
+and mod. Pure SDK validation rejects inconsistent or unsupported metadata before
+history provisioning. The private bound relay prepares without START; the journal
+reserves its pending transition, and main persists the successor anchor with
+compare-and-swap, exact acknowledgement and readback. Unknown outcomes retain
+ownership and history. Additional graph dependencies pin both the frame producer
+and the target-check producer to their exact earlier intermediate outputs.
+
+These components expose no installation endpoint. Renderer-to-main transport,
+START authorization, terminal ownership/release and installed-host acceptance
+remain separate work. A successfully joined inert cancellation retains an
+unresolved pending journal; it does not authorize retry or prove installation.
+
+### Invalidation response — 1 November 2026
+
+Independent review found that profile invalidation blocked admission but left its
+caller waiting for an unrelated readiness or flush promise. Two regressions
+failed before the repair. A private invalidation signal now ends that observer
+immediately; the underlying work remains observed and ownership is not released.
+Seventeen renderer tests pass, including late fulfillment/rejection and original
+error preservation. The repaired graph and renderer suite pass forty checks
+without skips. Another agent independently passed all seventeen renderer tests.
+
+Before this one-file repair, fresh main and renderer TypeScript/build checks and
+52 upstream main tests passed. Source maps matched 22 selected main/renderer
+Program entries; three unchanged preload/shared entries retained earlier proof.
+All 25 graph outputs and the emitted fifteen-file SDK tuple matched. Related
+source checks passed 434 cases, history/runtime checks passed 54, and the native
+SDK/relay matrix passed 44 with two optional fixtures skipped. The real owned
+Node/Python preparation persisted a pending anchor without START and joined both
+processes after an explicit inert cancellation. Its journal remains unresolved.
+
+The repaired renderer passed a fresh TypeScript check and webpack build. All
+fifteen selected renderer Program/map entries matched; unchanged main, preload,
+shared, SDK and compiler inputs retained exact prior evidence. Installed Vortex
+was not modified.

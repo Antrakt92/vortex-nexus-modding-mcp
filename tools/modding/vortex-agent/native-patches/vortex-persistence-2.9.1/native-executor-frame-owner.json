@@ -1,0 +1,25 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/main/src/store/persistenceIPC.ts",
+  "inputSHA256": "f76b01348408684f9515ff549e7d45e5ea7f2dfe6053aa992ccbf6f8ee41affd",
+  "outputSHA256": "37c89a2326ff68ece390363bdef409a3d25e13ef7799c5aa38cfe4ad31450c03",
+  "patchSHA256": "5ce5e1484d03cb497152579d422371bfa3df176ebeae8c20d054ef668045e211",
+  "prerequisitePatch": "native-main-readiness-ipc.patch",
+  "prerequisitePatchSHA256": "e6b508973519730f56ef40c1988c4b95f148831b524813c368d5bc69f0d221b1",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "effectsAllowed": false,
+  "installationPermit": false,
+  "nativeAdmission": false,
+  "powerLossPersistenceVerified": false,
+  "limitations": [
+    "One source-private actual-handler event/frame/selected-persistor lifetime owner only; no public IPC endpoint or installation permit.",
+    "Navigation, crash, destruction, source drift and genuine callback reentry retain a sticky hold without timers or release.",
+    "Trusted main handler invocation is required. Privileged in-process JavaScript can fabricate objects; this is not cryptographic Electron authentication or native-window acceptance."
+  ],
+  "originalSourceSHA256": "a570597ae00396259d1ebbb37c7fe7ddb0a01ff3dcecd231cabde1059e9723ae"
+}

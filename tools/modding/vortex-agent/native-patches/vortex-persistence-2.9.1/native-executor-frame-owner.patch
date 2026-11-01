@@ -1,0 +1,106 @@
+--- a/src/main/src/store/persistenceIPC.ts
++++ b/src/main/src/store/persistenceIPC.ts
+@@ -33,12 +33,91 @@
+ let nativeReadInvalidation: (() => void) | undefined;
+ let nativeReadActive = false;
+ 
++interface NativeExecutorFrameIdentity {
++  mainProcessId: number; webContentsId: number; rendererProcessId: number;
++  frameProcessId: number; frameRoutingId: number;
++}
++interface NativeExecutorFrameRecord {
++  token: object; phase: "reserving" | "reserved" | "held"; checking: boolean;
++  event: Electron.IpcMainInvokeEvent; owner?: WebContents; frame?: Electron.WebFrameMain;
++  persistor?: ReduxPersistorIPC; epoch: number; identity?: NativeExecutorFrameIdentity;
++}
++let nativeExecutorFrameRecord: NativeExecutorFrameRecord | undefined;
++let nativeExecutorFramePersistor: ReduxPersistorIPC | undefined;
++let nativeExecutorFramePersistorInvalid = false;
++let nativeExecutorFrameInvalidation: (() => void) | undefined;
++const nativeExecutorFrameError = (code: "OWNER" | "BUSY" | "HOLD") => new Error("NATIVE_EXECUTOR_FRAME_" + code);
++const nativeExecutorFrameHeld = (record: NativeExecutorFrameRecord) => record.phase === "held";
++function nativeExecutorFrameSample(record: NativeExecutorFrameRecord): NativeExecutorFrameIdentity {
++  const {owner, frame, persistor, event} = record;
++  if (nativeExecutorFrameRecord !== record || nativeExecutorFrameHeld(record) || owner === undefined || frame === undefined
++      || persistor === undefined || nativeExecutorFramePersistorInvalid || persistor !== nativeExecutorFramePersistor
++      || owner !== acknowledgementOwner || owner !== nativeReadWatchOwner || !nativeReadWatchReady
++      || record.epoch !== nativeReadFrameEpoch || event.sender !== owner || event.senderFrame !== frame
++      || owner.mainFrame !== frame || owner.isDestroyed() || getMainPersistor() !== persistor) throw nativeExecutorFrameError("HOLD");
++  const identity = {mainProcessId:process.pid,webContentsId:owner.id,rendererProcessId:owner.getOSProcessId(),
++    frameProcessId:frame.processId,frameRoutingId:frame.routingId};
++  for (const [key,value] of Object.entries(identity)) {
++    if (!Number.isSafeInteger(value) || value < (["mainProcessId","webContentsId","rendererProcessId"].includes(key) ? 1 : 0)) throw nativeExecutorFrameError("HOLD");
++  }
++  if (nativeExecutorFrameRecord !== record || nativeExecutorFrameHeld(record) || nativeExecutorFramePersistorInvalid
++      || record.epoch !== nativeReadFrameEpoch || !nativeReadWatchReady || owner !== acknowledgementOwner
++      || owner !== nativeReadWatchOwner || owner.isDestroyed() || owner.mainFrame !== frame
++      || event.sender !== owner || event.senderFrame !== frame || getMainPersistor() !== persistor
++      || persistor !== nativeExecutorFramePersistor) throw nativeExecutorFrameError("HOLD");
++  return identity;
++}
++function nativeExecutorFrameSame(a: NativeExecutorFrameIdentity, b: NativeExecutorFrameIdentity): boolean {
++  return (Object.keys(a) as Array<keyof NativeExecutorFrameIdentity>).every(key => a[key] === b[key]);
++}
++/** Internal transport owner only. Call from the actual trusted main IPC handler;
++ * fabricated objects in privileged main JavaScript are not Electron authentication. */
++export function reserveNativeExecutorFrame(event: Electron.IpcMainInvokeEvent): object {
++  if (nativeExecutorFrameRecord !== undefined) {
++    if (nativeExecutorFrameRecord.checking) nativeExecutorFrameRecord.phase = "held";
++    throw nativeExecutorFrameError("BUSY");
++  }
++  // Claim the one lifetime slot before the first event or native getter.
++  const record: NativeExecutorFrameRecord = {token:Object.freeze({}),phase:"reserving",checking:true,event,
++    owner:acknowledgementOwner,persistor:nativeExecutorFramePersistor,epoch:nativeReadFrameEpoch};
++  nativeExecutorFrameRecord = record;
++  nativeExecutorFrameInvalidation = () => {record.phase = "held";};
++  try {
++    if (event === null || typeof event !== "object") throw nativeExecutorFrameError("HOLD");
++    record.frame = event.senderFrame ?? undefined;
++    const first = nativeExecutorFrameSample(record), second = nativeExecutorFrameSample(record);
++    if (nativeExecutorFrameHeld(record) || !nativeExecutorFrameSame(first,second)) throw nativeExecutorFrameError("HOLD");
++    record.identity = first;record.phase = "reserved";return record.token;
++  } catch {record.phase = "held";throw nativeExecutorFrameError("HOLD");}
++  finally {record.checking = false;}
++}
++export function checkNativeExecutorFrame(token: object): void {
++  const record = nativeExecutorFrameRecord;
++  if (record === undefined || record.token !== token) throw nativeExecutorFrameError("OWNER");
++  if (record.checking) {record.phase = "held";throw nativeExecutorFrameError("HOLD");}
++  if (record.phase !== "reserved" || record.identity === undefined) throw nativeExecutorFrameError("HOLD");
++  record.checking = true;
++  try {
++    const first = nativeExecutorFrameSample(record), second = nativeExecutorFrameSample(record);
++    if (nativeExecutorFrameHeld(record) || !nativeExecutorFrameSame(record.identity,first)
++        || !nativeExecutorFrameSame(record.identity,second)) throw nativeExecutorFrameError("HOLD");
++  } catch {record.phase = "held";throw nativeExecutorFrameError("HOLD");}
++  finally {record.checking = false;}
++}
++/** Synchronous source-only failure latch; no callback, refund or release. */
++export function holdNativeExecutorFrame(token: object): void {
++  const record = nativeExecutorFrameRecord;
++  if (record === undefined || record.token !== token) throw nativeExecutorFrameError("OWNER");
++  record.phase = "held";
++}
++
+ function watchNativeReadinessOwner(owner: WebContents): void {
+   if (nativeReadWatchOwner !== undefined) return;
+   nativeReadWatchOwner = owner;
+   const invalidate = () => {
+     if (nativeReadFrameEpoch >= Number.MAX_SAFE_INTEGER) nativeReadWatchReady = false;
+     else ++nativeReadFrameEpoch;
++    nativeExecutorFrameInvalidation?.();
+     nativeReadInvalidation?.();
+   };
+   try {
+@@ -77,6 +156,11 @@
+  * @param persistor - The ReduxPersistorIPC instance to use for persistence
+  */
+ export function setupPersistenceIPC(persistor: ReduxPersistorIPC): void {
++  if (nativeExecutorFramePersistor === undefined && !nativeExecutorFramePersistorInvalid) nativeExecutorFramePersistor = persistor;
++  else if (nativeExecutorFramePersistor !== persistor) {
++    nativeExecutorFramePersistorInvalid = true;
++    nativeExecutorFrameInvalidation?.();
++  }
+   // One retained main readiness observation, one bounded active reader. Timeout
+   // abandons only this read; the actual main initialization is never cancelled.
+   let observationStarted = false;

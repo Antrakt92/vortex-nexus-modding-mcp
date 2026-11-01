@@ -1,0 +1,31 @@
+--- a/src/main/src/store/ReduxPersistorIPC.ts
++++ b/src/main/src/store/ReduxPersistorIPC.ts
+@@ -502,6 +502,28 @@
+     }
+     if (this.mNativeRegistration?.phase === "writing") throw new Error("NATIVE_REGISTRATION_BUSY");
+     this.checkNativeModPersistenceBackend(reservation);
++  }
++
++  /** Bind a private reservation to the exact target before executor preparation. */
++  public checkNativeModPersistenceTarget(owner: object, gameId: string, modId: string): void {
++    if (this === null || typeof this !== "object" || !(#mNativeExecutorAnchor in this)) {
++      throw new Error("NATIVE_EXECUTOR_TARGET_REFUSED");
++    }
++    this.#checkNativeExecutorAnchorIdle();
++    const reservation = this.mNativeModPersistenceReservation;
++    const check = () => {
++      if (reservation === undefined || this.mNativeModPersistenceReservation !== reservation
++          || reservation.owner !== owner || reservation.phase !== "reserved"
++          || reservation.gameId !== gameId || reservation.modId !== modId
++          || this.mNativeRegistration !== undefined || this.#mNativeReleaseInProgress
++          || this.mPersistenceWriteFailureObserved || this.#mNativeExecutorAnchor !== undefined) {
++        throw new Error("NATIVE_EXECUTOR_TARGET_REFUSED");
++      }
++    };
++    check();
++    if (reservation === undefined) throw new Error("NATIVE_EXECUTOR_TARGET_REFUSED");
++    this.checkNativeModPersistenceBackend(reservation);
++    check();
+   }
+ 
+   /** Retain a genuine owner's reservation after a failed external coordinator gate. */
