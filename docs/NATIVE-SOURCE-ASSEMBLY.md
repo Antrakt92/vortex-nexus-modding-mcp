@@ -1,6 +1,6 @@
 # Assemble the reviewed Vortex source patches
 
-`native-source-series.mjs` applies the fixed sequence of 97 reviewed patches to
+`native-source-series.mjs` applies the fixed sequence of 103 reviewed patches to
 25 original files from Vortex `v2.9.1`, commit
 `c80326367cbe6d96621ad6cf4a5488ef49bac110`. It replaces manually composing separate
 patch chains before compilation. It does not change an installed application or
@@ -35,7 +35,7 @@ match the pinned series. Patch application requires exact offsets and context;
 it has no fuzzy matching or hash-refresh mode.
 
 The fixed graph combines the 33-patch mod-management/transfer packet with the
-64-patch persistence packet. The latter includes renderer target admission and
+70-patch persistence packet. The latter includes renderer target admission and
 acknowledged diffs, main/preload/shared IPC, backend reservations and managed SQL
 ownership, the main build's runtime binding and startup history classification.
 Both runtime packet directories have separate closed inventories;
@@ -689,3 +689,33 @@ source graph outputs and the unchanged fifteen-file SDK tuple matched. There
 were no dependency changes, native-child executions or installed-host effects.
 Pending history and writer holds remain after source-method adoption; no public
 installation endpoint or completion/release claim is made.
+
+## Internal execution and completion — 1 November 2026
+
+The current 103-patch/25-source graph adds six patches to graph97: Shared IPC
+and Preload types, the fixed Preload receiver, Main IPC orchestration, Main
+completion and Renderer completion. The [completion contract](NATIVE-EXECUTOR-COMPLETION.md)
+connects seven source-owned stages from fresh preparation checks through copy,
+tracked registration, adoption, worker closure, terminal census/anchor settlement
+and separate Main/Renderer release. It retains unknown outcomes and one-shot
+lifetime bindings; it adds no public MCP installation endpoint.
+
+Fresh Shared, Main, Preload and Renderer TypeScript targets and builds passed,
+with all 52 upstream Main tests passing without skips. All 25 selected Program
+sources and 23 runtime map sources matched; the two Shared type sources are
+Program-only. All six runtime outputs were rebuilt. Eight configs and the lock
+were unchanged, and Electron remained cold. A new fixed fifteen-file SDK clone
+changed only the journal source, preserved the prior clone and emitted all
+fifteen runtime pins. The exact qualification receipt is
+`local-state/native-completion/recovery/qualification103/QUALIFICATION.json`,
+SHA-256 `9b172e396f568d201458ec37f2c5a24a18b0ae1bbcec789b8f3ba1463e6b14f9`.
+
+The final nine-suite completion/journal/graph matrix passed 166 tests without
+skips. A separate 31-suite affected-source matrix passed 434 tests without skips.
+These overlapping suites are reported separately, not summed as unique coverage.
+
+This is development-source and build qualification. The composed source tests
+use explicit Electron, SQL and physical-process facades; they do not establish
+installed-host loading, an actual seven-stage physical installation, power-loss
+durability or next-operation handoff. Earlier graph97 evidence above remains
+historical evidence for its own source generation.

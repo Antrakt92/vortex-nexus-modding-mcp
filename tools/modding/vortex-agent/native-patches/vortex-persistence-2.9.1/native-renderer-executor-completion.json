@@ -1,0 +1,29 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/renderer/src/ExtensionManager.ts",
+  "originalSourceSHA256": "5d0de2194cf413938e61a398494196af07677dc6d0d014216ba3b25b5a211b95",
+  "inputSHA256": "24be706d6039d2c70bba327f5452a2ec755ab406486d47f3cd452089b402b9e1",
+  "outputSHA256": "7e175ffad3e1fab1e53b0237afe77c1170c7b5a46cb554bd346bb59c7e7cc30e",
+  "patchSHA256": "d0be27dc745ed6d8a440d1a0f9db7940a3a77f040420645f273020bee70fcf8e",
+  "prerequisitePatch": "native-renderer-executor-continuation.patch",
+  "prerequisitePatchSHA256": "c0f72e9e67d7691aac5f0a4a4d0fe277df471e4cc4d7031b1eba6f8f011897bd",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "installationPermit": false,
+  "effectsAllowed": false,
+  "nativeAdmission": false,
+  "powerLossPersistenceVerified": false,
+  "releaseSupported": true,
+  "limitations": [
+    "Source-owned renderer execution receiver and synchronous finalization only; no new operation/slot reset or public extension/MCP API.",
+    "Main release DTO correlation is not independent authority; only the fixed source coordinator may deliver genuine release evidence.",
+    "Unknown outcomes keep remaining owners held; Main-released/renderer-held is not rollback or restored Main ownership."
+  ],
+  "requiredCompanionPatch": "native-executor-completion-preload.patch",
+  "requiredCompanionPatchSHA256": "73f00cf61c52d23c3ade2181d7536fd42b9a38219acbc2425c59ffaae6f8c011",
+  "requiredCompanionOutputSHA256": "01d57988d112c24780e63510f4873c677446db72bcef2d9bc9661fb546243d6a"
+}

@@ -1,0 +1,112 @@
+--- a/src/shared/src/types/ipc.ts
++++ b/src/shared/src/types/ipc.ts
+@@ -118,6 +118,84 @@
+   effectsAllowed: false;
+   installationPermit: false;
+   nativeAdmission: false;
++  powerLossPersistenceVerified: false;
++}
++
++export interface NativeExecutorRendererCompletion {
++  schema: "native-executor-renderer-completion/1";
++  transportId: string;
++  operationId: string;
++  nativeJobId: string;
++  requestSHA256: string;
++  recordSHA256: string;
++  fullRecordSHA256: string;
++  released: true;
++  effectsAllowed: false;
++  installationPermit: false;
++  trackedInstallComplete: false;
++}
++export interface NativeExecutorExecutionChallenge extends NativeExecutorTransportBinding {
++  schema: "native-executor-execution-challenge/1";
++  transportId: string;
++  executionId: string;
++  challengeId: string;
++  sequence: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
++  stage: "check-preparation-before-start" | "check-preparation-after-copy" | "adopt" | "check-adoption-before-close" | "check-adoption-after-close" | "check-adoption-before-release" | "finalize" | "hold";
++  payloadJSON: string | null;
++}
++export interface NativeExecutorExecutionResponse {
++  schema: "native-executor-execution-response/1";
++  transportId: string;
++  executionId: string;
++  challengeId: string;
++  sequence: NativeExecutorExecutionChallenge["sequence"];
++  stage: NativeExecutorExecutionChallenge["stage"];
++  requestSHA256: string;
++  requestBytesSHA256: string;
++  archiveBytesSHA256: string;
++  state: "checked" | "adopted" | "finalized" | "held" | "failed";
++  observation: NativeRendererExecutorProjection | NativeExecutorRendererAdoptionObservation | NativeExecutorRendererCompletion | null;
++  errorCode: "NATIVE_EXECUTOR_RENDERER_FAILED" | null;
++}
++export interface NativeExecutorRendererAdoptionObservation {
++  schema: "native-executor-renderer-adoption/1";
++  transportId: string;
++  operationId: string;
++  nativeJobId: string;
++  requestSHA256: string;
++  recordSHA256: string;
++  fullRecordSHA256: string;
++  effectsAllowed: false;
++  installationPermit: false;
++}
++export interface NativeExecutorExecutionInvalidation {
++  schema: "native-executor-execution-invalidated/1";
++  transportId: string;
++  executionId: string;
++  operationId: string;
++  nativeJobId: string;
++  requestSHA256: string;
++  requestBytesSHA256: string;
++  archiveBytesSHA256: string;
++  reasonCode: "NATIVE_EXECUTOR_RENDERER_FAILED";
++}
++export interface NativeExecutorExecutionResult {
++  schema: "native-executor-execution-result/1";
++  transportId: string;
++  executionId: string;
++  operationId: string;
++  nativeJobId: string;
++  requestSHA256: string;
++  requestBytesSHA256: string;
++  archiveBytesSHA256: string;
++  recordSHA256: string;
++  fullRecordSHA256: string;
++  mainReleased: true;
++  rendererReleased: true;
++  effectsAllowed: false;
++  installationPermit: false;
++  nativeAdmission: false;
++  trackedInstallComplete: false;
+   powerLossPersistenceVerified: false;
+ }
+ 
+@@ -334,6 +412,8 @@
+ 
+ /** Type containing all known channels used by renderer processes to send messages to the main process */
+ export interface RendererChannels extends RendererCallbackChannels {
++  "persist:native-executor-execution-response": (value: NativeExecutorExecutionResponse) => void;
++  "persist:native-executor-execution-invalidated": (value: NativeExecutorExecutionInvalidation) => void;
+   "persist:native-executor-response": (response: NativeExecutorResponse) => void;
+   // NOTE(erri120): Parameters must be serializable and return values must be void.
+ 
+@@ -396,6 +476,7 @@
+ 
+ /** Type containing all known channels used by the main process to send messages to a renderer process */
+ export interface MainChannels extends MainCallbackChannels {
++  "persist:native-executor-execution-challenge": (value: NativeExecutorExecutionChallenge) => void;
+   "persist:native-executor-challenge": (challenge: NativeExecutorChallenge) => void;
+   // NOTE(erri120): Parameters must be serializable and return values must be void.
+ 
+@@ -478,6 +559,7 @@
+ 
+   /** Wait for the exact submitted batches and earlier accepted persistence work. */
+   "persist:diffs-acknowledged": (batches: PersistenceBatch[]) => Promise<void>;
++  "persist:native-executor-execute": (transportId: string) => Promise<NativeExecutorExecutionResult>;
+   "persist:native-executor-prepare": (requestBytes: Uint8Array, archiveBytes: Uint8Array) => Promise<NativeExecutorPreparation>;
+   "persist:native-main-readiness": (requestId: string) => Promise<NativeMainReadinessObservation>;
+ 

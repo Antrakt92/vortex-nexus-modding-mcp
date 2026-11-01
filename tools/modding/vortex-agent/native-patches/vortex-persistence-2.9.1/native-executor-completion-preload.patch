@@ -1,0 +1,96 @@
+--- a/src/preload/src/index.ts
++++ b/src/preload/src/index.ts
+@@ -4,6 +4,9 @@
+ import { QualifiedPath } from "@vortex/shared/filesystem";
+ import type {
+   AppInitMetadata,
++  NativeExecutorExecutionChallenge,
++  NativeExecutorExecutionResponse,
++  NativeExecutorExecutionInvalidation,
+   NativeExecutorChallenge,
+   NativeExecutorResponse,
+   EnumerateEntryWire,
+@@ -80,6 +83,73 @@
+   return ()=>betterIpcRenderer.off("persist:native-executor-challenge",listener);
+ }
+ 
++let nativeExecutionReceiverBound = false;
++const nativeExecutionStages = ["check-preparation-before-start", "check-preparation-after-copy", "adopt", "check-adoption-before-close", "check-adoption-after-close", "check-adoption-before-release", "finalize", "hold"];
++function nativeExecutionChallenge(raw: unknown): NativeExecutorExecutionChallenge | undefined {
++  const d=nativeExecutorPreloadData(raw,["schema","transportId","executionId","challengeId","sequence","stage","payloadJSON","operationId","nativeJobId","requestSHA256","requestBytesSHA256","archiveBytesSHA256","gameId","modId","profileId","managerScope","rendererGeneration"]);
++  if(d===undefined||d.schema!=="native-executor-execution-challenge/1"||typeof d.executionId!=="string"||!/^execution_[a-f0-9]{32}$/.test(d.executionId)
++    ||!Number.isInteger(d.sequence)||Number(d.sequence)<1||Number(d.sequence)>8||d.stage!==nativeExecutionStages[Number(d.sequence)-1])return;
++  const old=nativeExecutorPreloadChallenge({schema:"native-executor-challenge/1",transportId:d.transportId,challengeId:d.challengeId,round:2,stage:"check",
++    operationId:d.operationId,nativeJobId:d.nativeJobId,requestSHA256:d.requestSHA256,requestBytesSHA256:d.requestBytesSHA256,archiveBytesSHA256:d.archiveBytesSHA256,
++    gameId:d.gameId,modId:d.modId,profileId:d.profileId,managerScope:d.managerScope,rendererGeneration:d.rendererGeneration});
++  if(old===undefined)return;
++  if(d.sequence===3||d.sequence===7){if(typeof d.payloadJSON!=="string"||Buffer.byteLength(d.payloadJSON,"utf8")>(d.sequence===3?32768:8192)||d.payloadJSON.length===0)return;}
++  else if(d.payloadJSON!==null)return;
++  return Object.freeze(d) as unknown as NativeExecutorExecutionChallenge;
++}
++function nativeExecutionFailure(c: NativeExecutorExecutionChallenge): NativeExecutorExecutionResponse {
++  return {schema:"native-executor-execution-response/1",transportId:c.transportId,executionId:c.executionId,challengeId:c.challengeId,sequence:c.sequence,stage:c.stage,
++    requestSHA256:c.requestSHA256,requestBytesSHA256:c.requestBytesSHA256,archiveBytesSHA256:c.archiveBytesSHA256,state:"failed",observation:null,errorCode:"NATIVE_EXECUTOR_RENDERER_FAILED"};
++}
++function nativeExecutionObservation(raw: unknown,c: NativeExecutorExecutionChallenge): NativeExecutorExecutionResponse["observation"] | undefined {
++  if(c.sequence<=2){
++    const d=nativeExecutorPreloadData(raw,["schema","gameId","modId","profileId","managerScopeId","rendererGeneration","effectsAllowed","installationPermit"]);
++    if(d===undefined||d.schema!=="native-renderer-executor-admission/1"||d.gameId!==c.gameId||d.modId!==c.modId||d.profileId!==c.profileId||d.managerScopeId!==c.managerScope||d.rendererGeneration!==c.rendererGeneration||d.effectsAllowed!==false||d.installationPermit!==false)return;
++    return Object.freeze(d) as unknown as NativeExecutorExecutionResponse["observation"];
++  }
++  const keys=["schema","transportId","operationId","nativeJobId","requestSHA256","recordSHA256","fullRecordSHA256","effectsAllowed","installationPermit"];
++  if(c.sequence===7)keys.push("released","trackedInstallComplete");
++  const d=nativeExecutorPreloadData(raw,keys);
++  if(d===undefined||d.schema!==(c.sequence===7?"native-executor-renderer-completion/1":"native-executor-renderer-adoption/1")
++    ||d.transportId!==c.transportId||d.operationId!==c.operationId||d.nativeJobId!==c.nativeJobId||d.requestSHA256!==c.requestSHA256
++    ||d.effectsAllowed!==false||d.installationPermit!==false||typeof d.recordSHA256!=="string"||!/^[a-f0-9]{64}$/.test(d.recordSHA256)
++    ||typeof d.fullRecordSHA256!=="string"||!/^[a-f0-9]{64}$/.test(d.fullRecordSHA256))return;
++  if(c.sequence===7&&(d.released!==true||d.trackedInstallComplete!==false))return;
++  return Object.freeze(d) as unknown as NativeExecutorExecutionResponse["observation"];
++}
++function nativeExecutionResponse(raw: unknown,c: NativeExecutorExecutionChallenge): NativeExecutorExecutionResponse | undefined {
++  const d=nativeExecutorPreloadData(raw,["schema","transportId","executionId","challengeId","sequence","stage","requestSHA256","requestBytesSHA256","archiveBytesSHA256","state","observation","errorCode"]);
++  if(d===undefined||d.schema!=="native-executor-execution-response/1")return;
++  for(const key of ["transportId","executionId","challengeId","sequence","stage","requestSHA256","requestBytesSHA256","archiveBytesSHA256"] as const)if(d[key]!==c[key])return;
++  if(d.state==="failed")return d.observation===null&&d.errorCode==="NATIVE_EXECUTOR_RENDERER_FAILED"?nativeExecutionFailure(c):undefined;
++  const state=c.sequence===8?"held":c.sequence===7?"finalized":c.sequence===3?"adopted":"checked";
++  if(d.state!==state||d.errorCode!==null)return;
++  if(c.sequence===8)return d.observation===null?{...nativeExecutionFailure(c),state:"held",errorCode:null}:undefined;
++  const observation=nativeExecutionObservation(d.observation,c);if(observation===undefined)return;
++  return {...nativeExecutionFailure(c),state,observation,errorCode:null};
++}
++function nativeExecutionRegisterReceiver(handler: (challenge: NativeExecutorExecutionChallenge)=>Promise<NativeExecutorExecutionResponse>): ()=>void {
++  if(typeof handler!=="function"||nativeExecutorPreloadTypes.isProxy(handler)||nativeExecutionReceiverBound)throw new Error("NATIVE_EXECUTOR_RECEIVER_REFUSED");
++  nativeExecutionReceiverBound=true;
++  const listener=(_event:unknown,raw:unknown)=>{
++    const c=nativeExecutionChallenge(raw);if(c===undefined)return;
++    const send=(raw:unknown)=>betterIpcRenderer.send("persist:native-executor-execution-response",nativeExecutionResponse(raw,c)??nativeExecutionFailure(c));
++    try{const flight=handler(c);
++      if(!nativeExecutorPreloadTypes.isPromise(flight)||nativeExecutorPreloadTypes.isProxy(flight)){send(nativeExecutionFailure(c));return;}
++      void Promise.prototype.then.call(flight,send,()=>send(nativeExecutionFailure(c))).catch(()=>{});
++    }catch{try{send(nativeExecutionFailure(c));}catch{/* Main remains held on unknown delivery. */}}
++  };
++  betterIpcRenderer.on("persist:native-executor-execution-challenge",listener);
++  return ()=>betterIpcRenderer.off("persist:native-executor-execution-challenge",listener);
++}
++function nativeExecutionInvalidate(raw: NativeExecutorExecutionInvalidation): void {
++  const d=nativeExecutorPreloadData(raw,["schema","transportId","executionId","operationId","nativeJobId","requestSHA256","requestBytesSHA256","archiveBytesSHA256","reasonCode"]);
++  if(d===undefined||d.schema!=="native-executor-execution-invalidated/1"||d.reasonCode!=="NATIVE_EXECUTOR_RENDERER_FAILED")throw new Error("NATIVE_EXECUTOR_RENDERER_FAILED");
++  for(const [key,prefix] of [["transportId","transport"],["executionId","execution"],["operationId","op"],["nativeJobId","exec"]])if(key===undefined||prefix===undefined||typeof d[key]!=="string"||!new RegExp("^"+prefix+"_[a-f0-9]{32}$").test(d[key]))throw new Error("NATIVE_EXECUTOR_RENDERER_FAILED");
++  for(const key of ["requestSHA256","requestBytesSHA256","archiveBytesSHA256"])if(typeof d[key]!=="string"||!/^[a-f0-9]{64}$/.test(d[key]))throw new Error("NATIVE_EXECUTOR_RENDERER_FAILED");
++  betterIpcRenderer.send("persist:native-executor-execution-invalidated",Object.freeze(d) as unknown as NativeExecutorExecutionInvalidation);
++}
++
+ try {
+   expose("versions", {
+     chromium: process.versions.chrome,
+@@ -104,6 +174,9 @@
+     },
+ 
+     persist: {
++      executeNativeExecutor: (transportId) => betterIpcRenderer.invoke("persist:native-executor-execute", transportId),
++      onExecutorExecutionChallenge: nativeExecutionRegisterReceiver,
++      invalidateNativeExecutorExecution: nativeExecutionInvalidate,
+       prepareNativeExecutor: (requestBytes, archiveBytes) =>
+         betterIpcRenderer.invoke("persist:native-executor-prepare", requestBytes, archiveBytes),
+       onExecutorChallenge: nativeExecutorRegisterReceiver,

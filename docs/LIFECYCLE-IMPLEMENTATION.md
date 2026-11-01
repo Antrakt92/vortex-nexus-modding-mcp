@@ -67,6 +67,23 @@ The current bottleneck evidence and architectural constraints are in
 [Lifecycle performance](LIFECYCLE-PERFORMANCE.md). This checklist does not replace
 the [agent workflow](AGENT-WORKFLOW.md) or task-specific native admission.
 
+## Current internal executor completion — 1 November 2026
+
+The [103-patch/25-source assembly](NATIVE-SOURCE-ASSEMBLY.md) now connects the
+[seven-stage completion route](NATIVE-EXECUTOR-COMPLETION.md). Actual source owners
+coordinate preparation checks, copy/registration/adoption, worker closure,
+terminal census/anchor settlement, Main release and synchronous Renderer
+finalization. Main may already be released while Renderer remains held after a
+late context or finalization failure; this is retained evidence, not a rollback
+or retry signal. Consumed bindings and one-shot operation slots remain retained.
+
+All four projects' TypeScript targets and builds and 52 upstream Main tests
+passed for graph103. This qualifies the isolated source/build generation, with
+25 selected Program members and 23 runtime maps. Source composition uses explicit
+SQL, Electron and physical-process facades. Installed loading, the actual physical
+seven-stage operation and verified next-operation handoff remain separate gates.
+The dated stage evidence below retains its original scope.
+
 ## Stage 1 verification — 30 October 2026
 
 The [own-local binder](OWN-LOCAL-BINDER.md) validates the entire archive/package

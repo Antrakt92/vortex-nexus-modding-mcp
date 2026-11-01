@@ -1,0 +1,308 @@
+--- a/src/renderer/src/ExtensionManager.ts
++++ b/src/renderer/src/ExtensionManager.ts
+@@ -9,7 +9,7 @@
+ import type { DiffOperation } from "@vortex/shared/ipc";
+ import { types as nativeReadinessTypes } from "util";
+ import { createHash as nativeExecutorTransportHash } from "crypto";
+-import type { NativeExecutorChallenge, NativeExecutorResponse, NativeExecutorPreparation } from "@vortex/shared/ipc";
++import type { NativeExecutorChallenge, NativeExecutorResponse, NativeExecutorPreparation, NativeExecutorExecutionChallenge, NativeExecutorExecutionResponse, NativeExecutorExecutionInvalidation, NativeExecutorExecutionResult, NativeExecutorRendererCompletion } from "@vortex/shared/ipc";
+ import { performance as nativeReadinessClock } from "perf_hooks";
+ import type { NativeMainReadinessObservation } from "@vortex/shared/ipc";
+ import type InstallManager from "./extensions/mod_management/InstallManager";
+@@ -748,7 +748,7 @@
+   contextReading: boolean;
+   readyOwner?: object;
+   manager?: InstallManager;
+-  methods?: {prototype: object; reserve: PropertyDescriptor; check: PropertyDescriptor; describe: PropertyDescriptor; releasePrepare: PropertyDescriptor; releaseCheck: PropertyDescriptor};
++  methods?: {prototype: object; reserve: PropertyDescriptor; check: PropertyDescriptor; describe: PropertyDescriptor; releasePrepare: PropertyDescriptor; releaseCheck: PropertyDescriptor; releaseFinalize: PropertyDescriptor};
+   managerOwner?: object;
+   targetOwner?: object;
+   flushOwner?: object;
+@@ -764,6 +764,10 @@
+   prepare: (request: Uint8Array, archive: Uint8Array) => Promise<NativeExecutorPreparation>;
+   receiver: (handler: (challenge: NativeExecutorChallenge) => Promise<NativeExecutorResponse>) => () => void;
+   unsubscribe?: () => void;
++  execute?: (transportId: string) => Promise<NativeExecutorExecutionResult>;
++  executionReceiver?: (handler: (challenge: NativeExecutorExecutionChallenge) => Promise<NativeExecutorExecutionResponse>) => () => void;
++  executionInvalidate?: (value: NativeExecutorExecutionInvalidation) => void;
++  executionUnsubscribe?: () => void;
+   acquire: ExtensionManager["acquireNativeRendererExecutorAdmission"];
+   check: ExtensionManager["checkNativeRendererExecutorAdmission"];
+   project: ExtensionManager["getNativeRendererExecutorAdmissionProjection"];
+@@ -794,11 +798,182 @@
+ }
+ interface NativeExecutorRendererAdoption {
+   request: NativeExecutorRendererRequest; admission: NativeRendererExecutorAdmission; phase: "preparing" | "prepared" | "held";
+-  checking: boolean; manager?: InstallManager; prototype?: object; prepare?: PropertyDescriptor; check?: PropertyDescriptor;
++  checking: boolean; manager?: InstallManager; prototype?: object; prepare?: PropertyDescriptor; check?: PropertyDescriptor; finalize?: PropertyDescriptor;
+   releaseTicket?: object; observedJSON?: string; observation?: Readonly<NativeExecutorRendererAdoptionObservation>;
+ }
+ 
++interface NativeRendererExecution {
++  request: NativeExecutorRendererRequest; phase: "running" | "finalized" | "completed" | "held";
++  executionId?: string; sequence: number; busy: boolean; notified: boolean; primarySet: boolean; primary: unknown;
++  challenges: Set<string>; result?: Readonly<NativeExecutorExecutionResult>;
++}
++interface NativeRendererCompletion {
++  request: NativeExecutorRendererRequest; adoption: NativeExecutorRendererAdoption;
++  phase: "finalizing" | "finalized" | "held"; observation?: Readonly<NativeExecutorRendererCompletion>;
++}
++
+ class ExtensionManager {
++  #mNativeExecution: NativeRendererExecution | undefined;
++  #mNativeCompletion: NativeRendererCompletion | undefined;
++
++  #nativeExecutorCompletionActive(): boolean { return this.#mNativeCompletion?.phase === "finalizing"; }
++  #nativeExecutorCompletionHeld(record: NativeRendererCompletion): boolean { return record.phase === "held"; }
++
++  #holdNativeCompletion(record: NativeRendererCompletion): void {
++    if (record.phase === "finalized") return;
++    record.phase = "held";
++    this.#holdNativeExecutorAdoption(record.adoption);
++  }
++
++  public finalizeNativeExecutorTransportAdoption(transportId: string, mainReleaseBytes: Uint8Array): Readonly<NativeExecutorRendererCompletion> {
++    if (this === null || typeof this !== "object" || nativeReadinessTypes.isProxy(this) || !(#mNativeCompletion in this)) throw new Error("NATIVE_EXECUTOR_RENDERER_FAILED");
++    const request = this.#nativeExecutorAdoptionRequest(transportId), adoption = this.#mNativeExecutorAdoption;
++    if (this.#mNativeCompletion !== undefined) {
++      this.#holdNativeCompletion(this.#mNativeCompletion); throw this.#nativeTransportError();
++    }
++    if (adoption === undefined || adoption.request !== request) { this.#holdNativeTransport(request); throw this.#nativeTransportError(); }
++    const completion: NativeRendererCompletion = {request, adoption, phase: "finalizing"};
++    this.#mNativeCompletion = completion;
++    try {
++      const copy = this.#nativeTransportCopy(mainReleaseBytes, 8192), raw: unknown = JSON.parse(Buffer.from(copy).toString("utf8"));
++      const fields = ["schema", "operationId", "nativeJobId", "requestSHA256", "recordSHA256", "fullRecordSHA256", "released", "consumedIDsRetained", "durableConsumedIDsVerified", "effectsAllowed", "installationPermit", "trackedInstallComplete"];
++      const receipt = this.#nativeTransportData(raw, fields);
++      if (!Buffer.from(JSON.stringify(receipt), "utf8").equals(Buffer.from(copy))) throw this.#nativeTransportError();
++      const observed = adoption.observation, binding = request.binding, admission = adoption.admission;
++      if (observed === undefined || binding === undefined || receipt.schema !== "native-registration-release-observed/1"
++          || !["operationId", "nativeJobId", "requestSHA256", "recordSHA256", "fullRecordSHA256"].every(key => receipt[key] === observed[key as keyof NativeExecutorRendererAdoptionObservation])
++          || receipt.released !== true || receipt.consumedIDsRetained !== true || receipt.durableConsumedIDsVerified !== false
++          || receipt.effectsAllowed !== false || receipt.installationPermit !== false || receipt.trackedInstallComplete !== false) throw this.#nativeTransportError();
++      this.#checkNativeExecutorAdoption(adoption, false, true);
++      const manager = adoption.manager, ticket = adoption.releaseTicket, methods = admission.methods;
++      const unsubscribe = admission.unsubscribe, store = admission.store, getState = admission.storeDescriptor;
++      if (manager === undefined || ticket === undefined || methods === undefined || typeof unsubscribe !== "function"
++          || nativeReadinessTypes.isProxy(unsubscribe) || store === undefined || getState === undefined) throw this.#nativeTransportError();
++      const result: Readonly<NativeExecutorRendererCompletion> = Object.freeze({schema: "native-executor-renderer-completion/1", transportId,
++        operationId: observed.operationId, nativeJobId: observed.nativeJobId, requestSHA256: observed.requestSHA256,
++        recordSHA256: observed.recordSHA256, fullRecordSHA256: observed.fullRecordSHA256, released: true,
++        effectsAllowed: false, installationPermit: false, trackedInstallComplete: false});
++      const before: unknown = Reflect.apply(getState.value, store, []);
++      this.#checkNativeExecutorAdoption(adoption, false, true);
++      // Invoke only the retained Redux unsubscriber while every local gate is
++      // closed. Reentry, a throw or changed state refuses before finalization.
++      Reflect.apply(unsubscribe, undefined, []);
++      if (Reflect.apply(getState.value, store, []) !== before || this.#nativeExecutorCompletionHeld(completion)) throw this.#nativeTransportError();
++      this.#checkNativeExecutorAdoption(adoption, false, true);
++      if (this.#mNativeCompletion !== completion || this.#nativeExecutorCompletionHeld(completion)) throw this.#nativeTransportError();
++      // This actual manager method arms and finishes synchronously. No armed
++      // child finalizer crosses an await; no old owner check follows its clear.
++      Reflect.apply(methods.releaseFinalize.value, manager, [ticket]);
++      completion.observation = result;
++      completion.phase = "finalized";
++      return result;
++    } catch (primary) { this.#holdNativeCompletion(completion); throw primary; }
++  }
++
++  #holdNativeExecution(record: NativeRendererExecution, primary?: unknown, retainPrimary = false): void {
++    if (record.phase === "completed" || this.#mNativeCompletion?.phase === "finalized") return;
++    record.phase = "held";
++    if (retainPrimary && !record.primarySet) { record.primarySet = true; record.primary = primary; }
++    this.#holdNativeTransport(record.request);
++    const binding = record.request.binding, invalidate = record.request.route.executionInvalidate;
++    if (record.notified || record.executionId === undefined || binding === undefined || invalidate === undefined) return;
++    record.notified = true;
++    const value: NativeExecutorExecutionInvalidation = Object.freeze({schema: "native-executor-execution-invalidated/1",
++      transportId: binding.transportId, executionId: record.executionId, operationId: binding.operationId, nativeJobId: binding.nativeJobId,
++      requestSHA256: binding.requestSHA256, requestBytesSHA256: binding.requestBytesSHA256, archiveBytesSHA256: binding.archiveBytesSHA256,
++      reasonCode: "NATIVE_EXECUTOR_RENDERER_FAILED"});
++    try { Reflect.apply(invalidate, record.request.route.persist, [value]); } catch { /* Notification loss never refunds ownership. */ }
++  }
++
++  #nativeExecutorExecutionChallenge(value: unknown): NativeExecutorExecutionChallenge {
++    const keys = ["schema", "transportId", "executionId", "challengeId", "sequence", "stage", "payloadJSON", "operationId", "nativeJobId", "requestSHA256", "requestBytesSHA256", "archiveBytesSHA256", "gameId", "modId", "profileId", "managerScope", "rendererGeneration"];
++    const row = this.#nativeTransportData(value, keys), sequence = row.sequence;
++    const stages = ["check-preparation-before-start", "check-preparation-after-copy", "adopt", "check-adoption-before-close", "check-adoption-after-close", "check-adoption-before-release", "finalize", "hold"];
++    if (row.schema !== "native-executor-execution-challenge/1" || typeof sequence !== "number" || !Number.isInteger(sequence) || sequence < 1 || sequence > 8
++        || row.stage !== stages[sequence - 1] || typeof row.executionId !== "string" || !/^execution_[a-f0-9]{32}$/.test(row.executionId)
++        || typeof row.challengeId !== "string" || !/^challenge_[a-f0-9]{32}$/.test(row.challengeId)) throw this.#nativeTransportError();
++    if (sequence === 3 || sequence === 7) {
++      if (typeof row.payloadJSON !== "string" || Buffer.byteLength(row.payloadJSON) < 1 || Buffer.byteLength(row.payloadJSON) > (sequence === 3 ? 32768 : 8192)) throw this.#nativeTransportError();
++    } else if (row.payloadJSON !== null) throw this.#nativeTransportError();
++    const binding = this.#nativeTransportChallenge({schema: "native-executor-challenge/1", transportId: row.transportId, challengeId: row.challengeId,
++      round: 1, stage: "acquire", requestSHA256: row.requestSHA256, requestBytesSHA256: row.requestBytesSHA256, archiveBytesSHA256: row.archiveBytesSHA256,
++      operationId: row.operationId, nativeJobId: row.nativeJobId, gameId: row.gameId, modId: row.modId, profileId: row.profileId,
++      managerScope: row.managerScope, rendererGeneration: row.rendererGeneration});
++    void binding; // Existing scalar domains only; no old preparation nonce/round is consumed.
++    return Object.freeze({...row}) as unknown as NativeExecutorExecutionChallenge;
++  }
++
++  async #receiveNativeExecution(route: NativeExecutorRendererTransport, raw: unknown): Promise<NativeExecutorExecutionResponse> {
++    const challenge = this.#nativeExecutorExecutionChallenge(raw), record = this.#mNativeExecution, request = this.#mNativeExecutorRequest;
++    const response = (state: NativeExecutorExecutionResponse["state"], observation: NativeExecutorExecutionResponse["observation"] = null): NativeExecutorExecutionResponse =>
++      Object.freeze({schema: "native-executor-execution-response/1", transportId: challenge.transportId, executionId: challenge.executionId,
++        challengeId: challenge.challengeId, sequence: challenge.sequence, stage: challenge.stage, requestSHA256: challenge.requestSHA256,
++        requestBytesSHA256: challenge.requestBytesSHA256, archiveBytesSHA256: challenge.archiveBytesSHA256,
++        state, observation, errorCode: state === "failed" ? "NATIVE_EXECUTOR_RENDERER_FAILED" : null});
++    if (record === undefined || request === undefined || record.request !== request || request.route !== route || request.binding === undefined) return response("failed");
++    const binding = request.binding;
++    const keys = ["transportId", "operationId", "nativeJobId", "requestSHA256", "requestBytesSHA256", "archiveBytesSHA256", "gameId", "modId", "profileId", "managerScope", "rendererGeneration"] as const;
++    if (keys.some(k => challenge[k] !== binding[k]) || (record.executionId !== undefined && record.executionId !== challenge.executionId)) return response("failed");
++    try {
++      if (record.phase === "completed" || record.phase === "finalized") return response("failed");
++      if (record.executionId === undefined) { if (challenge.sequence !== 1) return response("failed"); record.executionId = challenge.executionId; }
++      if (challenge.sequence === 8) {
++        if (record.sequence === 8 || record.challenges.has(challenge.challengeId)) return response("failed");
++        record.challenges.add(challenge.challengeId); record.sequence = 8; this.#holdNativeExecution(record); return response("held");
++      }
++      if (record.phase !== "running" || record.busy || record.challenges.has(challenge.challengeId) || request.challenges.has(challenge.challengeId)
++          || challenge.sequence !== record.sequence + 1) throw this.#nativeTransportError();
++      record.busy = true; record.challenges.add(challenge.challengeId);
++      this.#checkNativeTransport(route, request);
++      let observation: NativeExecutorExecutionResponse["observation"];
++      if (challenge.sequence <= 2) observation = this.checkNativeExecutorTransportPreparation(binding.transportId);
++      else if (challenge.sequence === 3) {
++        if (challenge.payloadJSON === null) throw this.#nativeTransportError();
++        observation = this.prepareNativeExecutorTransportAdoption(binding.transportId, Buffer.from(challenge.payloadJSON, "utf8"));
++      } else if (challenge.sequence < 7) observation = this.checkNativeExecutorTransportAdoption(binding.transportId);
++      else {
++        if (challenge.payloadJSON === null) throw this.#nativeTransportError();
++        observation = this.finalizeNativeExecutorTransportAdoption(binding.transportId, Buffer.from(challenge.payloadJSON, "utf8"));
++        record.sequence = 7; record.phase = "finalized"; return response("finalized", observation);
++      }
++      this.#checkNativeTransport(route, request);
++      if (record.phase !== "running") throw this.#nativeTransportError();
++      record.sequence = challenge.sequence;
++      return response(challenge.sequence === 3 ? "adopted" : "checked", observation);
++    } catch (primary) { this.#holdNativeExecution(record, primary, true); return response("failed"); }
++    finally { record.busy = false; }
++  }
++
++  public async executeNativeExecutor(): Promise<NativeExecutorExecutionResult> {
++    if (this === null || typeof this !== "object" || nativeReadinessTypes.isProxy(this) || !(#mNativeExecution in this)) throw new Error("NATIVE_EXECUTOR_RENDERER_FAILED");
++    if (this.#mNativeExecution !== undefined) { this.#holdNativeExecution(this.#mNativeExecution); throw this.#nativeTransportError(); }
++    const request = this.#mNativeExecutorRequest;
++    if (request === undefined || request.binding === undefined) throw this.#nativeTransportError();
++    const record: NativeRendererExecution = {request, phase: "running", sequence: 0, busy: false, notified: false, primarySet: false, primary: undefined, challenges: new Set()};
++    this.#mNativeExecution = record;
++    try {
++      this.checkNativeExecutorTransportPreparation(request.binding.transportId);
++      const execute = request.route.execute;
++      if (execute === undefined || request.admission === undefined) throw this.#nativeTransportError();
++      // The actual admission's sticky ABA signal is observed before Main can
++      // begin COPY/SQL. It carries negative information only, once per execution.
++      void Promise.prototype.then.call(request.admission.invalidated, () => this.#holdNativeExecution(record), () => this.#holdNativeExecution(record)).catch(() => {});
++      const flight: unknown = Reflect.apply(execute, request.route.persist, [request.binding.transportId]);
++      if (!nativeReadinessTypes.isPromise(flight) || nativeReadinessTypes.isProxy(flight)) throw this.#nativeTransportError();
++      const result: unknown = await new Promise((resolve, reject) => { void Promise.prototype.then.call(flight, resolve, reject).catch(reject); });
++      const keys = ["schema", "transportId", "executionId", "operationId", "nativeJobId", "requestSHA256", "requestBytesSHA256", "archiveBytesSHA256", "recordSHA256", "fullRecordSHA256", "mainReleased", "rendererReleased", "effectsAllowed", "installationPermit", "nativeAdmission", "trackedInstallComplete", "powerLossPersistenceVerified"];
++      const data = this.#nativeTransportData(result, keys), binding = request.binding, completion = this.#mNativeCompletion;
++      if (record.phase !== "finalized" || completion === undefined || completion.phase !== "finalized" || completion.request !== request || completion.observation === undefined
++          || data.schema !== "native-executor-execution-result/1" || data.executionId !== record.executionId || data.mainReleased !== true || data.rendererReleased !== true
++          || data.effectsAllowed !== false || data.installationPermit !== false || data.nativeAdmission !== false || data.trackedInstallComplete !== false || data.powerLossPersistenceVerified !== false
++          || !["transportId", "operationId", "nativeJobId", "requestSHA256", "requestBytesSHA256", "archiveBytesSHA256"].every(k => data[k] === binding[k as keyof NativeExecutorChallenge])
++          || data.recordSHA256 !== completion.observation.recordSHA256 || data.fullRecordSHA256 !== completion.observation.fullRecordSHA256) throw this.#nativeTransportError();
++      const observation = Object.freeze({...data}) as unknown as NativeExecutorExecutionResult;
++      record.result = observation; record.phase = "completed"; return observation;
++    } catch (primary) { this.#holdNativeExecution(record, primary, true); throw record.primarySet ? record.primary : primary; }
++  }
++
++
+   #mNativeExecutorAdoption: NativeExecutorRendererAdoption | undefined;
+ 
+   #nativeExecutorAdoptionRequest(transportId: string): NativeExecutorRendererRequest {
+@@ -824,10 +999,11 @@
+           || nativeReadinessTypes.isProxy(descriptor.value)) throw this.#nativeTransportError();
+       return Object.freeze({...descriptor});
+     };
+-    return {prototype, prepare: read("prepareNativeRegistrationRelease"), check: read("checkNativeRegistrationRelease")};
+-  }
+-
+-  #checkNativeExecutorAdoption(record: NativeExecutorRendererAdoption, preparing = false): void {
++    return {prototype, prepare: read("prepareNativeRegistrationRelease"), check: read("checkNativeRegistrationRelease"), finalize: read("finalizeNativeRegistrationRelease")};
++  }
++
++  #checkNativeExecutorAdoption(record: NativeExecutorRendererAdoption, preparing = false, completing = false): void {
++    if (!completing && this.#nativeExecutorCompletionActive()) { this.#holdNativeExecutorAdoption(record); throw this.#nativeTransportError(); }
+     if (record.checking) { this.#holdNativeExecutorAdoption(record); throw this.#nativeTransportError(); }
+     record.checking = true;
+     try {
+@@ -843,9 +1019,10 @@
+           || admission.load !== record.request.route.load || admission.store !== record.request.route.load.store) throw this.#nativeTransportError();
+       if (record.manager !== undefined) {
+         const methods = this.#nativeExecutorReleaseMethods(manager);
+-        if (record.manager !== manager || record.prototype !== methods.prototype || record.prepare === undefined || record.check === undefined
++        if (record.manager !== manager || record.prototype !== methods.prototype || record.prepare === undefined || record.check === undefined || record.finalize === undefined
+             || !this.#nativeExecutorSameDescriptor(record.prepare, methods.prepare)
+-            || !this.#nativeExecutorSameDescriptor(record.check, methods.check)) throw this.#nativeTransportError();
++            || !this.#nativeExecutorSameDescriptor(record.check, methods.check)
++            || !this.#nativeExecutorSameDescriptor(record.finalize, methods.finalize)) throw this.#nativeTransportError();
+         if (record.releaseTicket !== undefined) Reflect.apply(record.check.value, manager, [record.releaseTicket]);
+       }
+       if (!preparing && (record.releaseTicket === undefined || record.observedJSON === undefined || record.observation === undefined)) throw this.#nativeTransportError();
+@@ -924,7 +1101,7 @@
+       if (methods === undefined) throw this.#nativeTransportError();
+       // These methods were captured when this actual manager first entered
+       // admission, before reserve/check/describe callbacks could replace them.
+-      record.manager = manager; record.prototype = methods.prototype; record.prepare = methods.releasePrepare; record.check = methods.releaseCheck;
++      record.manager = manager; record.prototype = methods.prototype; record.prepare = methods.releasePrepare; record.check = methods.releaseCheck; record.finalize = methods.releaseFinalize;
+       record.observedJSON = observed.text;
+       this.#checkNativeExecutorAdoption(record, true);
+       nativeExecutorAdopt(rootOwner, flushOwner, observed.text);
+@@ -981,6 +1158,9 @@
+       this.checkNativeRendererLoadAttempt(route.load);
+       if (window.api.persist !== route.persist || this.#nativeTransportMethod(route.persist, "prepareNativeExecutor") !== route.prepare
+           || this.#nativeTransportMethod(route.persist, "onExecutorChallenge") !== route.receiver
++          || this.#nativeTransportMethod(route.persist, "executeNativeExecutor") !== route.execute
++          || this.#nativeTransportMethod(route.persist, "onExecutorExecutionChallenge") !== route.executionReceiver
++          || this.#nativeTransportMethod(route.persist, "invalidateNativeExecutorExecution") !== route.executionInvalidate
+           || Object.hasOwn(this, "acquireNativeRendererExecutorAdmission") || Object.hasOwn(this, "checkNativeRendererExecutorAdmission")
+           || Object.hasOwn(this, "getNativeRendererExecutorAdmissionProjection")
+           || ExtensionManager.prototype.acquireNativeRendererExecutorAdmission !== route.acquire
+@@ -1005,9 +1185,15 @@
+       route.persist = persist;
+       route.prepare = this.#nativeTransportMethod(persist, "prepareNativeExecutor") as NativeExecutorRendererTransport["prepare"];
+       route.receiver = this.#nativeTransportMethod(persist, "onExecutorChallenge") as NativeExecutorRendererTransport["receiver"];
++      route.execute = this.#nativeTransportMethod(persist, "executeNativeExecutor") as NonNullable<NativeExecutorRendererTransport["execute"]>;
++      route.executionReceiver = this.#nativeTransportMethod(persist, "onExecutorExecutionChallenge") as NonNullable<NativeExecutorRendererTransport["executionReceiver"]>;
++      route.executionInvalidate = this.#nativeTransportMethod(persist, "invalidateNativeExecutorExecution") as NonNullable<NativeExecutorRendererTransport["executionInvalidate"]>;
+       const unsubscribe: unknown = Reflect.apply(route.receiver, persist, [(challenge: NativeExecutorChallenge) => this.#receiveNativeExecutorChallenge(route, challenge)]);
+       if (typeof unsubscribe !== "function" || nativeReadinessTypes.isProxy(unsubscribe)) throw this.#nativeTransportError();
+       route.unsubscribe = unsubscribe as () => void;
++      const executionUnsubscribe: unknown = Reflect.apply(route.executionReceiver, persist, [(challenge: NativeExecutorExecutionChallenge) => this.#receiveNativeExecution(route, challenge)]);
++      if (typeof executionUnsubscribe !== "function" || nativeReadinessTypes.isProxy(executionUnsubscribe)) throw this.#nativeTransportError();
++      route.executionUnsubscribe = executionUnsubscribe as () => void;
+       route.registering = false;
+       this.#checkNativeTransport(route);
+     } catch { this.#holdNativeTransport(this.#mNativeExecutorRequest); this.holdNativeRendererLoad(load); }
+@@ -1189,7 +1375,7 @@
+           || nativeReadinessTypes.isProxy(descriptor.value)) throw this.#nativeExecutorError();
+       return Object.freeze({...descriptor});
+     };
+-    return {prototype, reserve: read("reserveNativeInstallExclusion"), check: read("checkNativeInstallExclusion"), describe: read("getNativeInstallExclusion"), releasePrepare: read("prepareNativeRegistrationRelease"), releaseCheck: read("checkNativeRegistrationRelease")};
++    return {prototype, reserve: read("reserveNativeInstallExclusion"), check: read("checkNativeInstallExclusion"), describe: read("getNativeInstallExclusion"), releasePrepare: read("prepareNativeRegistrationRelease"), releaseCheck: read("checkNativeRegistrationRelease"), releaseFinalize: read("finalizeNativeRegistrationRelease")};
+   }
+ 
+   #nativeExecutorProfile(attempt: NativeRendererExecutorAdmission): void {
+@@ -1236,7 +1422,8 @@
+             || !this.#nativeExecutorSameDescriptor(attempt.methods.check, methods.check)
+             || !this.#nativeExecutorSameDescriptor(attempt.methods.describe, methods.describe)
+             || !this.#nativeExecutorSameDescriptor(attempt.methods.releasePrepare, methods.releasePrepare)
+-            || !this.#nativeExecutorSameDescriptor(attempt.methods.releaseCheck, methods.releaseCheck)) throw this.#nativeExecutorError();
++            || !this.#nativeExecutorSameDescriptor(attempt.methods.releaseCheck, methods.releaseCheck)
++            || !this.#nativeExecutorSameDescriptor(attempt.methods.releaseFinalize, methods.releaseFinalize)) throw this.#nativeExecutorError();
+         if (attempt.managerOwner !== undefined) {
+           Reflect.apply(methods.check.value, manager, [attempt.managerOwner]);
+           const labels: unknown = Reflect.apply(methods.describe.value, manager, []);
+@@ -1262,7 +1449,8 @@
+             || !this.#nativeExecutorSameDescriptor(attempt.methods.check, finalMethods.check)
+             || !this.#nativeExecutorSameDescriptor(attempt.methods.describe, finalMethods.describe)
+             || !this.#nativeExecutorSameDescriptor(attempt.methods.releasePrepare, finalMethods.releasePrepare)
+-            || !this.#nativeExecutorSameDescriptor(attempt.methods.releaseCheck, finalMethods.releaseCheck)) throw this.#nativeExecutorError();
++            || !this.#nativeExecutorSameDescriptor(attempt.methods.releaseCheck, finalMethods.releaseCheck)
++            || !this.#nativeExecutorSameDescriptor(attempt.methods.releaseFinalize, finalMethods.releaseFinalize)) throw this.#nativeExecutorError();
+       }
+       if (!this.#nativeExecutorSameDescriptor(attempt.storeDescriptor, this.#nativeExecutorStoreDescriptor(attempt.store))
+           || !this.#nativeExecutorSameDescriptor(attempt.subscribeDescriptor, this.#nativeExecutorStoreDescriptor(attempt.store, "subscribe"))) throw this.#nativeExecutorError();
