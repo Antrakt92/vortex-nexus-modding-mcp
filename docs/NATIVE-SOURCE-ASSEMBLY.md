@@ -1,6 +1,6 @@
 # Assemble the reviewed Vortex source patches
 
-`native-source-series.mjs` applies the fixed sequence of 105 reviewed patches to
+`native-source-series.mjs` applies the fixed sequence of 111 reviewed patches to
 25 original files from Vortex `v2.9.1`, commit
 `c80326367cbe6d96621ad6cf4a5488ef49bac110`. It replaces manually composing separate
 patch chains before compilation. It does not change an installed application or
@@ -35,7 +35,7 @@ match the pinned series. Patch application requires exact offsets and context;
 it has no fuzzy matching or hash-refresh mode.
 
 The fixed graph combines the 33-patch mod-management/transfer packet with the
-72-patch persistence packet. The latter includes renderer target admission and
+78-patch persistence packet. The latter includes renderer target admission and
 acknowledged diffs, main/preload/shared IPC, backend reservations and managed SQL
 ownership, the main build's runtime binding and startup history classification.
 Both runtime packet directories have separate closed inventories;
@@ -68,8 +68,8 @@ the callback's at-most-once behavior.
 Use a complete isolated official workspace, its pinned package manager and frozen
 dependency graph for compilation. Build the renderer's workspace prerequisites,
 then run its actual TypeScript and webpack targets without changing compiler
-options or substituting declaration stubs. Bind the check to all ten resulting
-source hashes. Preserve baseline errors separately from errors introduced by the
+options or substituting declaration stubs. Bind the checks to every resulting
+source hash. Preserve baseline errors separately from errors introduced by the
 patch series. Never use an installed Vortex directory as the build output.
 
 Keep dependency materialization separate from execution. In pnpm 11,
@@ -751,3 +751,24 @@ SHA-256 `deb36e910f52fcff592110ca92690c86625b4e988a1b73685080e53a59c1f325`.
 This rebuilds Main, not all four projects. The graph103 qualification above remains
 evidence for its earlier generation and the unchanged retained outputs. Neither
 result installs the kit or adds a public MCP native installation permit.
+
+## Sequential operations (111 patches)
+
+Six further patches add the [known-success handoff](NATIVE-EXECUTOR-SUCCESSOR.md)
+across Main, IPC, Preload, Shared types and Renderer. They retire completed
+operation slots while retaining the initialized journal, consumed IDs, source
+identities and captured SDK. Incomplete or uncertain operations remain held.
+
+This generation passed fresh Shared/Main/Preload/Renderer typechecks and builds,
+the 52 upstream Main tests without skips, and inspection of all 25 selected
+Program sources and 23 runtime-map entries. All six runtime bundle/map outputs
+were rebuilt. The eight configs and lock were unchanged. The sealed SDK/capsule
+was reused with the same fifteen source pins; Electron stayed cold.
+
+Qualification receipt:
+`local-state/native-successor/prep2/qualification111/QUALIFICATION.json`,
+SHA-256 `645e7abcaaded10b05e580793866e2ae6cafb2243b4b706b51c77d3f1b998666`.
+The final affected-source matrix passed 524 tests without skips. Those source
+tests include explicit SQL/process/Electron facades; they do not establish
+installed-host loading or a physical complete installation. Public MCP native
+installation remains disabled.

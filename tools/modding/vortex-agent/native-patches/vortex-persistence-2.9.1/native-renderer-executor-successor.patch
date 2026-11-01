@@ -1,0 +1,186 @@
+--- a/src/renderer/src/ExtensionManager.ts
++++ b/src/renderer/src/ExtensionManager.ts
+@@ -9,7 +9,7 @@
+ import type { DiffOperation } from "@vortex/shared/ipc";
+ import { types as nativeReadinessTypes } from "util";
+ import { createHash as nativeExecutorTransportHash } from "crypto";
+-import type { NativeExecutorChallenge, NativeExecutorResponse, NativeExecutorPreparation, NativeExecutorExecutionChallenge, NativeExecutorExecutionResponse, NativeExecutorExecutionInvalidation, NativeExecutorExecutionResult, NativeExecutorRendererCompletion } from "@vortex/shared/ipc";
++import type { NativeExecutorChallenge, NativeExecutorResponse, NativeExecutorPreparation, NativeExecutorExecutionChallenge, NativeExecutorExecutionResponse, NativeExecutorExecutionInvalidation, NativeExecutorExecutionResult, NativeExecutorRendererCompletion, NativeExecutorSuccessor } from "@vortex/shared/ipc";
+ import { performance as nativeReadinessClock } from "perf_hooks";
+ import type { NativeMainReadinessObservation } from "@vortex/shared/ipc";
+ import type InstallManager from "./extensions/mod_management/InstallManager";
+@@ -768,6 +768,7 @@
+   executionReceiver?: (handler: (challenge: NativeExecutorExecutionChallenge) => Promise<NativeExecutorExecutionResponse>) => () => void;
+   executionInvalidate?: (value: NativeExecutorExecutionInvalidation) => void;
+   executionUnsubscribe?: () => void;
++  successor?: (transportId: string, executionId: string) => Promise<NativeExecutorSuccessor>;
+   acquire: ExtensionManager["acquireNativeRendererExecutorAdmission"];
+   check: ExtensionManager["checkNativeRendererExecutorAdmission"];
+   project: ExtensionManager["getNativeRendererExecutorAdmissionProjection"];
+@@ -812,9 +813,150 @@
+   phase: "finalizing" | "finalized" | "held"; observation?: Readonly<NativeExecutorRendererCompletion>;
+ }
+ 
++interface NativeRendererSuccessor {
++  request: NativeExecutorRendererRequest; execution: NativeRendererExecution; completion: NativeRendererCompletion;
++  adoption: NativeExecutorRendererAdoption; admission: NativeRendererExecutorAdmission;
++  result: Readonly<NativeExecutorExecutionResult>; observation: Readonly<NativeExecutorRendererCompletion>;
++  phase: "checking" | "waiting" | "retryable" | "held"; checking: boolean;
++  unsubscribe?: () => void; unsubscribeAttempted: boolean;
++  invalidated: Promise<void>; invalidate: () => void;
++}
++
+ class ExtensionManager {
++  #mNativeSuccessor: NativeRendererSuccessor | undefined;
++  #mNativeSuccessorLast: Readonly<NativeExecutorSuccessor> | undefined;
+   #mNativeExecution: NativeRendererExecution | undefined;
+   #mNativeCompletion: NativeRendererCompletion | undefined;
++
++  #nativeSuccessorError(code = "HELD"): Error { return new Error("NATIVE_EXECUTOR_SUCCESSOR_" + code); }
++
++  #holdNativeSuccessor(record: NativeRendererSuccessor): void {
++    record.phase = "held";
++    record.request.route.held = true;
++    record.invalidate();
++    // A handoff failure never changes the known execution/completion result.
++  }
++
++  #checkNativeSuccessor(record: NativeRendererSuccessor): void {
++    if (record.checking) { this.#holdNativeSuccessor(record); throw this.#nativeSuccessorError(); }
++    record.checking = true;
++    try {
++      const {request, execution, completion, adoption, admission} = record, route = request.route;
++      const current = () => this.#mNativeSuccessor === record && record.phase !== "held"
++        && this.#mNativeExecutorRequest === request && this.#mNativeExecution === execution
++        && this.#mNativeCompletion === completion && this.#mNativeExecutorAdoption === adoption
++        && this.#mNativeExecutorAdmission === admission && request.admission === admission
++        && adoption.request === request && adoption.admission === admission && completion.request === request
++        && completion.adoption === adoption && execution.request === request
++        && execution.phase === "completed" && completion.phase === "finalized"
++        && execution.result === record.result && completion.observation === record.observation
++        && !execution.busy && !request.busy && !adoption.checking && request.prepared && request.round === 3;
++      if (!current() || execution.executionId === undefined || request.binding === undefined
++          || admission.store === undefined || admission.storeDescriptor === undefined || admission.subscribeDescriptor === undefined
++          || admission.load !== route.load || admission.store !== route.load.store || admission.readyOwner === undefined
++          || admission.manager === undefined || admission.methods === undefined) throw this.#nativeSuccessorError();
++      this.#checkNativeTransport(route, request);
++      if (!this.#nativeExecutorSameDescriptor(admission.storeDescriptor, this.#nativeExecutorStoreDescriptor(admission.store))
++          || !this.#nativeExecutorSameDescriptor(admission.subscribeDescriptor, this.#nativeExecutorStoreDescriptor(admission.store,"subscribe"))) throw this.#nativeSuccessorError();
++      this.#nativeExecutorProfile(admission);
++      this.checkNativeRendererManagerReady(admission.readyOwner, admission.store);
++      if (this.getNativeRendererManagerInstance(admission.readyOwner, admission.store) !== admission.manager) throw this.#nativeSuccessorError();
++      const methods = this.#nativeExecutorMethods(admission.manager), captured = admission.methods;
++      const methodKeys = ["reserve","check","describe","releasePrepare","releaseCheck","releaseFinalize"] as const;
++      if (captured === undefined || methods.prototype !== captured.prototype || methodKeys.some(
++        key => !this.#nativeExecutorSameDescriptor(methods[key], captured[key]))) throw this.#nativeSuccessorError();
++      this.#nativeExecutorProfile(admission);
++      this.#checkNativeTransport(route, request);
++      if (!current()) throw this.#nativeSuccessorError();
++    } catch (primary) { this.#holdNativeSuccessor(record); throw primary; }
++    finally { record.checking = false; }
++  }
++
++  #finishNativeSuccessorWatch(record: NativeRendererSuccessor): void {
++    if (record.unsubscribe === undefined || record.unsubscribeAttempted) return;
++    record.unsubscribeAttempted = true;
++    Reflect.apply(record.unsubscribe, undefined, []);
++  }
++
++  /** Known-success handoff only. No retry of install work and no new permit. */
++  public async handoffNativeExecutorSuccessor(): Promise<NativeExecutorSuccessor> {
++    if (this === null || typeof this !== "object" || nativeReadinessTypes.isProxy(this) || !(#mNativeSuccessor in this)) throw new Error("NATIVE_EXECUTOR_SUCCESSOR_HELD");
++    if (arguments.length !== 0) throw this.#nativeSuccessorError();
++    const request = this.#mNativeExecutorRequest, execution = this.#mNativeExecution, completion = this.#mNativeCompletion;
++    const adoption = this.#mNativeExecutorAdoption, admission = this.#mNativeExecutorAdmission;
++    if (request === undefined && execution === undefined && completion === undefined && adoption === undefined && admission === undefined
++        && this.#mNativeSuccessorLast !== undefined) return this.#mNativeSuccessorLast;
++    const previous = this.#mNativeSuccessor;
++    if (previous !== undefined && previous.phase !== "retryable") {
++      this.#holdNativeSuccessor(previous); throw this.#nativeSuccessorError();
++    }
++    if (request === undefined || execution === undefined || completion === undefined || adoption === undefined || admission === undefined
++        || execution.phase !== "completed" || completion.phase !== "finalized" || execution.result === undefined
++        || completion.observation === undefined || execution.executionId === undefined || request.binding === undefined) throw this.#nativeSuccessorError();
++    let invalidate = () => {};
++    const invalidated = new Promise<void>(resolve => { invalidate = resolve; });
++    const record: NativeRendererSuccessor = {request, execution, completion, adoption, admission,
++      result: execution.result, observation: completion.observation, phase: "checking", checking: false,
++      unsubscribeAttempted: false, invalidated, invalidate};
++    // Claim before consulting the store, preload or any callback-capable source.
++    this.#mNativeSuccessor = record;
++    let retryable = false;
++    try {
++      this.#checkNativeSuccessor(record);
++      const store = admission.store, descriptor = admission.subscribeDescriptor, send = request.route.successor;
++      if (store === undefined || descriptor === undefined || send === undefined) throw this.#nativeSuccessorError();
++      const off: unknown = Reflect.apply(descriptor.value, store, [() => {
++        if (this.#mNativeSuccessor !== record || record.phase === "held") return;
++        try { this.#nativeExecutorProfile(admission); }
++        catch { this.#holdNativeSuccessor(record); }
++      }]);
++      if (typeof off !== "function" || nativeReadinessTypes.isProxy(off)) throw this.#nativeSuccessorError();
++      record.unsubscribe = off as () => void;
++      this.#checkNativeSuccessor(record);
++      record.phase = "waiting";
++      const deadline = nativeReadinessClock.now() + 5000;
++      const flight: unknown = Reflect.apply(send, request.route.persist, [request.binding.transportId, execution.executionId]);
++      if (!nativeReadinessTypes.isPromise(flight) || nativeReadinessTypes.isProxy(flight)) throw this.#nativeSuccessorError();
++      let timer: ReturnType<typeof setTimeout> | undefined;
++      let result: unknown;
++      try {
++        result = await new Promise<unknown>((resolve, reject) => {
++          timer = setTimeout(() => reject(this.#nativeSuccessorError("PENDING")), 5000);
++          void Promise.prototype.then.call(flight, resolve, reject).catch(() => {});
++          void Promise.prototype.then.call(record.invalidated, () => reject(this.#nativeSuccessorError()), reject).catch(() => {});
++        });
++      } catch (primary) { retryable = true; throw primary; }
++      finally { if (timer !== undefined) clearTimeout(timer); }
++      if (nativeReadinessClock.now() >= deadline) { retryable = true; throw this.#nativeSuccessorError("PENDING"); }
++      this.#checkNativeSuccessor(record);
++      const data = this.#nativeTransportData(result, ["schema","transportId","executionId","operationId","nativeJobId","requestSHA256","ready","effectsAllowed","installationPermit","nativeAdmission"]);
++      const binding = request.binding;
++      if (data.schema !== "native-executor-successor/1" || data.transportId !== binding.transportId
++          || data.executionId !== execution.executionId || data.operationId !== binding.operationId
++          || data.nativeJobId !== binding.nativeJobId || data.requestSHA256 !== binding.requestSHA256
++          || data.ready !== true || data.effectsAllowed !== false || data.installationPermit !== false || data.nativeAdmission !== false) throw this.#nativeSuccessorError();
++      const observation = Object.freeze({...data}) as unknown as NativeExecutorSuccessor;
++      // This is a NEW short-lived handoff watcher, never the already consumed
++      // admission unsubscriber. All callbacks/checks end before the clear tail.
++      this.#finishNativeSuccessorWatch(record);
++      this.#checkNativeSuccessor(record);
++      this.#mNativeSuccessorLast = observation;
++      this.#mNativeExecutorRequest = undefined;
++      this.#mNativeExecutorAdmission = undefined;
++      this.#mNativeExecutorAdoption = undefined;
++      this.#mNativeCompletion = undefined;
++      this.#mNativeExecution = undefined;
++      this.#mNativeSuccessor = undefined;
++      return observation;
++    } catch (primary) {
++      try { this.#checkNativeSuccessor(record); } catch { retryable = false; }
++      try { this.#finishNativeSuccessorWatch(record); } catch { retryable = false; }
++      try { this.#checkNativeSuccessor(record); } catch { retryable = false; }
++      if (retryable && record.phase !== "held") record.phase = "retryable";
++      else this.#holdNativeSuccessor(record);
++      throw primary;
++    }
++  }
+ 
+   #nativeExecutorCompletionActive(): boolean { return this.#mNativeCompletion?.phase === "finalizing"; }
+   #nativeExecutorCompletionHeld(record: NativeRendererCompletion): boolean { return record.phase === "held"; }
+@@ -1161,6 +1303,7 @@
+           || this.#nativeTransportMethod(route.persist, "executeNativeExecutor") !== route.execute
+           || this.#nativeTransportMethod(route.persist, "onExecutorExecutionChallenge") !== route.executionReceiver
+           || this.#nativeTransportMethod(route.persist, "invalidateNativeExecutorExecution") !== route.executionInvalidate
++          || this.#nativeTransportMethod(route.persist, "handoffNativeExecutorSuccessor") !== route.successor
+           || Object.hasOwn(this, "acquireNativeRendererExecutorAdmission") || Object.hasOwn(this, "checkNativeRendererExecutorAdmission")
+           || Object.hasOwn(this, "getNativeRendererExecutorAdmissionProjection")
+           || ExtensionManager.prototype.acquireNativeRendererExecutorAdmission !== route.acquire
+@@ -1188,6 +1331,7 @@
+       route.execute = this.#nativeTransportMethod(persist, "executeNativeExecutor") as NonNullable<NativeExecutorRendererTransport["execute"]>;
+       route.executionReceiver = this.#nativeTransportMethod(persist, "onExecutorExecutionChallenge") as NonNullable<NativeExecutorRendererTransport["executionReceiver"]>;
+       route.executionInvalidate = this.#nativeTransportMethod(persist, "invalidateNativeExecutorExecution") as NonNullable<NativeExecutorRendererTransport["executionInvalidate"]>;
++      route.successor = this.#nativeTransportMethod(persist, "handoffNativeExecutorSuccessor") as NonNullable<NativeExecutorRendererTransport["successor"]>;
+       const unsubscribe: unknown = Reflect.apply(route.receiver, persist, [(challenge: NativeExecutorChallenge) => this.#receiveNativeExecutorChallenge(route, challenge)]);
+       if (typeof unsubscribe !== "function" || nativeReadinessTypes.isProxy(unsubscribe)) throw this.#nativeTransportError();
+       route.unsubscribe = unsubscribe as () => void;

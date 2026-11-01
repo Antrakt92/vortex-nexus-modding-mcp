@@ -1,0 +1,18 @@
+--- a/src/shared/src/types/preload.ts
++++ b/src/shared/src/types/preload.ts
+@@ -27,6 +27,7 @@
+   NativeExecutorExecutionResponse,
+   NativeExecutorExecutionInvalidation,
+   NativeExecutorExecutionResult,
++  NativeExecutorSuccessor,
+   NativeExecutorChallenge,
+   NativeExecutorResponse,
+   NativeExecutorPreparation,
+@@ -395,6 +396,7 @@
+ 
+   /** Internal source transport; a prepared reply is not installation permission. */
+   executeNativeExecutor(transportId: string): Promise<NativeExecutorExecutionResult>;
++  handoffNativeExecutorSuccessor(transportId: string, executionId: string): Promise<NativeExecutorSuccessor>;
+   onExecutorExecutionChallenge(handler: (challenge: NativeExecutorExecutionChallenge) => Promise<NativeExecutorExecutionResponse>): () => void;
+   invalidateNativeExecutorExecution(value: NativeExecutorExecutionInvalidation): void;
+   prepareNativeExecutor(requestBytes: Uint8Array, archiveBytes: Uint8Array): Promise<NativeExecutorPreparation>;

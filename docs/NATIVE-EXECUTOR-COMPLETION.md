@@ -100,8 +100,9 @@ The closed execution result records both releases but keeps `effectsAllowed`,
 `installationPermit`, `nativeAdmission`, `trackedInstallComplete` and
 `powerLossPersistenceVerified` false. Successful lower-level release does not
 reset the transport, frame, pending or genesis operation slots. Consumed operation,
-job and request bindings remain retained. A verified next-operation handoff is a
-separate implementation gate; uncertain history is never cleared to admit it.
+job and request bindings remain retained. The separate
+[known-success handoff](NATIVE-EXECUTOR-SUCCESSOR.md) retires only verified
+completed operations; uncertain history is never cleared to admit another one.
 
 Graph103 passed fresh Shared/Main/Preload/Renderer TypeScript targets and builds,
 52 upstream Main tests without skips, all 25 selected Program sources and 23
