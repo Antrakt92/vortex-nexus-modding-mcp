@@ -352,7 +352,7 @@
     },
     {
       "path": "docs/NATIVE-INSTALL-STATUS.md",
-      "sha256_lf": "d9ee1fe5a789f6903f93cfa6a1ab8bbc141cce1a941d0ef63987be6c18fd3f75"
+      "sha256_lf": "b14a037d43137232f0a122f448cffca0e5fd6996608044b20606ccfe9441dd61"
     },
     {
       "path": "docs/NATIVE-LEVEL-PIVOT-TRANSACTIONS.md",
@@ -551,8 +551,16 @@
       "sha256_lf": "2bf8a477a919a10663b5a054af6f39f7b9ddb37805380d30691fe68b7bab0d27"
     },
     {
+      "path": "tests/fixtures/native-runtime-work-products.py",
+      "sha256_lf": "de35b923d3ccab1d96c1188ce89a9d4d802e7a85e2e48616abaa310d19812d46"
+    },
+    {
       "path": "tests/test_bootstrap.py",
       "sha256_lf": "3fb202fc47b3bbfd147a9a0bb1aa9a4c94ef66a5819fea4fb8cf11e95241bf3d"
+    },
+    {
+      "path": "tests/test_native_runtime_work_products.py",
+      "sha256_lf": "c376027756d2ca8d95ba5f898a68a7c2640d4a786a91e977db658d85a187a079"
     },
     {
       "path": "tests/test_pristine_cache.py",
