@@ -1,10 +1,67 @@
 # Native installation checkpoint — 2 November 2026
 
-The public adapter still reports `installSupported:false`. The latest runtime
-check exercised two prepared cancellations in an isolated Vortex application.
-It did not install a mod or update the user's installed Vortex.
+The public adapter still reports `installSupported:false`. Two synthetic
+installations and their successor handoffs completed in the isolated Vortex
+application. Independent checks verified their stored records, staged payloads
+and Windows file identities. The user's installed Vortex was not changed.
 
-## Verified result
+## Two-install result
+
+The supervisor retained `failed-closed` with reason
+`RUNTIME_FIXED17_UNCHANGED`. Its final runtime check omitted four expected SDK
+outputs: one `CopyProof.json` and one extracted payload for each operation.
+The SDK retains these files after releasing its workers. The failed receipt
+has not been rewritten, and neither installation was replayed.
+
+Main exited with code zero, its owned process group was empty and both output
+pipes reached EOF and closed without errors or overflow. There was no UNKNOWN,
+recovery close or force cleanup. The source collector recorded both
+prepare → execute → handoff cycles in twelve events.
+
+A separate forensic reader copied the eight closed database files and opened
+only that verified copy in READ_ONLY mode. It checked 36 selected values,
+including both installed records and download associations, and reconstructed
+C2 → B3 → C3 → B4 → C4 from the twelve journal files and actual source captures.
+The stored anchor matched C4. The original database census was identical before
+and after the read; no native inspector opened the original database.
+
+The runtime contains exactly 33 files: 17 unchanged SDK/capsule inputs, twelve
+journal files and four capture-bound SDK work products. Both staged payloads
+match the expected archive members. Profile mod-state entries for either fixture
+target remain absent; automation stays disabled and the fixture game files remain
+unchanged. The six earlier UNKNOWN tuples and two prepared-cancellation records are preserved.
+
+A separate observer used `GetFileInformationByHandleEx(FileIdInfo)` to compare
+five full Windows identities: staging, both mod directories and both payload
+files. All matched the copy proofs. It rechecked payload bytes while holding
+the native handles and closed every handle before reporting success. These
+checks do not equate Node/Python stat projections with Windows FileIdInfo.
+
+This establishes the observed installation data and physical closure for these
+two synthetic packages. It does not turn the failed supervisor result into a
+passed run, enable a public installation API, qualify the user's installed host
+or prove crash durability or gameplay behavior. The reader and observer each
+retain `fullInstallationAccepted:false`; the combined acceptance and corrected
+runtime guard remain separate gates.
+
+Local evidence under `local-state/native-inert-cancel/`:
+
+| Evidence | SHA-256 |
+| --- | --- |
+| `prep/full-install-build-draft/BUILD-INSPECTION.json` | `0afbac384f271acc3953e8a5c1482f75957a88596ec8a95704c487a647bd622c` |
+| `root/app-fixture/launch-full-install-execution/SUPERVISOR-RESULT.json` | `5f7ca1bf8d2aa6e5871ca83d8604eaf70798c26749642f3dfc8703b62b841d45` |
+| `recovery/full-install-failed-postexit-draft/RESULT.json` | `b6afc1153cf745e04280ec51e9881e1319c7430f5a24f712b7178bbbb6680026` |
+| `recovery/full-install-failed-postexit-draft/SOURCE-BEFORE.json` and `SOURCE-AFTER.json` | `28b0c0d7d15ea4c57bb0f1ffdaac6fe1c107c99d2d585bd1f5a7ad8a02535971` |
+| `prep/full-install-forensic-result-review/AUDIT.json` | `e552f07005e92c225bebb9c99c18000c1a93b83b6f64ee2f4f6c4ea7d66e94ce` |
+| `recovery/full-install-failed-native-id-draft/RESULT.json` | `e486729ceb41aa6158cdca422b224a629493f4161f4413b4e893ed49d88afb3c` |
+| `prep/full-install-forensic-result-review/NATIVE-FIVE-AUDIT.json` | `ab8764f3a110876af29a10953dde3d575020951f3ed0bc82abfd8944baf90ec1` |
+
+These ignored local artifacts are not part of a fresh clone or a portable
+installation permit. Model tests passed for the reader, execution evidence,
+failed-source gates and native-observer controls. The database-copy and native
+identity results above come from the separate actual executions.
+
+## Prepared-cancellation checkpoint (earlier run)
 
 The Promise/Zone repair and journal ancestor-identity repair are on `main`
 through PRs #131 and #132. The maintained graph contains 132 patches over 26
@@ -60,24 +117,20 @@ generic `INSTALLED.json` filename is not evidence of a mod installation.
 
 ## Next gates
 
-1. Qualify full installation and successful-operation handoff in the isolated
-   host. Before any START, add a narrowly scoped source capture of the actual
-   copy, registration, adoption and closed-worker observations. The existing
-   cancellation capture cannot prove those installation phases.
-2. Run the two synthetic installs only after fresh no-replacement admission,
-   source/build checks and root approvals. Preserve the existing C2 history and
-   earlier UNKNOWN tuples; do not reset the database or journal to simplify admission.
-3. Verify staged payloads, installed records, download associations, terminal
-   records and the final persisted anchor independently after process closure.
-   Keep all profile flags and game/deployed files unchanged.
-4. Enable a supported public MCP installation route only after those gates,
-   then perform the separate installed-host qualification and release work.
+1. Complete and test strict runtime accounting for the four expected SDK work
+   products. Reject extra files and directories, changed inputs, aliases and
+   mismatched copy proofs; do not ignore an entire work-directory prefix.
+2. Review the combined execution, database, payload and native-identity evidence
+   against that corrected check. Preserve the original failed receipt.
+3. Enable a supported public MCP installation route only after its admission
+   gates, then perform the separate installed-host qualification and release
+   work. Keep profile flags, deployment owners and game files protected.
 
-The postexit packet and its reader are spent evidence, not commands to rerun.
-Retain its original read intent, verified copy and results. A new installation
-attempt needs new reviewed operation identifiers and admission, preserving all
-prior history.
+Both installation requests are spent, as are the earlier cancellation requests.
+Do not replay their callers or launchers, reset their journals, delete their
+intents or reinstall the fixture targets to obtain a green result. The original
+reader, verified copy and native observation are retained evidence. Any later
+operation needs its own reviewed admission and must preserve this history.
 
-The two new operation IDs are spent. Do not rerun their caller or launcher, or
-reuse admission scripts that expect the pre-run empty journal and old database
-census. The full goal remains incomplete; no new release was made at this checkpoint.
+The full goal remains incomplete. No new release or installed-host update was
+made at this checkpoint.
