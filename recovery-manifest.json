@@ -352,7 +352,7 @@
     },
     {
       "path": "docs/NATIVE-INSTALL-STATUS.md",
-      "sha256_lf": "147345330eae13c4a4f5dd0ce329dd15fa54ef9060e2db316234b4877ff937ba"
+      "sha256_lf": "56a912121bcd8da9ad3de941c13a8546aebf139c4c58a92a4bac7ce2e78a9539"
     },
     {
       "path": "docs/NATIVE-LEVEL-PIVOT-TRANSACTIONS.md",
@@ -2572,11 +2572,11 @@
     },
     {
       "path": "tools/modding/vortex-agent/native-sdk-capsule-build.mjs",
-      "sha256_lf": "18a07aaa29bc65c8ed4adcbfe3e800d392c8c2a906b28ac74952940c828edcad"
+      "sha256_lf": "ead43f748fcb1dd869d5bbb46a2d51f389a19c7b394dbcaebf867c84fb913183"
     },
     {
       "path": "tools/modding/vortex-agent/native-sdk-capsule-build.test.mjs",
-      "sha256_lf": "c7adc86d248ebea02035af6101b24ba1cbce3ab2d9dcd956a0c927a2ae538a0d"
+      "sha256_lf": "4752b28bfc7d2f205c4fe93dc793e8b56468419c289ced044a97b9115d2c1c9c"
     },
     {
       "path": "tools/modding/vortex-agent/native-sdk-capsule-load.cjs",
@@ -2608,7 +2608,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/native-sdk-python-capsule.mjs",
-      "sha256_lf": "b0467a616b2eaacc633d3ba6dbec78758aa8a0c581d18177eb3223803b14baf5"
+      "sha256_lf": "80c3f196868a8dd61f2c5af101653229d0502dac9cc74690d63a47dcb7528a7b"
     },
     {
       "path": "tools/modding/vortex-agent/native-sdk-python-capsule.test.mjs",
@@ -2715,6 +2715,10 @@
       "sha256_lf": "2018a0f4a6875b6c64cb8e59203513b268281cfa10bbf7a6943aa38013ac59d1"
     },
     {
+      "path": "tools/modding/vortex-agent/owned-archive-observer-client.test.mjs",
+      "sha256_lf": "2b48f4e168c9ef58bfd938f719d0f3c966fc15aa3ebd94697773037cb21f5611"
+    },
+    {
       "path": "tools/modding/vortex-agent/owned-extractor-process.py",
       "sha256_lf": "454f2f97719a04d6558da746dc751f7d1a4bb26a26cbd1943358c2ae506b4ec7"
     },
@@ -2772,15 +2776,19 @@
     },
     {
       "path": "tools/modding/vortex-agent/owned-zip-worker-client.mjs",
-      "sha256_lf": "0786be18d373f33d6dd236e55f9947be502e6d3b90b9a63618f3abf1d574f613"
+      "sha256_lf": "6f2791141500d102c73303e43eb323b668f92263154d421dd3689a3d82e004b3"
     },
     {
       "path": "tools/modding/vortex-agent/owned-zip-worker-client.test.mjs",
-      "sha256_lf": "fa15ab214786f903d27f6a4724b0ddb62247ab0a14e02e66c8c090784ebf3f66"
+      "sha256_lf": "88925ebf29b82fc9802e8af427f0c1d102933a000e4812ac608bcac41a780076"
+    },
+    {
+      "path": "tools/modding/vortex-agent/owned-zip-worker-observation.test.py",
+      "sha256_lf": "537ca8cacdc927acaf201ef27a04e2031202ef711864d80fc9b65051e94ed64c"
     },
     {
       "path": "tools/modding/vortex-agent/owned-zip-worker.py",
-      "sha256_lf": "1b823200dc386f2681e887624631a794e55143d6db25f94a0b67d075b9ad298a"
+      "sha256_lf": "533a25b84a1d74db196026028a79b2642316332115fbd468541e051810df6009"
     },
     {
       "path": "tools/modding/vortex-agent/package.test.mjs",

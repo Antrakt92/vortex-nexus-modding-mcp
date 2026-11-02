@@ -177,17 +177,48 @@ explicit native stubs and synthetic owned fixtures. Capture/capsule suites run
 with `--test-concurrency=1` to keep their strict ancestor-generation checks
 separate from sibling test-directory churn.
 
-The reviewed Python capsule source pin includes this change; its fifteen-source
-namespace and loader adaptations are unchanged. No new capsule was installed
-in the user's Vortex. The fixed observer worker protocol/client and Main's
-genuine tracked-download association are still required before this primitive
-can supply the production intake.
+The reviewed Python capsule source pin includes this change. No new capsule was
+installed in the user's Vortex.
+
+## Archive observer worker and client
+
+`createOwnedArchiveObserver(requestBytes)` now connects that primitive to the
+fixed Python worker. Construction copies the dispatch request without filesystem
+reads, journal creation or generated IDs. The closed owner exposes `observe`,
+`status` and `release`; it has no START, handoff or process-kill method.
+
+The worker accepts the observer request only before any installation or
+destination preparation. It checks the archive, closes both archive and runtime
+owners, and sends a response bound to the exact request bytes and worker lifetime.
+The client checks download-root context before spawn, before sending the request
+and after closure. Metadata returns only after exit zero and all three pipe
+closures without errors. A timeout retains the first failure and live owner;
+it cannot replay the read or turn a late response into success. Explicit release
+waits for a held state or process completion and never returns metadata.
+
+The capsule adapter admits this fixed observer in Main while keeping installer
+workers relay-only. It checks the pinned Python runtime and the supported Node
+and Electron versions; it does not add a general process launcher. Its source
+namespace remains fifteen files and execution uses captured Python bytes.
+
+Verification passed sixteen full-client VM tests, nineteen worker wire models,
+37 worker/staging tests, eighteen capture/Python-capsule tests and seven compiler/
+capsule tests. Real own-file roundtrips check FileIdInfo, MD5 failure, hardlink
+refusal and joined process/pipe closure without installation outputs. A compiled
+Main namespace exercised the observer through a real Python child under Node;
+its installer was refused before spawning. The Electron version matrix uses
+explicit VM facades and does not establish live Electron or installed-host proof.
+
+Main's genuine tracked-download projection, path resolution, durable public
+request mapping and immutable renderer intake still need wiring before this
+becomes a supported MCP operation.
 
 ## Next gates
 
-1. Add the production source-owned intake, durable public-request-to-operation
-   mapping and real tracked-archive identity producer. The isolated fixture's
-   fixed descriptors and private capture hooks cannot serve as those producers.
+1. Connect Main's genuine tracked-download projection and path resolution to
+   the observer, add durable public-request-to-operation mapping and the
+   production source-owned intake. The isolated fixture's fixed descriptors
+   and private capture hooks cannot serve as those producers.
 2. Qualify the production build and supported public MCP path, preserving the
    combined execution, database, payload and native-identity checks. Keep the
    original failed receipt and spent operation history.

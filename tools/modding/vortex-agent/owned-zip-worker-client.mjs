@@ -152,18 +152,26 @@ export function snapshotOwnedStagingZipInputs(requestBytes, archiveBindingBytes)
   return Object.freeze({request, archive});
 }
 
+// Exact fixed capsule adapter seam; installer runtime() remains unchanged.
+function archiveObserverRuntime() { runtime(); }
+export function createOwnedArchiveObserver(requestBytes) {
+  need(arguments.length === 1, 'OBSERVER_ARGUMENTS');
+  return createWorker(requestBytes, null, false, true);
+}
 export function createOwnedZipWorker(requestBytes, archiveBindingBytes) {
   return createWorker(requestBytes, archiveBindingBytes, false);
 }
 export function createOwnedStagingZipWorker(requestBytes, archiveBindingBytes) {
   return createWorker(requestBytes, archiveBindingBytes, true);
 }
-function createWorker(requestBytes, archiveBindingBytes, staging) {
+function createWorker(requestBytes, archiveBindingBytes, staging, archiveObserver = false) {
   const request = dispatch.parseDispatchRequest(requestBytes);
   if (staging) validateStagingFamily(request);
-  else validateNativePayload(request);
+  else if (!archiveObserver) validateNativePayload(request);
   const requestSHA256 = dispatch.dispatchRequestDigest(Buffer.from(JSON.stringify(request)));
-  const archive = archiveValue(archiveBindingBytes, request);
+  const archive = archiveObserver ? {parent:request.plan.context.downloadPath, leaf:request.plan.package.fileName,
+    bytes:request.plan.package.bytes, sha256:request.plan.package.sha256, md5:request.plan.package.md5} : archiveValue(archiveBindingBytes, request);
+  if (archiveObserver) need(nativeRoot(archive.parent) && nativeComponent(archive.leaf), 'INVALID_ARCHIVE');
   let archiveParentPins = null;
   function checkArchiveContext() {
     checkArchiveParent(request, archive);
@@ -194,10 +202,22 @@ function createWorker(requestBytes, archiveBindingBytes, staging) {
   let preparedPacket = null, preparedBytes = null, preparedReceipt = null, explicitPrepared = false, startPreparedAttempted = false, inertAbortAttempted = false;
   let outbound = [];
   const seen = new Set(), waiters = new Set();
-  const journal = createNativeExecutorJournal();
+  const journal = archiveObserver ? null : createNativeExecutorJournal();
+  let observerReleaseSent = false, observerPrimary = null;
   let owner;
   function error(code) {const e = Error('OWNED_ZIP_WORKER_'+code); e.owner = owner; return e;}
+  function observerClosure() {
+    const t=terminal?.read();
+    return !!t && t.spawnObserved===true && t.exitObserved===true && t.closeObserved===true
+      && t.exitSucceeded===true && t.exitCode===0 && t.closeCode===0 && t.exitSignal===null && t.closeSignal===null
+      && t.childResourcesClosed===true && t.held===false && t.childErrorObserved===false
+      && ['stdin','stdout','stderr'].every(k=>t.pipes[k].closeObserved===true && t.pipes[k].errorObserved===false);
+  }
   function status() {
+    if (archiveObserver) return structuredClone({schema:'owned-archive-observer-status/1',binding,
+      workerLifetime:ready?.workerLifetime??null,workerPid:child?.pid??null,creationTime:ready?.creationTime??null,
+      packetSHA256,attempted:startAttempted,releaseAttempted,childClosed,phase:firstError?(childClosed&&terminalClosed()?'failed':'held'):last?.phase??(ready?'ready':'not_started'),
+      errorCode:firstError,workerTerminal:terminal?.read()??null,effectsAllowed:false,nativeInstallAccepted:false,persistenceVerified:false});
     return structuredClone({schema: 'owned-zip-coordinator-status/1', binding, packetSHA256,
       workerLifetime: ready?.workerLifetime ?? null, workerPid: child?.pid ?? null,
       creationTime: ready?.creationTime ?? null, startAttempted, startSent, handoffAttempted,
@@ -209,29 +229,31 @@ function createWorker(requestBytes, archiveBindingBytes, staging) {
       effectsAllowed: false, nativeInstallAccepted: false, powerLossPersistenceVerified: false});
   }
   function terminalClosed() {return terminal?.read().childResourcesClosed === true;}
-  function observed(phase) {return seen.has(phase) && (phase !== 'closed' || terminalClosed());}
+  function observed(phase) {return archiveObserver && phase==='observer_cleanup'
+    ? ['observed','failed','held'].includes(last?.phase) || childClosed && terminalClosed()
+    : seen.has(phase) && (phase !== 'closed' || terminalClosed());}
   function wake() {
     if (childClosed && terminalClosed() && occupied === owner) occupied = null;
     for (const item of [...waiters]) {
       if (observed(item.phase)) {clearTimeout(item.timer); waiters.delete(item); item.resolve(status());}
-      else if ((childClosed || firstError) && item.phase !== 'closed') {clearTimeout(item.timer); waiters.delete(item); item.reject(error(firstError || 'WORKER_CLOSED'));}
+      else if ((childClosed || firstError) && item.phase !== 'closed' && !(archiveObserver && item.phase==='observer_cleanup')) {clearTimeout(item.timer); waiters.delete(item); item.reject(error(firstError || 'WORKER_CLOSED'));}
       else if (['held','cancelled'].includes(last?.phase) && !['held','cancelled','released','closed'].includes(item.phase)) {
         clearTimeout(item.timer); waiters.delete(item); item.reject(error(last.errorCode || 'WORKER_STOPPED'));
       }
     }
   }
-  function fail(code) {firstError ||= code; wake();}
+  function fail(code) {firstError ||= code; if(archiveObserver && observerPrimary===null)observerPrimary=error(firstError); wake();}
   function wait(phase, timeoutMs = 30000) {
-    need(['ready', 'accepted', 'closed', 'destination_prepared', ...PHASES].includes(phase) && Number.isSafeInteger(timeoutMs)
+    need(['ready', 'accepted', 'closed', 'destination_prepared', ...(archiveObserver?['observation','observer_cleanup']:[]), ...PHASES].includes(phase) && Number.isSafeInteger(timeoutMs)
       && timeoutMs > 0 && timeoutMs <= 120000, 'INVALID_OBSERVATION');
     if (observed(phase)) return Promise.resolve(status());
-    if ((childClosed || firstError) && phase !== 'closed') return Promise.reject(error(firstError || 'WORKER_CLOSED'));
+    if ((childClosed || firstError) && phase !== 'closed' && !(archiveObserver && phase==='observer_cleanup')) return Promise.reject(error(firstError || 'WORKER_CLOSED'));
     if (['held','cancelled'].includes(last?.phase) && !['held','cancelled','released','closed'].includes(phase))
       return Promise.reject(error(last.errorCode || 'WORKER_STOPPED'));
     need(waiters.size < 8, 'OBSERVER_CAPACITY');
     return new Promise((resolve, reject) => {
       const item = {phase, resolve, reject, timer: null};
-      item.timer = setTimeout(() => {waiters.delete(item); reject(error('OBSERVATION_TIMEOUT'));}, timeoutMs);
+      item.timer = setTimeout(() => {waiters.delete(item); if(archiveObserver)fail('OBSERVATION_TIMEOUT'); reject(error(archiveObserver ? firstError || 'OBSERVATION_TIMEOUT' : 'OBSERVATION_TIMEOUT'));}, timeoutMs);
       waiters.add(item);
     });
   }
@@ -252,6 +274,24 @@ function createWorker(requestBytes, archiveBindingBytes, staging) {
         && SOURCES.every(k => value.sourceSHA256[k] === expectedSources[k]), 'READY_MISMATCH');
       need(JSON.stringify(sources()) === JSON.stringify(expectedSources), 'SOURCE_CHANGED');
       ready = value; seen.add('ready'); wake(); return;
+    }
+    if (archiveObserver) {
+      need(packetSHA256 !== null && exact(value,['schema','workerLifetime','binding','packetSHA256','phase','archive','errorCode','effectsAllowed','nativeInstallAccepted','persistenceVerified'])
+        && value.schema==='owned-archive-observation/1' && value.workerLifetime===ready.workerLifetime
+        && bindingEqual(value.binding) && value.packetSHA256===packetSHA256
+        && ['observed','failed','held'].includes(value.phase) && finiteCode(value.errorCode)
+        && value.effectsAllowed===false && value.nativeInstallAccepted===false && value.persistenceVerified===false
+        && (last===null || last.phase==='held' && releaseAttempted && value.phase==='failed'), 'OBSERVATION_MISMATCH');
+      if(value.phase==='observed') {
+        const a=value.archive;
+        need(value.errorCode===null && exact(a,['parent','parentIdentity','leaf','identity','bytes','sha256'])
+          && nativeRoot(a.parent) && path.win32.normalize(a.parent).toLowerCase()===path.win32.normalize(archive.parent).toLowerCase()
+          && a.leaf===archive.leaf && a.bytes===archive.bytes && a.sha256===archive.sha256
+          && nativeIdentity(a.parentIdentity) && nativeIdentity(a.identity), 'OBSERVATION_MISMATCH');
+      } else need(value.archive===null && typeof value.errorCode==='string','OBSERVATION_MISMATCH');
+      last=value;
+      if(value.phase==='observed')seen.add('observation');else fail(value.errorCode);
+      wake();return;
     }
     if (value?.schema === 'owned-zip-worker-destination/1') {
       need(staging && !startSent && destination === null
@@ -341,7 +381,7 @@ function createWorker(requestBytes, archiveBindingBytes, staging) {
     return proof;
   }
   function data(bytes) {
-    if (firstError) return;
+    if (firstError && !archiveObserver) return;
     try {
       pending = Buffer.concat([pending, bytes]);
       let at;
@@ -402,8 +442,8 @@ function createWorker(requestBytes, archiveBindingBytes, staging) {
       startAttempted = true; occupied = owner;
       try {
         const anchor = anchored ? copyAnchor(anchorBytes) : null;
-        runtime(); expectedSources = sources();
-        if (staging) checkArchiveContext();
+        if(archiveObserver)archiveObserverRuntime();else runtime(); expectedSources = sources();
+        if (staging || archiveObserver) checkArchiveContext();
         child = spawn(PYTHON, ['-I', '-S', '-B', path.join(HERE, 'owned-zip-worker.py')], {
           cwd: HERE, env: {SystemRoot: process.env.SystemRoot}, windowsHide: true, stdio: ['pipe','pipe','pipe'],
         });
@@ -416,11 +456,23 @@ function createWorker(requestBytes, archiveBindingBytes, staging) {
         child.on('close', (code, signal) => {
           childClosed = true; outbound = []; seen.add('closed'); if (occupied === owner && terminalClosed()) occupied = null;
           if (pending.length) firstError ||= 'TRUNCATED_FRAME';
+          if(archiveObserver && (!last || last.phase!=='observed' || code!==0 || signal!==null))firstError ||= 'OBSERVATION_EXIT_FAILED';
           if (startSent && !seen.has('released')) firstError ||= 'CUSTODY_LOST';
           if (seen.has('released') && (code !== 0 || signal !== null)) firstError ||= 'RELEASE_EXIT_FAILED';
           wake();
         });
         await wait('ready');
+        if (archiveObserver) {
+          checkArchiveContext();
+          need(!releaseAttempted && !firstError,'OBSERVATION_REFUSED');
+          const packet={schema:'owned-zip-observe-archive/1',workerLifetime:ready.workerLifetime,binding,archive};
+          packetSHA256=sha(Buffer.from(JSON.stringify(packet)));write(packet,8192,'observe');
+          await wait('observation');await wait('closed');
+          need(!firstError && last?.phase==='observed' && observerClosure(),'OBSERVATION_CLOSURE_REQUIRED');
+          checkArchiveContext();
+          const a=last.archive;
+          return Object.freeze({...a,parentIdentity:Object.freeze({...a.parentIdentity}),identity:Object.freeze({...a.identity})});
+        }
         if (staging && !cancelAttempted && !releaseAttempted) {
           const stage = request.plan.context.stagingPath;
           const check = () => {
@@ -477,6 +529,7 @@ function createWorker(requestBytes, archiveBindingBytes, staging) {
         return structuredClone(preparedReceipt);
       } catch (e) {
         if (!child) {if (occupied === owner) occupied = null;}
+        if(archiveObserver){fail(/^OWNED_ZIP_WORKER_([A-Z_]+)$/.exec(e?.message || '')?.[1] || 'OBSERVATION_FAILED');throw observerPrimary;}
         e.owner = owner; throw e;
       }
       }
@@ -511,6 +564,34 @@ function createWorker(requestBytes, archiveBindingBytes, staging) {
       write({schema:'owned-zip-worker-abort/1',workerLifetime:ready.workerLifetime},4096);
     }
     return await wait('closed');
+  }
+  if(archiveObserver) {
+    owner=Object.freeze({status,observe(){return prepareWorker(null,false);},async release(){
+      releaseAttempted=true;
+      if(!child)return status();
+      if(childClosed)return await wait('closed');
+      if(!ready) {
+        // A mismatched READY can retain only an abort-only lifetime. It never
+        // authorizes observation, START, destination preparation or a binding.
+        if(packetSHA256===null && Number.isSafeInteger(child.pid) && child.pid>0
+          && typeof inertLifetime==='string' && /^worker_[a-f0-9]{32}$/.test(inertLifetime) && inertLifetime.length===39) {
+          if(!observerReleaseSent){observerReleaseSent=true;write({schema:'owned-zip-worker-abort/1',workerLifetime:inertLifetime},4096);}
+          return await wait('closed');
+        }
+        await wait('ready', 30000);
+      }
+      if(packetSHA256!==null){
+        await wait('observer_cleanup');
+        if(childClosed || last?.phase!=='held')return await wait('closed');
+      }
+      if(!observerReleaseSent){
+        observerReleaseSent=true;
+        if(packetSHA256===null)write({schema:'owned-zip-worker-abort/1',workerLifetime:ready.workerLifetime},4096);
+        else write({schema:'owned-zip-worker-control/1',workerLifetime:ready.workerLifetime,binding,command:'release'},4096,'release');
+      }
+      return await wait('closed');
+    }});
+    return owner;
   }
   owner = Object.freeze({
     status,

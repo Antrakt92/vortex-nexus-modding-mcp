@@ -46,6 +46,26 @@ def safe_code(error):
     return text if re.fullmatch(r'[A-Z][A-Z0-9_]{0,98}', text) else 'WORKER_OPERATION_FAILED'
 
 
+OBSERVATION_CODES = frozenset((
+    'INTERRUPTED', 'OBSERVATION_OPERATION_FAILED', 'OBSERVATION_PROTOCOL_FAULT',
+    'OBSERVATION_CLOSE_UNCERTAIN', 'SOURCE_CLOSE_UNCERTAIN', 'OBSERVATION_HELD',
+    'OBSERVATION_NOT_VIRGIN', 'OBSERVATION_ALREADY_FINAL', 'OBSERVATION_RELEASE_REFUSED',
+    'OBSERVATION_RESULT_REFUSED', 'OBSERVATION_COMMAND_REFUSED', 'TRANSPORT_HELD',
+    *('OWNED_TRANSFER_' + code for code in (
+        'UNSUPPORTED_PLATFORM', 'UNSUPPORTED_ABI', 'INVALID_ROOT', 'LIMIT', 'INVALID_COMPONENT',
+        'INVALID_PROOF', 'BUSY_OR_WRONG_THREAD', 'HELD', 'HANDLE_LIMIT', 'INFORMATION_FAILED',
+        'UNSAFE_OBJECT', 'UNSUPPORTED_DRIVE_MAPPING', 'UNSUPPORTED_DRIVE', 'UNSUPPORTED_FILESYSTEM',
+        'OPEN_REFUSED', 'UNEXPECTED_OPEN', 'SIZE_MISMATCH', 'READ_FAILED', 'SEEK_FAILED',
+        'ARCHIVE_MISMATCH', 'ARCHIVE_CHANGED', 'IO_FAILED', 'CLOSE_FAILED', 'CLOSE_UNCERTAIN',
+        'ALREADY_ATTEMPTED'))))
+
+
+def observation_code(error):
+    code = safe_code(error)
+    return code if code in OBSERVATION_CODES else 'OBSERVATION_OPERATION_FAILED'
+
+
+
 def decode(data):
     def unique(pairs):
         result = {}
@@ -98,6 +118,8 @@ class Transport:
         self.binding = None
         self.start_seen = False
         self.prepare_seen = False
+        self.observe_seen = self.observation_held = self.observation_final = False
+        self.observation_release_seen = False
         self.prepared_destination = None
         self.slot = None
         self.condition = threading.Condition()
@@ -161,7 +183,55 @@ class Transport:
             need(type(digest) is str and re.fullmatch(r'[a-f0-9]{64}', digest), 'PAYLOAD_REFUSED')
 
     def accept(self, data):
+        # Serialize observation finalization against already received controls.
+        with self.condition:
+            try:
+                return self._accept(data)
+            except BaseException as error:
+                if self.observe_seen:
+                    self.fault = self.fault or safe_code(error)
+                raise
+
+    def accept_observation(self, value, data):
+        need(not self.start_seen and not self.prepare_seen and not self.observe_seen
+             and self.binding is None, 'OBSERVATION_NOT_VIRGIN')
+        # Spend this worker mode before validation callbacks or queue publication.
+        self.observe_seen = self.start_seen = True
+        need(len(data) <= MAX_CONTROL
+             and exact(value, ('schema', 'workerLifetime', 'binding', 'archive'))
+             and value['schema'] == 'owned-zip-observe-archive/1'
+             and value['workerLifetime'] == self.lifetime, 'OBSERVATION_REFUSED')
+        check_binding(value['binding'])
+        archive = value['archive']
+        need(exact(archive, ('parent', 'leaf', 'bytes', 'sha256', 'md5')), 'OBSERVATION_ARCHIVE_REFUSED')
+        self.base._root(archive['parent'])
+        self.base._component(archive['leaf'])
+        need(type(archive['bytes']) is int and 0 < archive['bytes'] <= 64*1024*1024
+             and type(archive['sha256']) is str and re.fullmatch(r'[a-f0-9]{64}', archive['sha256'])
+             and type(archive['md5']) is str and re.fullmatch(r'[a-f0-9]{32}', archive['md5']),
+             'OBSERVATION_ARCHIVE_REFUSED')
+        self.binding = dict(value['binding'])
+        self.commands.put_nowait(('observe_archive', value, hashlib.sha256(data).hexdigest()))
+
+    def accept_observation_control(self, value):
+        need(self.observation_held and not self.observation_final and not self.observation_release_seen
+             and exact(value, ('schema', 'workerLifetime', 'binding', 'command'))
+             and value['schema'] == 'owned-zip-worker-control/1'
+             and value['workerLifetime'] == self.lifetime and value['binding'] == self.binding
+             and value['command'] == 'release', 'OBSERVATION_CONTROL_REFUSED')
+        check_binding(value['binding'])
+        self.observation_release_seen = True
+        self.commands.put_nowait(('release_observation', None, None))
+
+
+    def _accept(self, data):
         value = decode(data)
+        if self.observe_seen:
+            self.accept_observation_control(value)
+            return
+        if type(value) is dict and value.get('schema') == 'owned-zip-observe-archive/1':
+            self.accept_observation(value, data)
+            return
         if not self.start_seen:
             if exact(value, ('schema', 'workerLifetime')) and value['schema'] == 'owned-zip-worker-abort/1':
                 need(value['workerLifetime'] == self.lifetime, 'LIFETIME_MISMATCH')
@@ -281,6 +351,8 @@ class Worker:
         self.copy_proof = None
         self.copy_records = []
         self.start_seen = False
+        self.observation_mode = self.observation_release_attempted = False
+        self.observation_owner = self.observation_result = self.observation_primary = None
 
     def emit(self, force=False, final=False):
         if self.binding is None or (not force and time.monotonic()-self.last_emit < 0.1):
@@ -296,6 +368,112 @@ class Worker:
         if self.destination_mode:
             value['destination'], value['copyProof'] = self.destination_observation, self.copy_proof
         self.transport.send(value, final)
+
+    def observation_emit(self, final=False):
+        value = {'schema': 'owned-archive-observation/1', 'workerLifetime': self.transport.lifetime,
+                 'binding': dict(self.binding), 'packetSHA256': self.packet_sha,
+                 'phase': self.phase, 'archive': self.observation_result if self.phase == 'observed' else None,
+                 'errorCode': self.error_code, 'effectsAllowed': False,
+                 'nativeInstallAccepted': False, 'persistenceVerified': False}
+        self.transport.send(value, final)
+
+    def observation_held(self, error):
+        if self.observation_primary is None:
+            self.observation_primary = error
+        self.error_code = self.error_code or observation_code(error)
+        self.phase = 'held'
+        self.observation_result = None
+        with self.transport.condition:
+            self.transport.observation_held = True
+            self.observation_emit()
+
+    def observation_finish(self):
+        with self.transport.condition:
+            need(not self.transport.observation_final, 'OBSERVATION_ALREADY_FINAL')
+            if self.transport.fault:
+                self.error_code = self.error_code or 'OBSERVATION_PROTOCOL_FAULT'
+                self.observation_result = None
+            self.phase = 'failed' if self.error_code is not None else 'observed'
+            self.transport.observation_final = True
+            self.observation_emit(True)
+        delivered = self.transport.final_written.wait(5)
+        # A known output fault cannot be a successful observation process exit.
+        code = 0 if delivered and self.phase == 'observed' and not self.transport.fault else 65
+        os._exit(code)
+
+    def observe_archive(self, value, digest):
+        need(not self.observation_mode and self.binding is None and not self.start_seen
+             and not self.destination_mode and self.prepared_destination is None, 'OBSERVATION_NOT_VIRGIN')
+        self.observation_mode = True  # Before construction or any native callback.
+        self.binding, self.packet_sha = dict(value['binding']), digest
+        try:
+            need(not self.transport.fault, 'TRANSPORT_HELD')
+            archive = value['archive']
+            self.observation_owner = self.base.OwnedArchiveObservation(
+                archive['parent'], archive['leaf'], archive['bytes'], archive['sha256'], archive['md5'])
+            self.observation_result = self.observation_owner.observe()
+            result = self.observation_result
+            need(exact(result, ('parent', 'parentIdentity', 'leaf', 'identity', 'bytes', 'sha256'))
+                 and self.base._root(result['parent']) == self.base._root(archive['parent'])
+                 and result['leaf'] == archive['leaf'] and result['bytes'] == archive['bytes']
+                 and result['sha256'] == archive['sha256'], 'OBSERVATION_RESULT_REFUSED')
+            self.base._identity(result['parentIdentity'])
+            self.base._identity(result['identity'])
+        except BaseException as error:
+            if self.observation_primary is None:
+                self.observation_primary = error
+            self.error_code = self.error_code or observation_code(error)
+            self.observation_result = None
+        # observe() itself attempts closure once. Never automatically retry it.
+        if self.observation_owner is not None:
+            state = self.observation_owner.status()
+            if not state['closed'] or state['retainedHandles'] != 0:
+                self.observation_held(RuntimeError('OBSERVATION_CLOSE_UNCERTAIN'))
+                return
+        try:
+            self.guard.close()
+            state = self.guard.status()
+            need(state['closed'] and state['retainedHandles'] == 0, 'SOURCE_CLOSE_UNCERTAIN')
+        except BaseException as error:
+            self.observation_held(error)
+            return
+        self.observation_finish()
+
+    def release_observation(self):
+        need(self.observation_mode and self.phase == 'held' and not self.observation_release_attempted,
+             'OBSERVATION_RELEASE_REFUSED')
+        self.observation_release_attempted = True  # No callback may retry this release.
+        # Releasing a held observer never turns its prior error into metadata.
+        self.error_code = self.error_code or 'OBSERVATION_HELD'
+        self.observation_result = None
+        try:
+            if self.observation_owner is not None:
+                self.observation_owner.close()
+                state = self.observation_owner.status()
+                need(state['closed'] and state['retainedHandles'] == 0, 'OBSERVATION_CLOSE_UNCERTAIN')
+            self.guard.close()
+            state = self.guard.status()
+            need(state['closed'] and state['retainedHandles'] == 0, 'SOURCE_CLOSE_UNCERTAIN')
+        except BaseException as error:
+            self.observation_held(error)
+            return
+        self.observation_finish()
+
+    def observation_step(self):
+        try:
+            command, value, digest = self.transport.commands.get_nowait()
+        except queue.Empty:
+            return
+        try:
+            if command == 'observe_archive':
+                self.observe_archive(value, digest)
+            elif command == 'release_observation':
+                self.release_observation()
+            else:
+                raise RuntimeError('OBSERVATION_COMMAND_REFUSED')
+        except BaseException as error:
+            self.observation_held(error)
+
 
     def prepare_destination(self, value):
         need(self.binding is None and not self.start_seen, 'DESTINATION_PREPARE_REFUSED')
@@ -331,6 +509,9 @@ class Worker:
                 'files': self.copied, 'totalBytes': value['totalBytes']}
 
     def hold(self, code):
+        if self.observation_mode:
+            self.observation_held(RuntimeError(code))
+            return
         self.error_code = self.error_code or code
         self.cancelled = True
         if self.owner is not None:
@@ -401,6 +582,7 @@ class Worker:
         self.emit(True)
 
     def release(self):
+        need(not self.observation_mode, 'OBSERVATION_RELEASE_REQUIRED')
         need(not self.transport.fault, 'TRANSPORT_HELD')
         need(self.phase in ('extracted', 'copied', 'cancelled', 'held')
              and (self.explicit_cancel or self.phase in ('extracted', 'copied')), 'RELEASE_REFUSED')
@@ -420,6 +602,10 @@ class Worker:
     def run(self):
         while True:
             try:
+                if self.transport.observe_seen:
+                    self.observation_step()
+                    time.sleep(0.002)
+                    continue
                 if self.transport.fault:
                     if self.binding is not None and self.phase != 'held':
                         self.hold(self.transport.fault)

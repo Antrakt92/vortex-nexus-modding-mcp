@@ -16,7 +16,7 @@ const ADAPTED_SOURCE_PINS = Object.freeze({
   'paths.cjs':'d641537a2d03728c0212461d2e2e1b6ca22403b4e6cbed08f2730dcd234057ba',
   'paths-core.cjs':'b9c0fb32786134996f4ac8af68f22d29bb82b4bd4ed99abbff93c0b25b3ba032',
   'owned-zip-relay-client.mjs':'78c6e449ab80a24308e0b9aa46a843fa5548f6bb5350ca0ddee7763de4e45ad7',
-  'owned-zip-worker-client.mjs':'0786be18d373f33d6dd236e55f9947be502e6d3b90b9a63618f3abf1d574f613',
+  'owned-zip-worker-client.mjs':'6f2791141500d102c73303e43eb323b668f92263154d421dd3689a3d82e004b3',
 });
 function replaceOnce(text, before, after) {
   const at = text.indexOf(before);
@@ -60,12 +60,16 @@ function adapt(name, raw) {
       "            write(capsule.relayEnvelope,4*1024*1024);\n            await waitFor('ready');");
   }
   if (name === 'owned-zip-worker-client.mjs') {
+    // Only the fixed read-only observer can run directly in qualified Main.
+    // The installer keeps its separate standalone relay/runtime boundary.
+    text = replaceOnce(text, 'function archiveObserverRuntime() { runtime(); }',
+      "function archiveObserverRuntime() {\n  need(capsule.role==='main'||capsule.role==='relay','CAPSULE_ROLE');\n  need(process.platform==='win32' && process.arch==='x64' && process.versions.node==='24.20.0'\n    && (!process.versions.electron || capsule.role==='main' && process.versions.electron==='44.2.0'),'UNSUPPORTED_RUNTIME');\n  need(fileHash(PYTHON)===RUNTIME.pythonExe && fileHash(CORE)===RUNTIME.pythonCore,'PYTHON_SOURCE_MISMATCH');\n}");
     text = replaceOnce(text, "const WORK_BASE = path.resolve(HERE, '../../../local-state/owned-zip-worker-work');",
       "const WORK_BASE = path.join(capsule.binding.workspaceRoot,'local-state/owned-zip-worker-work');");
     text = replaceOnce(text, "function sources() {return Object.fromEntries(SOURCES.map(name => [name, fileHash(path.join(HERE, name), 512*1024)]));}",
       'function sources() {return Object.fromEntries(SOURCES.map(name => [name,capsule.pythonExecutionSHA256[name]]));}');
     text = replaceOnce(text, "child = spawn(PYTHON, ['-I', '-S', '-B', path.join(HERE, 'owned-zip-worker.py')], {\n          cwd: HERE,",
-      "need(capsule.role==='relay','CAPSULE_ROLE');\n        child = spawn(PYTHON, ['-I', '-S', '-B','-c',capsule.pythonBootstrap], {\n          cwd: capsule.binding.workspaceRoot,");
+      "need(capsule.role==='relay'||(archiveObserver&&capsule.role==='main'),'CAPSULE_ROLE');\n        child = spawn(PYTHON, ['-I', '-S', '-B','-c',capsule.pythonBootstrap], {\n          cwd: capsule.binding.workspaceRoot,");
     text = replaceOnce(text, "        await wait('ready');",
       "        write(capsule.pythonEnvelope,2*1024*1024);\n        await wait('ready');");
   }
