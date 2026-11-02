@@ -1,8 +1,9 @@
 'use strict';
 // Pure intake data only. Evidence hashes are claims, not native observations.
-// No persistence, ID allocation, archive I/O, dispatch or capability providers.
+// No persistence, archive I/O, dispatch or capability providers.
 const {createHash} = require('node:crypto');
 const types = require('node:util').types;
+const {deriveNativeTrackedRequestIds, validateNativeTrackedRequestId} = require('./native-dispatch-contract.cjs');
 const {parseStrictJSON} = require('./strict-json.cjs');
 const {LIMITS: PLAN_LIMITS, validateInstallPlan, installPlanId} = require('./install-job-contract.cjs');
 const SCHEMA = 'native-tracked-intake/1';
@@ -30,9 +31,9 @@ function snapshotEnvelope(input) {
     snapshot[name] = property.value;
   }
   // Same stable public request-ID convention as guard.cjs/serialization.cjs.
-  need(snapshot.schema === SCHEMA && typeof snapshot.requestId === 'string'
-    && snapshot.requestId.length >= 8 && snapshot.requestId.length <= 80
-    && !/[^a-zA-Z0-9_-]/.test(snapshot.requestId), 'NATIVE_TRACKED_INTAKE_INVALID');
+  need(snapshot.schema === SCHEMA, 'NATIVE_TRACKED_INTAKE_INVALID');
+  try {validateNativeTrackedRequestId(snapshot.requestId);}
+  catch {throw Error('NATIVE_TRACKED_INTAKE_INVALID');}
   return snapshot;
 }
 
@@ -65,4 +66,4 @@ function trackedIntakeDigest(input) {
   // Unambiguous semantic tuple; plan hashing stays owned by the job contract.
   return createHash('sha256').update(JSON.stringify([SCHEMA, value.requestId, installPlanId(value.plan)])).digest('hex');
 }
-module.exports = {SCHEMA, LIMITS, validateTrackedIntake, parseTrackedIntake, trackedIntakeDigest};
+module.exports = {SCHEMA, LIMITS, validateTrackedIntake, parseTrackedIntake, trackedIntakeDigest, deriveNativeTrackedRequestIds};

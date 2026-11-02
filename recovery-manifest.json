@@ -352,7 +352,7 @@
     },
     {
       "path": "docs/NATIVE-INSTALL-STATUS.md",
-      "sha256_lf": "c1a7a7d08e2e6805957f58b2ecc1946925b89d9940a217e2d6a51d250133b093"
+      "sha256_lf": "adbeb9e3eaf54bdbb8be99f288ff2820dd864a9e54c82ca578ba0ec5788d6b36"
     },
     {
       "path": "docs/NATIVE-LEVEL-PIVOT-TRANSACTIONS.md",
@@ -1052,7 +1052,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/native-dispatch-contract.cjs",
-      "sha256_lf": "ec4d123f389b5aefc5134c49ea8b5eb355065f0016eb34792b1bf41d60009c58"
+      "sha256_lf": "5e78af142268014e5dcd3f254e37a8088851f1886a21595011c062178df6ea0c"
     },
     {
       "path": "tools/modding/vortex-agent/native-dispatch-contract.test.cjs",
@@ -1116,7 +1116,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/native-executor-journal.mjs",
-      "sha256_lf": "d42038ec80c3dc89f74982afc0438ccddf00c3c2e7e481e70c9dc12a005fe1be"
+      "sha256_lf": "a8da6e6779f1d7f14ad65a1f6e2e07a8d88e92e98a8d4e56f53de02153f81e5b"
     },
     {
       "path": "tools/modding/vortex-agent/native-executor-journal.test.mjs",
@@ -2680,7 +2680,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/native-tracked-intake-contract.cjs",
-      "sha256_lf": "1b814c4ce3715bd42ba776e1c6f1bbb2313df43ec530e75a21ea23f44b729cee"
+      "sha256_lf": "fd4a3642e0d9c277d256c57305fbca2feea67dba54e75fdcf18f0fcbb2c94807"
     },
     {
       "path": "tools/modding/vortex-agent/native-tracked-intake-contract.test.mjs",
@@ -2689,6 +2689,10 @@
     {
       "path": "tools/modding/vortex-agent/native-tracked-mod-registration.test.mjs",
       "sha256_lf": "0a1d855dbcbee202a75ff648d703b33cf843b9852c8fd3dfca25b84a5261c03d"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-tracked-request-mapping.test.mjs",
+      "sha256_lf": "776699a58a384c1e66b21d566bba47bffb74d56e2b2a92b78bed961c44df678b"
     },
     {
       "path": "tools/modding/vortex-agent/native-tracking-patch.test.mjs",
