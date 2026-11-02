@@ -8,7 +8,7 @@ const MAX_ENVELOPE = 2 * 1024 * 1024;
 // Adapter review boundary: changed raw source requires a new explicit adaptation review.
 const ORIGINAL_SHA256 = Object.freeze({
   'owned-zip-worker.py':'1b823200dc386f2681e887624631a794e55143d6db25f94a0b67d075b9ad298a',
-  'owned-file-transfer.py':'8224875c23d45b14ea7607f1d28f982304f791f853e4aa193317b5ef5f10e9ee',
+  'owned-file-transfer.py':'25afe90dc2a99790b939151d5261e0308ab005ffdf0ff0a6ad15bac12688bac1',
   'owned-zip-extractor.py':'0b2bb825d95f928262afa570724d5ebac04257db119375f2f3ce0c8c2bf5ed59',
 });
 const sha = value => crypto.createHash('sha256').update(value).digest('hex');

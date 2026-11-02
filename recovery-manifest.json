@@ -352,7 +352,7 @@
     },
     {
       "path": "docs/NATIVE-INSTALL-STATUS.md",
-      "sha256_lf": "0b5cc35d049b3cbbf11f7b2ee507bed1e6e65210013ca0ab19921157567139be"
+      "sha256_lf": "147345330eae13c4a4f5dd0ce329dd15fa54ef9060e2db316234b4877ff937ba"
     },
     {
       "path": "docs/NATIVE-LEVEL-PIVOT-TRANSACTIONS.md",
@@ -2608,7 +2608,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/native-sdk-python-capsule.mjs",
-      "sha256_lf": "9d3a683042b406a93edce023366a9993599a16bb6917f05018c5b806375e59df"
+      "sha256_lf": "b0467a616b2eaacc633d3ba6dbec78758aa8a0c581d18177eb3223803b14baf5"
     },
     {
       "path": "tools/modding/vortex-agent/native-sdk-python-capsule.test.mjs",
@@ -2732,11 +2732,11 @@
     },
     {
       "path": "tools/modding/vortex-agent/owned-file-transfer.py",
-      "sha256_lf": "8224875c23d45b14ea7607f1d28f982304f791f853e4aa193317b5ef5f10e9ee"
+      "sha256_lf": "25afe90dc2a99790b939151d5261e0308ab005ffdf0ff0a6ad15bac12688bac1"
     },
     {
       "path": "tools/modding/vortex-agent/owned-file-transfer.test.py",
-      "sha256_lf": "c4a1ad8b1dc8124d4465fae0a33f59795eff5029f31a2596e474f19a5e72fa33"
+      "sha256_lf": "175fdbca671d32e45e289173a4ca41a64c4fa71be6ef395b4e9a737ccdab8a72"
     },
     {
       "path": "tools/modding/vortex-agent/owned-zip-extractor.py",

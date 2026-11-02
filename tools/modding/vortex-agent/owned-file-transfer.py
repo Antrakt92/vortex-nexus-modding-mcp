@@ -278,12 +278,16 @@ class _HandleCustody:
 
     def _release_handle(self, entry):
         _need(entry in self._handles, 'HANDLE_NOT_OWNED')
-        handle = entry.cell.value
-        if handle in (None, C.c_void_p(-1).value):
-            self._handles.remove(entry)
-            return True
         if entry.phase == 'close-uncertain':
             return False
+        handle = entry.cell.value
+        if handle in (None, C.c_void_p(-1).value):
+            # Only a known-return no-handle outcome is known closed. A native
+            # interruption can leave an unpopulated cell with unknown ownership.
+            if entry.phase != 'pending':
+                return False
+            self._handles.remove(entry)
+            return True
         entry.phase = 'close-uncertain'  # Before crossing native close/interrupt boundary.
         success = _K.CloseHandle(handle)
         if success:
@@ -303,8 +307,10 @@ class _HandleCustody:
         sharing = 3 if directory else 1
         # The output cell is retained BEFORE crossing ctypes/kernel boundaries.
         # An interrupt after kernel creation must not lose the returned handle.
+        entry.phase = 'open-uncertain'
         code = _N.NtCreateFile(C.byref(entry.cell), access, C.byref(attrs), C.byref(status), None,
                                0x10 if directory else 0x80, sharing, 2 if create else 1, options, None, 0)
+        entry.phase = 'open' if entry.cell.value not in (None, C.c_void_p(-1).value) else 'pending'
         _need(code >= 0, 'CREATE_REFUSED' if create else 'OPEN_REFUSED')
         _need(entry.cell.value not in (None, C.c_void_p(-1).value) and status.Information == (2 if create else 1), 'UNEXPECTED_OPEN')
         entry.phase = 'open'
@@ -375,6 +381,73 @@ class _HandleCustody:
             raise OwnedTransferError('CLOSE_UNCERTAIN', self) from None
         finally:
             self._closed = not self._handles
+
+
+class OwnedArchiveObservation(_HandleCustody):
+    """One read-only, closed archive snapshot; never custody or an install permit.
+
+    Construction is inert. observe() opens only existing objects, reads the leaf
+    once, and returns six archiveBinding fields only after complete close.
+    An uncertain close retains this owner through error.lease for supervision.
+    """
+    def __init__(self, parent, leaf, expected_size, expected_sha256, expected_md5):
+        _need(os.name == 'nt', 'UNSUPPORTED_PLATFORM')
+        _need(_abi(), 'UNSUPPORTED_ABI')
+        self._parent_path, self._leaf = _root(parent), _component(leaf)
+        _need(type(expected_size) is int and 0 < expected_size <= 64 * 1024 * 1024
+              and type(expected_sha256) is str and re.fullmatch(r'[a-f0-9]{64}', expected_sha256)
+              and type(expected_md5) is str and re.fullmatch(r'[a-f0-9]{32}', expected_md5), 'INVALID_PROOF')
+        self._size, self._sha, self._md5 = expected_size, expected_sha256, expected_md5
+        self._init_custody()
+        self._attempted = self._poisoned = self._closed = False
+        self._close_failure = None
+
+    def status(self):
+        return {'closed': self._closed, 'poisoned': self._poisoned,
+                'retainedHandles': len(self._handles), 'observationOnly': True}
+
+    def observe(self):
+        # The lock is released before close() takes the same custody lock.
+        # Never retry acquisition; error.lease retains any uncertain handles.
+        with self._operation():
+            _need(not self._attempted, 'ALREADY_ATTEMPTED')
+            self._attempted = True
+            primary, result = None, None
+            try:
+                parent = self._root_handle(self._parent_path)
+                parent_before = _snapshot(parent, True)
+                archive, before = self._open(parent, self._leaf, False, create=False, writable=False)
+                _need(before[1] == self._size and before[2] == 1, 'ARCHIVE_MISMATCH')
+                sha256, md5 = _hash_pair(archive, self._size)
+                _need(sha256 == self._sha and md5 == self._md5, 'ARCHIVE_MISMATCH')
+                _need(_snapshot(archive, False) == before
+                      and _snapshot(parent, True) == parent_before, 'ARCHIVE_CHANGED')
+                result = {'parent': self._parent_path, 'parentIdentity': _label(parent_before[0]),
+                          'leaf': self._leaf, 'identity': _label(before[0]),
+                          'bytes': self._size, 'sha256': sha256}
+            except BaseException as error:
+                self._poisoned = True
+                if isinstance(error, Exception):
+                    primary = self._error(error)
+                else:
+                    error.lease = self
+                    primary = error
+        try:
+            self.close()
+            _need(self._closed and not self._handles, 'CLOSE_UNCERTAIN')
+        except BaseException as error:
+            self._poisoned = True
+            self._close_failure = error
+            if primary is None:
+                if isinstance(error, Exception):
+                    primary = self._error(error)
+                else:
+                    error.lease = self
+                    primary = error
+        if primary is not None:
+            raise primary from None
+        return result
+
 
 
 class OwnedFileTransfer(_HandleCustody):
