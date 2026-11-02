@@ -16,10 +16,9 @@ from unittest.mock import patch
 HERE = Path(__file__).absolute().parent
 WORKSPACE = HERE.parents[2]
 SANDBOX = WORKSPACE/'local-state/install-contract-20261031/owned-transfer-tests'
-if os.name == 'nt':
-    spec = importlib.util.spec_from_file_location('owned_file_transfer', HERE/'owned-file-transfer.py')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+spec = importlib.util.spec_from_file_location('owned_file_transfer', HERE/'owned-file-transfer.py')
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
 
 
 @unittest.skipUnless(os.name == 'nt', 'Windows native handles required')
@@ -449,6 +448,424 @@ class OwnedFileTransferTests(unittest.TestCase):
             with self.assertRaisesRegex(module.OwnedTransferError, 'HANDLE_LIMIT'):
                 handles.transfer(name, 'exceeds.bin', size, digest)
         self.assertFalse((self.parent/'Handles/exceeds.bin').exists())
+
+
+    def test_archive_observer_native_identity_and_no_outputs(self):
+        import msvcrt
+        data = b'own archive observation fixture\n'
+        self.payload('own.zip', data)
+        file = self.source/'own.zip'
+        before = file.stat()
+        observation = module.OwnedArchiveObservation(str(self.source), file.name, len(data),
+                        hashlib.sha256(data).hexdigest(), hashlib.md5(data).hexdigest())
+        self.leases.append(observation)
+        with patch.object(module, '_write', side_effect=AssertionError('observer attempted write')):
+            result = observation.observe()
+        self.assertEqual(set(result), {'parent', 'parentIdentity', 'leaf', 'identity', 'bytes', 'sha256'})
+        # Explicit FileIdInfo on an independent read FD, never stat as identity authority.
+        with file.open('rb') as stream:
+            info = module._Identity()
+            self.assertTrue(module._K.GetFileInformationByHandleEx(
+                msvcrt.get_osfhandle(stream.fileno()), 18, ctypes.byref(info), ctypes.sizeof(info)))
+            identity = {'schema': module.IDENTITY_SCHEMA, 'volumeSerialNumber': str(info.volume),
+                        'fileId': str(int.from_bytes(bytes(info.file), 'little'))}
+        self.assertEqual(result['identity'], identity)
+        self.assertEqual(result['sha256'], hashlib.sha256(data).hexdigest())
+        self.assertEqual(result['bytes'], len(data))
+        self.assertTrue(observation.status()['closed'])
+        self.assertEqual(observation.status()['retainedHandles'], 0)
+        after = file.stat()
+        self.assertEqual((before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns),
+                         (after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns))
+        self.assertEqual(file.read_bytes(), data)
+        self.assertEqual({p.name for p in self.root.iterdir()}, {'source', 'parent'})
+        self.assertEqual({p.name for p in self.source.iterdir()}, {'own.zip'})
+        self.assertEqual(list(self.parent.iterdir()), [])
+
+    def test_archive_observer_native_hardlink_refuses_before_hash(self):
+        self.payload('own.zip', b'own archive fixture')
+        file = self.source/'own.zip'
+        alias = self.source/'alias.zip'
+        os.link(file, alias)
+        data = file.read_bytes()
+        observation = module.OwnedArchiveObservation(str(self.source), file.name, len(data),
+                        hashlib.sha256(data).hexdigest(), hashlib.md5(data).hexdigest())
+        self.leases.append(observation)
+        with patch.object(module, '_hash_pair', side_effect=AssertionError('hardlink was read')):
+            with self.assertRaisesRegex(module.OwnedTransferError, 'ARCHIVE_MISMATCH'):
+                observation.observe()
+        self.assertTrue(observation.status()['closed'])
+        self.assertEqual(observation.status()['retainedHandles'], 0)
+        self.assertEqual({p.name for p in self.source.iterdir()}, {'own.zip', 'alias.zip'})
+        self.assertEqual(file.read_bytes(), data)
+        self.assertEqual(alias.read_bytes(), data)
+        self.assertEqual(list(self.parent.iterdir()), [])
+
+
+class OwnedArchiveObservationModelTests(unittest.TestCase):
+    """Actual observer algorithm; native handle/hash boundaries are explicit models.
+
+    No filesystem fixture, process, destination or Windows API is exercised here.
+    The inherited custody lock/close loop and primary-error handling are real.
+    """
+    def setUp(self):
+        self.events = []
+        self.snapshots = {'parent': ('123:456', 0, 1, 7, 8, 16),
+                          'archive': ('123:18446744073709551620', 3, 1, 9, 10, 128)}
+        self.hashes = (hashlib.sha256(b'zip').hexdigest(), hashlib.md5(b'zip').hexdigest())
+        self.hash_error = self.close_error = None
+        self.mutate = None
+        owner = self
+
+        class Model(module.OwnedArchiveObservation):
+            def _root_handle(inner, value):
+                owner.events.append(('root', value))
+                inner._handles.extend(['drive', 'parent'])
+                return 'parent'
+
+            def _open(inner, parent, leaf, directory, create=False, writable=False):
+                owner.events.append(('open', parent, leaf, directory, create, writable))
+                inner._handles.append('archive')
+                return 'archive', owner.snapshots['archive']
+
+            def _release_handle(inner, handle):
+                owner.events.append(('close', handle))
+                if owner.close_error is not None:
+                    raise owner.close_error
+                inner._handles.remove(handle)
+                return True
+
+        self.Model = Model
+        self.stack = []
+        for patcher in (patch.object(module.os, 'name', 'nt'), patch.object(module, '_abi', return_value=True),
+                        patch.object(module, '_snapshot', side_effect=self.snapshot),
+                        patch.object(module, '_hash_pair', side_effect=self.hash_pair)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def snapshot(self, handle, directory):
+        self.events.append(('snapshot', handle, directory))
+        return self.snapshots[handle]
+
+    def hash_pair(self, handle, size):
+        self.events.append(('hash', handle, size))
+        if self.mutate is not None:
+            self.mutate()
+        if self.hash_error is not None:
+            raise self.hash_error
+        return self.hashes
+
+    def owner(self, **options):
+        arguments = dict(parent='c:/Downloads', leaf='own.zip', expected_size=3,
+                         expected_sha256=self.hashes[0], expected_md5=self.hashes[1])
+        arguments.update(options)
+        return self.Model(**arguments)
+
+    def test_constructor_inert_and_closed_six_field_native_snapshot(self):
+        observation = self.owner()
+        self.assertEqual(self.events, [])
+        result = observation.observe()
+        self.assertEqual(list(result), ['parent', 'parentIdentity', 'leaf', 'identity', 'bytes', 'sha256'])
+        self.assertEqual(result['parent'], 'C:\\Downloads')
+        self.assertEqual(result['identity'], {'schema': 'win-file-id128/1', 'volumeSerialNumber': '123',
+                                              'fileId': '18446744073709551620'})
+        self.assertEqual(result['parentIdentity']['fileId'], '456')
+        self.assertEqual(result['sha256'], self.hashes[0])
+        self.assertEqual(observation.status(), {'closed': True, 'poisoned': False,
+                                               'retainedHandles': 0, 'observationOnly': True})
+        self.assertEqual([x for x in self.events if x[0] == 'open'],
+                         [('open', 'parent', 'own.zip', False, False, False)])
+        self.assertEqual([x for x in self.events if x[0] == 'hash'], [('hash', 'archive', 3)])
+        self.assertEqual(self.events[-3:], [('close', 'archive'), ('close', 'parent'), ('close', 'drive')])
+
+    def test_invalid_closed_inputs_before_any_open(self):
+        for options in ({'expected_size': 0}, {'expected_size': True}, {'expected_size': 64*1024*1024+1},
+                        {'expected_sha256': 'A'*64}, {'expected_md5': None}, {'expected_md5': '0'*31},
+                        {'leaf': '../own.zip'}, {'parent': '\\\\server\\share'}, {'parent': 'C:/a/../b'}):
+            with self.subTest(options=options), self.assertRaises(module.OwnedTransferError):
+                self.owner(**options)
+        self.assertEqual(self.events, [])
+
+    def test_size_or_multiple_links_refused_before_hash(self):
+        for size, links in ((0, 1), (4, 1), (3, 2), (3, 0)):
+            with self.subTest(size=size, links=links):
+                self.events.clear()
+                self.snapshots['archive'] = ('123:789', size, links, 9, 10, 128)
+                observation = self.owner()
+                with self.assertRaisesRegex(module.OwnedTransferError, 'ARCHIVE_MISMATCH'):
+                    observation.observe()
+                self.assertFalse(any(x[0] == 'hash' for x in self.events))
+                self.assertTrue(observation.status()['closed'])
+
+    def test_either_digest_mismatch_refused_and_all_handles_closed(self):
+        for index in (0, 1):
+            good = self.hashes
+            observation = self.owner()
+            changed = list(good)
+            changed[index] = '0'*len(good[index])
+            self.hashes = tuple(changed)
+            with self.assertRaisesRegex(module.OwnedTransferError, 'ARCHIVE_MISMATCH'):
+                observation.observe()
+            self.assertTrue(observation.status()['closed'])
+            self.hashes = good
+
+    def test_every_leaf_generation_field_and_parent_generation_are_rechecked(self):
+        for handle, fields in (('archive', range(6)), ('parent', range(6))):
+            for field in fields:
+                with self.subTest(handle=handle, field=field):
+                    before = dict(self.snapshots)
+                    def mutate():
+                        row = list(self.snapshots[handle])
+                        row[field] = '123:999' if field == 0 else row[field] + 1
+                        self.snapshots[handle] = tuple(row)
+                    self.mutate = mutate
+                    observation = self.owner()
+                    with self.assertRaisesRegex(module.OwnedTransferError, 'ARCHIVE_CHANGED'):
+                        observation.observe()
+                    self.assertTrue(observation.status()['closed'])
+                    self.snapshots = before
+
+    def test_unsafe_parent_or_leaf_native_refusal_never_hashes(self):
+        for method in ('_root_handle', '_open'):
+            observation = self.owner()
+            primary = module.OwnedTransferError('UNSAFE_OBJECT')
+            with patch.object(observation, method, side_effect=primary):
+                with self.assertRaises(module.OwnedTransferError) as caught:
+                    observation.observe()
+            self.assertIs(caught.exception, primary)
+            self.assertIs(primary.lease, observation)
+            self.assertFalse(any(x[0] == 'hash' for x in self.events))
+
+    def test_partial_open_retains_cell_then_raises_before_return(self):
+        observation = self.owner()
+        primary = module.OwnedTransferError('OPEN_REFUSED')
+        def partial_open(parent, leaf, directory, create=False, writable=False):
+            self.events.append(('partial-open', parent, leaf, directory, create, writable))
+            observation._handles.append('partial-archive')
+            raise primary
+        with patch.object(observation, '_open', side_effect=partial_open):
+            with self.assertRaises(module.OwnedTransferError) as caught:
+                observation.observe()
+        self.assertIs(caught.exception, primary)
+        self.assertIs(primary.lease, observation)
+        self.assertFalse(any(event[0] == 'hash' for event in self.events))
+        self.assertEqual([event for event in self.events if event[0] == 'close'],
+                         [('close', 'partial-archive'), ('close', 'parent'), ('close', 'drive')])
+        self.assertEqual(observation.status(), {'closed': True, 'poisoned': True,
+                                               'retainedHandles': 0, 'observationOnly': True})
+
+    def test_read_primary_survives_close_failure_and_owner_retains_handles(self):
+        observation = self.owner()
+        primary = module.OwnedTransferError('READ_FAILED')
+        self.hash_error, self.close_error = primary, OSError('close model')
+        with self.assertRaises(module.OwnedTransferError) as caught:
+            observation.observe()
+        self.assertIs(caught.exception, primary)
+        self.assertIs(primary.lease, observation)
+        self.assertFalse(observation.status()['closed'])
+        self.assertEqual(observation.status()['retainedHandles'], 3)
+        self.assertEqual([x for x in self.events if x[0] == 'close'], [('close', 'archive')])
+        self.assertIsNotNone(observation._close_failure)
+
+    def test_standalone_close_failure_never_returns_snapshot(self):
+        observation = self.owner()
+        self.close_error = OSError('close model')
+        with self.assertRaisesRegex(module.OwnedTransferError, 'CLOSE_UNCERTAIN') as caught:
+            observation.observe()
+        self.assertIs(caught.exception.lease, observation)
+        self.assertTrue(observation.status()['poisoned'])
+        self.assertFalse(observation.status()['closed'])
+
+    def test_raw_io_error_is_sanitized_but_not_replaced_by_close(self):
+        observation = self.owner()
+        self.hash_error, self.close_error = OSError('private path model'), OSError('cleanup model')
+        with self.assertRaisesRegex(module.OwnedTransferError, '^OWNED_TRANSFER_IO_FAILED$') as caught:
+            observation.observe()
+        self.assertIs(caught.exception.lease, observation)
+
+    def test_interrupt_identity_survives_close_failure(self):
+        observation = self.owner()
+        primary = KeyboardInterrupt()
+        self.hash_error, self.close_error = primary, OSError('cleanup model')
+        with self.assertRaises(KeyboardInterrupt) as caught:
+            observation.observe()
+        self.assertIs(caught.exception, primary)
+        self.assertIs(primary.lease, observation)
+
+    def test_one_shot_even_after_success_or_failure(self):
+        for fail in (False, True):
+            observation = self.owner()
+            self.hash_error = module.OwnedTransferError('READ_FAILED') if fail else None
+            if fail:
+                with self.assertRaises(module.OwnedTransferError):
+                    observation.observe()
+            else:
+                observation.observe()
+            count = len(self.events)
+            with self.assertRaises(module.OwnedTransferError):
+                observation.observe()
+            self.assertEqual(len(self.events), count)
+
+    def test_reentry_cannot_reopen_or_create(self):
+        observation = self.owner()
+        def reenter():
+            with self.assertRaisesRegex(module.OwnedTransferError, 'BUSY_OR_WRONG_THREAD'):
+                observation.observe()
+        self.mutate = reenter
+        observation.observe()
+        self.assertEqual(len([x for x in self.events if x[0] == 'root']), 1)
+
+
+
+class OwnedArchiveHandleCellModelTests(unittest.TestCase):
+    """Actual _open/_release_handle/observe; ctypes/native functions are models."""
+    def setUp(self):
+        class Unicode(ctypes.Structure):
+            _fields_ = [('Length', ctypes.c_ushort), ('MaximumLength', ctypes.c_ushort),
+                        ('Buffer', ctypes.c_wchar_p)]
+        class Attributes(ctypes.Structure):
+            _fields_ = [('Length', ctypes.c_uint32), ('RootDirectory', ctypes.c_void_p),
+                        ('ObjectName', ctypes.POINTER(Unicode)), ('Attributes', ctypes.c_uint32),
+                        ('SecurityDescriptor', ctypes.c_void_p), ('SecurityQualityOfService', ctypes.c_void_p)]
+        class Status(ctypes.Structure):
+            _fields_ = [('Information', ctypes.c_size_t)]
+        class Entry:
+            def __init__(self):
+                self.cell, self.phase = ctypes.c_void_p(), 'pending'
+        class Native:
+            pass
+        self.open_fault = None
+        self.fill = True
+        self.code = 0
+        self.information = 1
+        self.close_fault = None
+        self.close_ok = True
+        self.calls = []
+        self.native, self.kernel = Native(), Native()
+        self.native.NtCreateFile = self.open_native
+        self.kernel.CloseHandle = self.close_native
+        for name, value in (('_Unicode', Unicode), ('_Attributes', Attributes), ('_Status', Status),
+                            ('_HandleEntry', Entry), ('_N', self.native), ('_K', self.kernel)):
+            patcher = patch.object(module, name, value, create=True)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        for patcher in (patch.object(module.os, 'name', 'nt'), patch.object(module, '_abi', return_value=True),
+                        patch.object(module, '_snapshot', side_effect=self.snapshot),
+                        patch.object(module, '_hash_pair', return_value=('a'*64, 'b'*32))):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def snapshot(self, handle, directory):
+        return ('123:' + str(handle), 0 if directory else 3, 1, 1, 2, 16 if directory else 128)
+
+    def open_native(self, cell, access, attrs, status, allocation, attributes, sharing, disposition,
+                    options, extra, length):
+        self.calls.append(('open', sharing, disposition))
+        self.assertEqual(self.owner._handles[-1].phase, 'open-uncertain')
+        if self.fill:
+            cell._obj.value = 77 + len(self.owner._handles)
+        if self.open_fault is not None:
+            raise self.open_fault
+        status._obj.Information = self.information
+        return self.code
+
+    def close_native(self, handle):
+        self.calls.append(('close', handle))
+        if self.close_fault is not None:
+            raise self.close_fault
+        return self.close_ok
+
+    def new_owner(self):
+        # Use the actual _open on a modeled existing root, not a fake handle list.
+        class Observer(module.OwnedArchiveObservation):
+            def _root_handle(inner, path):
+                return inner._open(None, 'modeled-root', True, create=False)[0]
+        self.owner = Observer('C:/Downloads', 'own.zip', 3, 'a'*64, 'b'*32)
+        return self.owner
+
+    def test_native_raise_without_cell_remains_open_uncertain(self):
+        owner = self.new_owner()
+        primary = module.OwnedTransferError('OPEN_MODEL_FAILED')
+        self.fill, self.open_fault = False, primary
+        with self.assertRaises(module.OwnedTransferError) as caught:
+            owner.observe()
+        self.assertIs(caught.exception, primary)
+        self.assertIs(primary.lease, owner)
+        self.assertEqual(len(owner._handles), 1)
+        self.assertEqual(owner._handles[0].phase, 'open-uncertain')
+        self.assertIsNone(owner._handles[0].cell.value)
+        self.assertFalse(owner.status()['closed'])
+        self.assertIsNotNone(owner._close_failure)
+        self.assertEqual([call for call in self.calls if call[0] == 'close'], [])
+        with self.assertRaisesRegex(module.OwnedTransferError, 'CLOSE_FAILED'):
+            owner.close()
+        self.assertEqual(len(owner._handles), 1)
+
+    def test_native_raise_after_cell_is_owned_and_closed_once(self):
+        owner = self.new_owner()
+        primary = module.OwnedTransferError('OPEN_MODEL_FAILED')
+        self.open_fault = primary
+        with self.assertRaises(module.OwnedTransferError) as caught:
+            owner.observe()
+        self.assertIs(caught.exception, primary)
+        self.assertEqual([call for call in self.calls if call[0] == 'close'], [('close', 78)])
+        self.assertTrue(owner.status()['closed'])
+        owner.close()
+        self.assertEqual([call for call in self.calls if call[0] == 'close'], [('close', 78)])
+
+    def test_known_failure_without_handle_is_known_closed(self):
+        owner = self.new_owner()
+        self.fill, self.code = False, -1
+        with self.assertRaisesRegex(module.OwnedTransferError, 'OPEN_REFUSED'):
+            owner.observe()
+        self.assertTrue(owner.status()['closed'])
+        self.assertEqual(owner._handles, [])
+        self.assertIsNone(owner._close_failure)
+        self.assertFalse(any(call[0] == 'close' for call in self.calls))
+
+    def test_known_failure_with_handle_is_closed(self):
+        owner = self.new_owner()
+        self.code = -1
+        with self.assertRaisesRegex(module.OwnedTransferError, 'OPEN_REFUSED'):
+            owner.observe()
+        self.assertTrue(owner.status()['closed'])
+        self.assertEqual(self.calls[-1], ('close', 78))
+
+    def test_close_raise_retains_close_uncertain_and_never_retries(self):
+        owner = self.new_owner()
+        primary = module.OwnedTransferError('OPEN_MODEL_FAILED')
+        self.open_fault, self.close_fault = primary, OSError('close model')
+        with self.assertRaises(module.OwnedTransferError) as caught:
+            owner.observe()
+        self.assertIs(caught.exception, primary)
+        entry = owner._handles[0]
+        self.assertEqual(entry.phase, 'close-uncertain')
+        self.close_fault = None
+        # Even an invalidated cell cannot erase a previous uncertain close.
+        entry.cell.value = None
+        with self.assertRaisesRegex(module.OwnedTransferError, 'CLOSE_FAILED'):
+            owner.close()
+        self.assertIn(entry, owner._handles)
+        self.assertEqual([call for call in self.calls if call[0] == 'close'], [('close', 78)])
+
+    def test_known_close_false_retains_open_without_automatic_retry(self):
+        owner = self.new_owner()
+        primary = module.OwnedTransferError('OPEN_MODEL_FAILED')
+        self.open_fault, self.close_ok = primary, False
+        with self.assertRaises(module.OwnedTransferError) as caught:
+            owner.observe()
+        self.assertIs(caught.exception, primary)
+        self.assertEqual(owner._handles[0].phase, 'open')
+        self.assertFalse(owner.status()['closed'])
+        self.assertEqual([call for call in self.calls if call[0] == 'close'], [('close', 78)])
+
+    def test_success_uses_actual_cells_reverse_close_and_noncreate_access(self):
+        owner = self.new_owner()
+        result = owner.observe()
+        self.assertEqual(result['identity']['fileId'], '79')
+        self.assertEqual(self.calls, [('open', 3, 1), ('open', 1, 1), ('close', 79), ('close', 78)])
+        self.assertTrue(owner.status()['closed'])
+
 
 
 if __name__ == '__main__':

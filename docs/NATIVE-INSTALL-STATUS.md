@@ -151,6 +151,38 @@ This module is a pure dependency for the production intake. It is not yet a
 renderer build input, durable request mapping, native observation producer or
 public tool. Passing its tests does not authorize preparation or installation.
 
+## Read-only archive observation
+
+`OwnedArchiveObservation` in
+[`owned-file-transfer.py`](../tools/modding/vortex-agent/owned-file-transfer.py)
+now supplies the physical observation primitive. It opens an existing local NTFS
+parent and relative leaf, requires a positive bounded size and a single link,
+checks SHA256 and MD5 in one held-handle pass, and rechecks full native snapshots.
+Only successful closure returns the six archive-binding fields. It creates no
+destination, work directory or extractor. The later installation lease must
+still reacquire and revalidate the archive; this closed snapshot is not custody.
+
+The shared handle layer also preserves an interrupted native-open with an empty
+output cell as `open-uncertain`. It cannot report that slot closed or retry an
+uncertain close. Model regression checks reproduce the prior false-closed status
+and verify the correction. Existing native tests cover returned handles and
+interrupted close paths.
+
+Local verification covered 44 custody/observer tests, eight hash-pair tests,
+20 ZIP tests, thirteen extractor tests, eighteen source-capture/capsule tests
+and 34 worker/staging tests. The observer's real NTFS test compares its identity
+against a separate FileIdInfo call and verifies unchanged input/no outputs;
+a second real test refuses a hardlink before hashing. The other tests include
+explicit native stubs and synthetic owned fixtures. Capture/capsule suites run
+with `--test-concurrency=1` to keep their strict ancestor-generation checks
+separate from sibling test-directory churn.
+
+The reviewed Python capsule source pin includes this change; its fifteen-source
+namespace and loader adaptations are unchanged. No new capsule was installed
+in the user's Vortex. The fixed observer worker protocol/client and Main's
+genuine tracked-download association are still required before this primitive
+can supply the production intake.
+
 ## Next gates
 
 1. Add the production source-owned intake, durable public-request-to-operation
