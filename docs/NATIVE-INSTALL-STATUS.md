@@ -132,6 +132,25 @@ These ignored local receipts are not included in a fresh clone. Their hashes
 identify this checkpoint, not a portable installation permit. The collector's
 generic `INSTALLED.json` filename is not evidence of a mod installation.
 
+## Production intake contract
+
+[`native-tracked-intake-contract.cjs`](../tools/modding/vortex-agent/native-tracked-intake-contract.cjs)
+accepts only `{schema:"native-tracked-intake/1", requestId, plan}`. The stable
+request ID uses the adapter's 8–80 character ASCII convention; the existing job
+contract validates, copies and freezes the plan. The digest binds the request ID
+to the complete semantic plan identity. Internal operation IDs, manager owners,
+archive observations and permits cannot be supplied through this envelope.
+
+The byte parser copies the visible Uint8Array/Buffer slice through intrinsic
+operations, without invoking carrier getters or enumerating a key per byte.
+Shared or resizable buffers, proxy carriers and malformed JSON are refused.
+Envelope fields remain closed data properties. Digest creation validates the
+plan once and retains no caller-state cache.
+
+This module is a pure dependency for the production intake. It is not yet a
+renderer build input, durable request mapping, native observation producer or
+public tool. Passing its tests does not authorize preparation or installation.
+
 ## Next gates
 
 1. Add the production source-owned intake, durable public-request-to-operation

@@ -352,7 +352,7 @@
     },
     {
       "path": "docs/NATIVE-INSTALL-STATUS.md",
-      "sha256_lf": "b14a037d43137232f0a122f448cffca0e5fd6996608044b20606ccfe9441dd61"
+      "sha256_lf": "0b5cc35d049b3cbbf11f7b2ee507bed1e6e65210013ca0ab19921157567139be"
     },
     {
       "path": "docs/NATIVE-LEVEL-PIVOT-TRANSACTIONS.md",
@@ -2665,6 +2665,14 @@
     {
       "path": "tools/modding/vortex-agent/native-successor-main-fixture.mjs",
       "sha256_lf": "7ae414e9536768e9531f6dd9fa6e2ca2f3e8e537111917f54bf1d8b25cdee3cd"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-tracked-intake-contract.cjs",
+      "sha256_lf": "1b814c4ce3715bd42ba776e1c6f1bbb2313df43ec530e75a21ea23f44b729cee"
+    },
+    {
+      "path": "tools/modding/vortex-agent/native-tracked-intake-contract.test.mjs",
+      "sha256_lf": "0f719def7a9ac93245fb65fb4e7cb1ef0839c7cad6c3fec2ceee1860301a9db5"
     },
     {
       "path": "tools/modding/vortex-agent/native-tracked-mod-registration.test.mjs",
