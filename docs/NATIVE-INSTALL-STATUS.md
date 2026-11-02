@@ -41,8 +41,23 @@ This establishes the observed installation data and physical closure for these
 two synthetic packages. It does not turn the failed supervisor result into a
 passed run, enable a public installation API, qualify the user's installed host
 or prove crash durability or gameplay behavior. The reader and observer each
-retain `fullInstallationAccepted:false`; the combined acceptance and corrected
-runtime guard remain separate gates.
+retain `fullInstallationAccepted:false`.
+
+The corrected runtime guard subsequently checked the same retained 33 files.
+It required exact directory membership and ordinary single-link files across
+all 33 leaves, rather than ignoring the SDK work directory. Eight explicit
+FileIdInfo queries checked the four work products before and after reading their
+held descriptors. Database, staging and fixture game bytes stayed unchanged.
+The validator did not execute Vortex or its SDK, open the original database,
+rewrite the failed receipt or replay either installation.
+
+The exact guard is retained as
+[`tests/fixtures/native-runtime-work-products.py`](../tests/fixtures/native-runtime-work-products.py).
+Its [18 portable tests](../tests/test_native_runtime_work_products.py) exercise
+the actual function bodies with filesystem and Windows API facades, including
+the old guard accepting hardlinks and the corrected guard rejecting them.
+Full-module loading is inert and needs no Windows imports. These modeled tests
+are separate from the eight actual native observations above.
 
 Local evidence under `local-state/native-inert-cancel/`:
 
@@ -55,6 +70,8 @@ Local evidence under `local-state/native-inert-cancel/`:
 | `prep/full-install-forensic-result-review/AUDIT.json` | `e552f07005e92c225bebb9c99c18000c1a93b83b6f64ee2f4f6c4ea7d66e94ce` |
 | `recovery/full-install-failed-native-id-draft/RESULT.json` | `e486729ceb41aa6158cdca422b224a629493f4161f4413b4e893ed49d88afb3c` |
 | `prep/full-install-forensic-result-review/NATIVE-FIVE-AUDIT.json` | `ab8764f3a110876af29a10953dde3d575020951f3ed0bc82abfd8944baf90ec1` |
+| `bridge/full-install-work-current-validator/RESULT.json` | `7f0d6d9865effae83367d9053db35789688616949a730da3682c23a9e9d26262` |
+| `prep/current-runtime-validator-result-review/REVISION2-PINS.json` | `970d076b88ade4d572cdb215f8617ac81bee6d6e138ebf379a14c610d7bd2acf` |
 
 These ignored local artifacts are not part of a fresh clone or a portable
 installation permit. Model tests passed for the reader, execution evidence,
@@ -117,14 +134,15 @@ generic `INSTALLED.json` filename is not evidence of a mod installation.
 
 ## Next gates
 
-1. Complete and test strict runtime accounting for the four expected SDK work
-   products. Reject extra files and directories, changed inputs, aliases and
-   mismatched copy proofs; do not ignore an entire work-directory prefix.
-2. Review the combined execution, database, payload and native-identity evidence
-   against that corrected check. Preserve the original failed receipt.
-3. Enable a supported public MCP installation route only after its admission
-   gates, then perform the separate installed-host qualification and release
-   work. Keep profile flags, deployment owners and game files protected.
+1. Add the production source-owned intake, durable public-request-to-operation
+   mapping and real tracked-archive identity producer. The isolated fixture's
+   fixed descriptors and private capture hooks cannot serve as those producers.
+2. Qualify the production build and supported public MCP path, preserving the
+   combined execution, database, payload and native-identity checks. Keep the
+   original failed receipt and spent operation history.
+3. Perform separate installed-host qualification and release work before
+   advertising installation support. Keep profile flags, deployment owners and
+   game files protected.
 
 Both installation requests are spent, as are the earlier cancellation requests.
 Do not replay their callers or launchers, reset their journals, delete their
