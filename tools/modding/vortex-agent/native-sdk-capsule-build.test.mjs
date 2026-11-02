@@ -13,6 +13,8 @@ import {buildPythonSDKCapsule} from './native-sdk-python-capsule.mjs';
 import capsuleLoader from './native-sdk-capsule-load.cjs';
 import {buildNativeSDKCapsule} from './native-sdk-capsule-build.mjs';
 import {captureNativeSDKSources,NATIVE_SDK_SOURCE_NAMES,readCapturedNativeSDKSource} from './native-sdk-capture.mjs';
+import job from './install-job-contract.cjs';
+import dispatch from './native-dispatch-contract.cjs';
 const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
 const source=process.env.VORTEX_CAPSULE_BUILD_SOURCE;
 const sdk=process.env.VORTEX_CAPSULE_BUILD_SDK;
@@ -27,6 +29,126 @@ async function ready() {
   const compiler=await import(pathToFileURL(require.resolve('rolldown')).href);
   inputs={binding,capture,compiler:compiler.rolldown};return inputs;
 }
+
+integration('captured Main observes an own file through Python while its installer stays relay-only',async()=>{
+  const {binding,capture,compiler}=await ready();
+  const root=path.join(binding.workspaceRoot,'observer-'+crypto.randomBytes(16).toString('hex'));
+  for(let node=path.dirname(root);;node=path.dirname(node)){
+    const st=fs.lstatSync(node);assert(st.isDirectory()&&!st.isSymbolicLink());
+    if(node===path.dirname(node))break;
+  }
+  fs.mkdirSync(root);
+  const roots=Object.fromEntries(['gamePath','stagingPath','downloadPath'].map(k=>[k,path.join(root,k)]));
+  for(const directory of Object.values(roots))fs.mkdirSync(directory);
+  // Opaque own metadata fixture; observation does not claim ZIP format validity.
+  const bytes=Buffer.from('Own read-only capsule observation fixture\n');
+  fs.writeFileSync(path.join(roots.downloadPath,'own.zip'),bytes,{flag:'wx'});
+  const filesystemIds=Object.fromEntries(Object.entries(roots).map(([k,p])=>{const st=fs.statSync(p,{bigint:true});return[k,`${st.dev}:${st.ino}`];}));
+  const evidence=sha(Buffer.from('Synthetic read-only metadata; no installation admission'));
+  const plan={schema:'install-job-plan/1',family:'tracked-new-disabled',contractId:job.CONTRACT_ID,
+    context:{gameId:'cyberpunk2077',profileId:'observer-fixture',...roots,filesystemIds},
+    package:{downloadId:'own',fileName:'own.zip',expectedModId:'own',expectedType:'',bytes:bytes.length,
+      sha256:sha(bytes),md5:crypto.createHash('md5').update(bytes).digest('hex'),expectedUncompressedBytes:1,payload:{'own.bin':evidence}},
+    evidence:{buildSHA256:evidence,sourceSHA256:evidence,nativeAdmissionSHA256:evidence},options:{enabled:false,deploy:false}};
+  const request={schema:'native-dispatch-request/1',contractId:dispatch.CONTRACT_ID,operationId:'op_'+crypto.randomBytes(16).toString('hex'),
+    nativeJobId:'exec_'+crypto.randomBytes(16).toString('hex'),managerScope:'manager-observer-fixture-1',rendererGeneration:'renderer_'+crypto.randomBytes(16).toString('hex'),
+    admissionSHA256:evidence,planId:job.installPlanId(plan),plan};
+  const bound={...binding,workspaceRoot:root.replaceAll('\\','/')};
+  const built=await buildNativeSDKCapsule(capture,Buffer.from(JSON.stringify(bound)),compiler);
+  const loaded=capsuleLoader.loadNativeSDKCapsule(Buffer.from(built.artifact),built.sha256,Buffer.from(JSON.stringify(bound)));
+  const sdk=loaded.modules['owned-zip-worker-client.mjs'],raw=Buffer.from(JSON.stringify(request));
+  const owner=sdk.createOwnedArchiveObserver(raw);
+  let primarySet=false,primary;
+  try{
+    const observed=await owner.observe();
+    assert.deepEqual(Object.keys(observed),['parent','parentIdentity','leaf','identity','bytes','sha256']);
+    assert.equal(observed.bytes,bytes.length);assert.equal(observed.sha256,sha(bytes));
+    assert.equal(observed.identity.schema,'win-file-id128/1');
+    const terminal=owner.status().workerTerminal;
+    assert(terminal.childResourcesClosed&&terminal.exitSucceeded&&!terminal.held);
+    for(const pipe of Object.values(terminal.pipes))assert(pipe.closeObserved&&!pipe.errorObserved);
+    assert.equal(owner.status().errorCode,null);
+    const installer=sdk.createOwnedStagingZipWorker(raw,Buffer.from(JSON.stringify(observed)));
+    await assert.rejects(installer.start(),/CAPSULE_ROLE/);
+    assert.equal(installer.status().workerPid,null,'Main installer cannot spawn Python');
+    assert.deepEqual(fs.readFileSync(path.join(roots.downloadPath,'own.zip')),bytes);
+    assert.deepEqual(fs.readdirSync(root).sort(),['downloadPath','gamePath','stagingPath']);
+    assert.deepEqual(fs.readdirSync(roots.downloadPath),['own.zip']);
+    assert.deepEqual(fs.readdirSync(roots.stagingPath),[]);
+  }catch(error){primarySet=true;primary=error;}
+  finally{
+    try{
+      const state=owner.status();if(!state.childClosed||!state.workerTerminal?.childResourcesClosed)await owner.release();
+    }catch(error){if(!primarySet){primarySet=true;primary=error;}}
+  }
+  if(primarySet)throw primary;
+});
+
+integration('compiled Main role/version matrix refuses unsupported observers and installer before I/O',async()=>{
+  const {binding,capture,compiler}=await ready();
+  const built=await buildNativeSDKCapsule(capture,Buffer.from(JSON.stringify(binding)),compiler);
+  const artifact=JSON.parse(built.artifact),code=Buffer.from(artifact.main.code,'base64').toString('utf8');
+  // Synthetic plan bytes describe only this VM test. No paths are created and
+  // no native admission, genuine frame, tracked association or install is claimed.
+  const roots=Object.fromEntries(['gamePath','stagingPath','downloadPath'].map(key=>
+    [key,path.join(binding.workspaceRoot,'role-matrix-not-created',key)]));
+  const evidence=sha(Buffer.from('VM role gate model; no installation admission'));
+  const plan={schema:'install-job-plan/1',family:'tracked-new-disabled',contractId:job.CONTRACT_ID,
+    context:{gameId:'cyberpunk2077',profileId:'role-matrix',...roots,
+      filesystemIds:{gamePath:'1:101',stagingPath:'1:102',downloadPath:'1:103'}},
+    package:{downloadId:'own',fileName:'own.zip',expectedModId:'own',expectedType:'',bytes:1,
+      sha256:evidence,md5:'b'.repeat(32),expectedUncompressedBytes:1,payload:{'own.txt':evidence}},
+    evidence:{buildSHA256:evidence,sourceSHA256:evidence,nativeAdmissionSHA256:evidence},
+    options:{enabled:false,deploy:false}};
+  const request={schema:'native-dispatch-request/1',contractId:dispatch.CONTRACT_ID,
+    operationId:'op_'+'1'.repeat(32),nativeJobId:'exec_'+'2'.repeat(32),managerScope:'manager-role-matrix-1',
+    rendererGeneration:'renderer_'+'3'.repeat(32),admissionSHA256:evidence,planId:job.installPlanId(plan),plan};
+  const raw=Buffer.from(JSON.stringify(request));
+  dispatch.parseDispatchRequest(raw);
+  const identity={schema:'win-file-id128/1',volumeSerialNumber:'1',fileId:'201'};
+  const archive=Buffer.from(JSON.stringify({parent:roots.downloadPath,parentIdentity:identity,leaf:'own.zip',
+    identity:{...identity,fileId:'202'},bytes:1,sha256:evidence}));
+  const require=createRequire(import.meta.url);
+  for(const row of [
+    {role:'observer',electron:'44.1.0',node:'24.20.0',io:false},
+    {role:'observer',electron:'44.2.0',node:'24.19.0',io:false},
+    {role:'observer',electron:'44.2.0',node:'24.20.0',io:true},
+    {role:'installer',electron:'44.2.0',node:'24.20.0',io:false},
+  ]){
+    const effects=[],spawns=[];
+    const denyFS={...fs};
+    for(const [key,value] of Object.entries(denyFS))if(typeof value==='function')denyFS[key]=(...args)=>{
+      effects.push({name:key,path:String(args[0])});throw Error('MATRIX_FS_DENIED');
+    };
+    const module={exports:{}};
+    const context={module,exports:module.exports,Buffer,Uint8Array,ArrayBuffer,TextDecoder,
+      process:{platform:'win32',arch:'x64',versions:{electron:row.electron,node:row.node},env:{}},
+      require:id=>{
+        assert(id.startsWith('node:')||id==='url');
+        if(id==='node:fs')return denyFS;
+        if(id==='node:child_process')return {...require(id),spawn(...args){spawns.push(args);throw Error('MATRIX_SPAWN_DENIED');}};
+        return require(id);
+      }};
+    new vm.Script(code).runInNewContext(context,{timeout:2000});
+    assert.deepEqual(effects,[],`${row.role}: module evaluation is inert`);
+    const sdk=module.exports.modules['owned-zip-worker-client.mjs'];
+    // The scratch installer isolates the shared runtime gate. The staging
+    // constructor intentionally reads context metadata before start(), whereas
+    // its physical Main refusal remains covered by the preceding actual case.
+    const owner=row.role==='observer'?sdk.createOwnedArchiveObserver(raw):sdk.createOwnedZipWorker(raw,archive);
+    assert.deepEqual(effects,[],`${row.role}: constructor is inert`);
+    await assert.rejects(row.role==='observer'?owner.observe():owner.start(),
+      row.io?/OBSERVATION_FAILED/:/UNSUPPORTED_RUNTIME/);
+    assert.deepEqual(spawns,[],`${row.role}: no actual spawn in any VM case`);
+    if(row.io){
+      assert.equal(effects.length,1,'supported observer reaches the required Python executable hash check first');
+      assert.equal(effects[0].name,'lstatSync');
+      assert(effects[0].path.replaceAll('\\','/').toLowerCase().endsWith('/python314/python.exe'));
+    }else assert.deepEqual(effects,[],`${row.role}: unsupported runtime refused before filesystem access`);
+  }
+  // This matrix evaluates the actual compiled Main in VM process/FS facades.
+  // It adds no physical acceptance beyond the separate Node/Python case above.
+});
 
 integration('actual compiler builds source-owned capsules entirely from captured bytes',async()=>{
   const {binding,capture,compiler}=await ready();

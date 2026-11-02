@@ -1,0 +1,78 @@
+// Actual complete client source in a VM. Python/runtime hashes, ChildProcess,
+// terminal observations and stdio are explicitly controlled facades; no spawn,
+// SDK/native/DB code executes. Root alone runs these authored tests.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import vm from 'node:vm';
+import {EventEmitter} from 'node:events';
+import {createRequire} from 'node:module';
+import {fileURLToPath} from 'node:url';
+import {isUint8Array,isSharedArrayBuffer} from 'node:util/types';
+const D=path.dirname(fileURLToPath(import.meta.url)),ROOT=path.resolve(D,'../../..');
+const SOURCE_SHA256='6f2791141500d102c73303e43eb323b668f92263154d421dd3689a3d82e004b3';
+const require=createRequire(path.join(ROOT,'package.json'));
+const dispatch=require(path.join(ROOT,'tools/modding/vortex-agent/native-dispatch-contract.cjs'));
+const strict=require(path.join(ROOT,'tools/modding/vortex-agent/strict-json.cjs'));
+const job=require(path.join(ROOT,'tools/modding/vortex-agent/install-job-contract.cjs'));
+const hash=b=>crypto.createHash('sha256').update(b).digest('hex'),tick=()=>new Promise(r=>setImmediate(r));
+function request(){const h='a'.repeat(64),plan={schema:'install-job-plan/1',family:'tracked-new-disabled',contractId:job.CONTRACT_ID,
+ context:{gameId:'cyberpunk2077',profileId:'p',gamePath:'F:/Own/Game',stagingPath:'F:/Own/Stage',downloadPath:'F:/Own/Downloads',filesystemIds:{gamePath:'1:2',stagingPath:'1:3',downloadPath:'1:4'}},
+ package:{downloadId:'own',fileName:'own.zip',expectedModId:'own',expectedType:'',bytes:241,sha256:h,md5:'b'.repeat(32),expectedUncompressedBytes:55,payload:{'archive/pc/mod/own.archive':h}},
+ evidence:{buildSHA256:h,sourceSHA256:h,nativeAdmissionSHA256:h},options:{enabled:false,deploy:false}};
+ return {schema:'native-dispatch-request/1',contractId:dispatch.CONTRACT_ID,operationId:'op_'+'1'.repeat(32),nativeJobId:'exec_'+'2'.repeat(32),planId:job.installPlanId(plan),managerScope:'manager-own-1',rendererGeneration:'renderer_'+'3'.repeat(32),admissionSHA256:h,plan};}
+function fixture(){
+ const root={dev:1n,ino:4n,generation:1},calls={spawn:[],runtime:0,source:0,journal:0,io:0,metadata:0,writes:[]},timers=new Set(),sources=Object.fromEntries(['owned-file-transfer.py','owned-zip-extractor.py','owned-zip-worker.py'].map(k=>[k,'a'.repeat(64)]));
+ const child=new EventEmitter();child.pid=42;child.exitCode=null;child.signalCode=null;
+ for(const name of ['stdin','stdout','stderr'])child[name]=new EventEmitter();
+ child.stdin.writable=true;child.stdin.write=(bytes,callback)=>{calls.writes.push(Buffer.from(bytes));callback();};
+ child.kill=()=>{throw Error('KILL_FORBIDDEN');};child.stdin.end=()=>{throw Error('END_NOT_A_CLOSURE_PROOF');};
+ const terminal={spawnObserved:true,exitObserved:false,closeObserved:false,exitSucceeded:false,exitCode:null,closeCode:null,exitSignal:null,closeSignal:null,childResourcesClosed:false,held:false,childErrorObserved:false,pipes:Object.fromEntries(['stdin','stdout','stderr'].map(k=>[k,{closeObserved:false,errorObserved:false}]))};
+ const rawSource=fs.readFileSync(path.join(D,'owned-zip-worker-client.mjs'));assert.equal(hash(rawSource),SOURCE_SHA256);
+ let source=rawSource.toString('utf8').replace(/^import .*;\n/gm,'').replace(/export function /g,'function ');
+ const runtimeStart=source.indexOf('function runtime() {'),runtimeEnd=source.indexOf('\nfunction nativeIdentity',runtimeStart);assert(runtimeStart>0&&runtimeEnd>runtimeStart);
+ source=source.slice(0,runtimeStart)+'function runtime(){runtimeFixture();}\n'+source.slice(runtimeEnd);
+ const old='function sources() {return Object.fromEntries(SOURCES.map(name => [name, fileHash(path.join(HERE, name), 512*1024)]));}';assert(source.includes(old));source=source.replace(old,'function sources(){return sourcesFixture();}');
+ const deny=()=>{calls.io++;throw Error('FS_FORBIDDEN');};
+ const context={Buffer,Uint8Array,Object,Array,Set,Map,RegExp,Number,JSON,BigInt,Error,Promise,structuredClone,path,crypto,isUint8Array,isSharedArrayBuffer,strict,dispatch,
+ fs:{lstatSync(p){calls.metadata++;assert.equal(p,'F:/Own/Downloads');return {dev:root.dev,ino:root.ino,stamp:root.generation,isDirectory:()=>true,isSymbolicLink:()=>false};}},fileURLToPath:()=>'/own/sdk/owned-zip-worker-client.mjs',process:{env:{SystemRoot:'C:/Windows'}},
+ createImmutableRecordIO:()=>({ancestry(p){calls.metadata++;assert.equal(p,'F:/Own/Downloads');return {generation:root.generation};},sameAncestry(p,pins){calls.metadata++;assert.equal(p,'F:/Own/Downloads');if(pins.generation!==root.generation)throw Error('OWNED_ZIP_WORKER_ARCHIVE_CONTEXT_MISMATCH');}}),generation:s=>[s.dev,s.ino,s.stamp].join(':'),createNativeExecutorJournal:()=>{calls.journal++;throw Error('JOURNAL_FORBIDDEN');},
+ runtimeFixture:()=>{calls.runtime++;},sourcesFixture:()=>{calls.source++;return structuredClone(sources);},
+ spawn:(...args)=>{calls.spawn.push(args);return child;},childTerminal:{observeChildTerminal:()=>({read:()=>structuredClone(terminal)})},
+ setTimeout:(fn,ms)=>{const t={fn,ms};timers.add(t);return t;},clearTimeout:t=>timers.delete(t)};
+ // import.meta is diagnostic only; no physical source lookup in this VM.
+ source=source.replaceAll('import.meta.url',"'file:///own/sdk/owned-zip-worker-client.mjs'");
+ const api=vm.runInNewContext(source+'\n({createOwnedArchiveObserver,createOwnedZipWorker});',context);
+ const input=request(),raw=Buffer.from(JSON.stringify(input)),owner=api.createOwnedArchiveObserver(raw);
+ const send=value=>child.stdout.emit('data',Buffer.from(JSON.stringify(value)+'\n'));
+ function ready(patch={}){send({schema:'owned-zip-worker-ready/1',workerLifetime:'worker_'+'4'.repeat(32),pid:42,creationTime:'123',sourceSHA256:sources,runtimeSHA256:{pythonExe:'434b361fe0c5960d404974feed493db47f2603a1ace2574312104fbed0182c6f',pythonCore:'854fe7549eb4b2ac478935a38ae2ca1b774c6fdc3d87f0263fbd697ff86d7149'},pythonVersion:[3,14,8],zlibOrigin:'built-in',zlibVersion:'1.3.1.zlib-ng',...patch});}
+ function response(phase='observed',patch={}){const packet=JSON.parse(calls.writes[0].toString()),id={schema:'win-file-id128/1',volumeSerialNumber:'123',fileId:'456'};
+ send({schema:'owned-archive-observation/1',workerLifetime:packet.workerLifetime,binding:packet.binding,packetSHA256:hash(calls.writes[0].subarray(0,-1)),phase,
+ archive:phase==='observed'?{parent:path.win32.normalize(packet.archive.parent),parentIdentity:id,leaf:packet.archive.leaf,identity:{...id,fileId:'789'},bytes:packet.archive.bytes,sha256:packet.archive.sha256}:null,
+ errorCode:phase==='observed'?null:'READ_FAILED',effectsAllowed:false,nativeInstallAccepted:false,persistenceVerified:false,...patch});}
+ function close(code=0,{pipes=true,error=false}={}){terminal.exitObserved=true;terminal.closeObserved=true;terminal.exitSucceeded=code===0;terminal.exitCode=terminal.closeCode=code;child.exitCode=code;
+ if(pipes)for(const k of ['stdin','stdout','stderr'])terminal.pipes[k].closeObserved=true;
+ terminal.pipes.stderr.errorObserved=error;terminal.childResourcesClosed=pipes;child.emit('close',code,null);if(pipes)for(const k of ['stdin','stdout','stderr'])child[k].emit('close');}
+ const expire=()=>{for(const t of [...timers]){timers.delete(t);t.fn();}};
+ return {api,owner,raw,input,calls,child,terminal,ready,response,close,send,expire,timers,root};
+}
+async function observing(f){const p=f.owner.observe();p.catch(()=>{});f.ready();await tick();return {p};}
+
+test('constructor inert exact3 API and copied dispatch request; no journal or IDs minted',async()=>{const f=fixture();assert.deepEqual(Object.keys(f.owner),['status','observe','release']);assert(Object.isFrozen(f.owner));assert.equal(f.calls.spawn.length,0);assert.equal(f.calls.io+f.calls.journal+f.calls.runtime+f.calls.metadata,0);f.raw.fill(0);const {p}=await observing(f);const packet=JSON.parse(f.calls.writes[0]);assert.deepEqual(Object.keys(packet),['schema','workerLifetime','binding','archive']);assert.equal(packet.schema,'owned-zip-observe-archive/1');assert.equal(packet.binding.operationId,f.input.operationId);assert.deepEqual(packet.archive,{parent:'F:/Own/Downloads',leaf:'own.zip',bytes:241,sha256:'a'.repeat(64),md5:'b'.repeat(32)});f.response();f.close();const a=await p;assert(Object.isFrozen(a));assert(Object.isFrozen(a.identity));assert.equal(a.identity.fileId,'789');assert.equal(f.calls.journal+f.calls.io,0);});
+test('metadata waits for actual modeled child and all3 pipe closure',async()=>{const f=fixture(),{p}=await observing(f);let done=false;p.then(()=>{done=true;},()=>{done=true;});f.response();await tick();assert.equal(done,false);f.close(0,{pipes:false});await tick();assert.equal(done,false);for(const k of ['stdin','stdout','stderr'])f.terminal.pipes[k].closeObserved=true;f.terminal.childResourcesClosed=true;f.child.stderr.emit('close');await p;assert.equal(done,true);});
+test('no duplicate observe or parallel occupied spawn and no replay after completion',async()=>{const f=fixture(),{p}=await observing(f);await assert.rejects(f.owner.observe(),/START_REFUSED/);const other=f.api.createOwnedArchiveObserver(Buffer.from(JSON.stringify(f.input)));await assert.rejects(other.observe(),/START_REFUSED/);assert.equal(f.calls.spawn.length,1);f.response();f.close();await p;await assert.rejects(f.owner.observe(),/START_REFUSED/);assert.equal(f.calls.writes.length,1);});
+test('response binding/lifetime/frame digest/extras/false flags mismatches refuse',async()=>{for(const patch of [{workerLifetime:'worker_'+'9'.repeat(32)},{packetSHA256:'0'.repeat(64)},{binding:{}},{effectsAllowed:true},{extra:1}]){const f=fixture(),{p}=await observing(f);f.response('observed',patch);await assert.rejects(p,/OBSERVATION_MISMATCH/);assert.equal(f.calls.writes.length,1);f.close(65);}});
+test('held release is explicit one-shot cleanup and can never produce metadata',async()=>{const f=fixture(),{p}=await observing(f);f.response('held');await assert.rejects(p,/READ_FAILED/);assert.equal(f.calls.writes.length,1);const r=f.owner.release();r.catch(()=>{});const again=f.owner.release();again.catch(()=>{});await tick();assert.equal(f.calls.writes.length,2);const control=JSON.parse(f.calls.writes[1]);assert.equal(control.command,'release');f.response('failed');f.close(65);await r;await again;assert.equal(f.owner.status().errorCode,'READ_FAILED');assert.equal(f.calls.writes.length,2);});
+test('timeout sticky, child retained and occupied until closure, late success not returned',async()=>{const f=fixture(),{p}=await observing(f);f.expire();await assert.rejects(p,/OBSERVATION_TIMEOUT/);assert.equal(f.owner.status().childClosed,false);const other=f.api.createOwnedArchiveObserver(Buffer.from(JSON.stringify(f.input)));await assert.rejects(other.observe(),/START_REFUSED/);f.response();f.close();assert.equal(f.owner.status().errorCode,'OBSERVATION_TIMEOUT');assert.equal(f.calls.spawn.length,1);assert.equal(f.calls.writes.length,1);});
+test('nonzero exit, pipe errors, duplicate frame and truncation prevent metadata',async()=>{for(const mode of ['exit','pipe','duplicate','truncated']){const f=fixture(),{p}=await observing(f);f.response();if(mode==='duplicate')f.response();if(mode==='truncated')f.child.stdout.emit('data',Buffer.from('{'));f.close(mode==='exit'?65:0,{error:mode==='pipe'});await assert.rejects(p,/OBSERVATION_|TRUNCATED_FRAME/);assert.equal(f.calls.writes.length,1);}});
+test('ordinary raw runtime adapter seam and single shared capsule spawn/ready patterns remain',()=>{const s=fs.readFileSync(path.join(D,'owned-zip-worker-client.mjs'),'utf8');assert.equal(s.split('function archiveObserverRuntime() { runtime(); }').length,2);assert.equal(s.split("child = spawn(PYTHON, ['-I', '-S', '-B', path.join(HERE, 'owned-zip-worker.py')], {").length,2);assert.equal(s.split("        await wait('ready');").length,2);});
+test('invalid dispatch and explicit unused release cannot spawn or create journal',async()=>{const f=fixture();assert.throws(()=>f.api.createOwnedArchiveObserver(Buffer.from('{}')),/NATIVE_DISPATCH_/);assert.throws(()=>f.api.createOwnedArchiveObserver(Buffer.from(JSON.stringify(f.input)),{}),/OBSERVER_ARGUMENTS/);await f.owner.release();await assert.rejects(f.owner.observe(),/START_REFUSED/);assert.equal(f.calls.spawn.length+f.calls.io+f.calls.journal,0);});
+test('write failure is first sticky primary even if a late observation and exit0 arrive',async()=>{const f=fixture();f.child.stdin.write=(bytes,callback)=>{f.calls.writes.push(Buffer.from(bytes));callback(Error('modeled write'));};const {p}=await observing(f);await assert.rejects(p,/CONTROL_WRITE_FAILED/);f.response();f.close();assert.equal(f.owner.status().errorCode,'CONTROL_WRITE_FAILED');assert.equal(f.calls.writes.length,1);});
+test('wrong current Node download identity refuses before spawn, distinct from native IDs',async()=>{const f=fixture();f.root.ino=999n;await assert.rejects(f.owner.observe(),/ARCHIVE_CONTEXT_MISMATCH/);assert.equal(f.calls.spawn.length,0);assert.equal(f.calls.writes.length,0);assert.equal(f.calls.journal,0);assert.equal(f.owner.status().errorCode,'ARCHIVE_CONTEXT_MISMATCH');});
+test('download ancestry drift while awaiting READY refuses before any observation frame',async()=>{const f=fixture(),p=f.owner.observe();p.catch(()=>{});assert.equal(f.calls.spawn.length,1);f.root.generation++;f.ready();await assert.rejects(p,/ARCHIVE_CONTEXT_MISMATCH/);assert.equal(f.calls.writes.length,0);assert.equal(f.owner.status().phase,'held');f.close(65);assert.equal(f.owner.status().phase,'failed');});
+test('download root drift after observed response and physical closure never returns metadata',async()=>{for(const change of ['identity','ancestry']){const f=fixture(),{p}=await observing(f);f.response();if(change==='identity')f.root.ino=999n;else f.root.generation++;f.close();await assert.rejects(p,/ARCHIVE_CONTEXT_MISMATCH/);assert.equal(f.owner.status().phase,'failed');assert.equal(f.calls.journal,0);}});
+test('READY mismatch retains abort-only lifetime for explicit one-shot cleanup, first failure sticky',async()=>{const f=fixture(),p=f.owner.observe();p.catch(()=>{});f.ready({zlibVersion:'wrong'});await assert.rejects(p,/READY_MISMATCH/);assert.equal(f.owner.status().phase,'held');assert.equal(f.calls.writes.length,0);const release=f.owner.release();release.catch(()=>{});const again=f.owner.release();again.catch(()=>{});assert.equal(f.calls.writes.length,1);assert.deepEqual(JSON.parse(f.calls.writes[0]),{schema:'owned-zip-worker-abort/1',workerLifetime:'worker_'+'4'.repeat(32)});f.close(0);await release;await again;assert.equal(f.owner.status().errorCode,'READY_MISMATCH');assert.equal(f.owner.status().phase,'failed');assert.equal(f.calls.writes.length,1);});
+test('explicit active release waits for actual held state before sending bound cleanup',async()=>{const f=fixture(),{p}=await observing(f);const release=f.owner.release();release.catch(()=>{});await tick();assert.equal(f.calls.writes.length,1,'active operation receives no illegal control');f.response('held');await assert.rejects(p,/READ_FAILED/);await tick();assert.equal(f.calls.writes.length,2);assert.equal(JSON.parse(f.calls.writes[1]).command,'release');f.response('failed');f.close(65);await release;assert.equal(f.owner.status().phase,'failed');assert.equal(f.owner.status().errorCode,'READ_FAILED');});
+test('release concurrent with observed success sends no unnecessary bound control',async()=>{const f=fixture(),{p}=await observing(f);const release=f.owner.release();release.catch(()=>{});f.response();await tick();assert.equal(f.calls.writes.length,1);f.close();await release;await p;assert.equal(f.calls.writes.length,1);});

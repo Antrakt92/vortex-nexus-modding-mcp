@@ -13,7 +13,7 @@ import dispatch from './native-dispatch-contract.cjs';
 import strict from './strict-json.cjs';
 import {createNativeExecutorJournal} from './native-executor-journal.mjs';
 import {isUint8Array,isSharedArrayBuffer} from 'node:util/types';
-import {createOwnedZipWorker} from './owned-zip-worker-client.mjs';
+import {createOwnedZipWorker, createOwnedArchiveObserver} from './owned-zip-worker-client.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TASK = path.resolve(HERE, '../../../local-state/install-contract-20261031/owned-zip-worker');
@@ -457,7 +457,7 @@ ownTest('source growth during streaming reads remains capped at admitted size pl
 function prestartSourceFixture(){
  const source=fs.readFileSync(path.join(HERE,'owned-zip-worker-client.mjs'),'utf8');
  const start=source.indexOf('  function copyAnchor(value) {'),end=source.indexOf('  owner = Object.freeze({',start);assert.ok(start>0&&end>start);
- const build=new Function('strict','isUint8Array','isSharedArrayBuffer','sha','path',`let occupied=null,startAttempted=false,startSent=false,cancelAttempted=false,releaseAttempted=false,childClosed=false,ready=null,inertLifetime=null,expectedSources=null,child=null,terminal=null,destination=null,packetSHA256=null,preparedPacket=null,preparedBytes=null,preparedReceipt=null,explicitPrepared=false,startPreparedAttempted=false,inertAbortAttempted=false,firstError=null;let drift=false,brokenInventory=false,dead=false,reservations=0;const writes=[],outbound=[],binding={operationId:'op_'+ '1'.repeat(32),nativeJobId:'exec_'+ '2'.repeat(32),requestSHA256:'3'.repeat(64),rendererGeneration:'renderer_'+ '4'.repeat(32)},requestSHA256=binding.requestSHA256,request={operationId:binding.operationId,nativeJobId:binding.nativeJobId,plan:{package:{payload:{'a.txt':'5'.repeat(64)},expectedUncompressedBytes:1}}},archive={},staging=false,owner={},HERE='fixed',PYTHON='fixed-python',WORK_BASE='fixed-work',START_MAX=1024*1024+16384;const exact=(v,k)=>v&&typeof v==='object'&&Object.keys(v).length===k.length&&k.every(n=>Object.hasOwn(v,n)),need=(v,c)=>{if(!v)throw Error('OWNED_ZIP_WORKER_'+c)},error=c=>Object.assign(Error('OWNED_ZIP_WORKER_'+c),{owner}),runtime=()=>{},sources=()=>drift?{changed:'yes'}:{},scopeIO={ancestry:()=>[]},wake=()=>{},fail=()=>{},data=()=>{};const stream={on:()=>{}},spawn=()=>({pid:123,stdin:stream,stdout:stream,stderr:stream,on:()=>{}}),childTerminal={observeChildTerminal:()=>({read:()=>({spawnObserved:true,exitObserved:dead,closeObserved:false,childErrorObserved:false,held:false,childResourcesClosed:false})})};const wait=async phase=>{if(phase==='ready')ready={workerLifetime:'worker_'+ '6'.repeat(32),creationTime:'134000000000000000'};return{phase}},write=(value,max,command)=>{writes.push({value:structuredClone(value),command,startSent,startPreparedAttempted})};const journal={reservePending:(bytes,lifetime,packet,anchorBytes)=>{reservations++;const a=JSON.parse(Buffer.from(anchorBytes));return{schema:'native-executor-pending-reservation/1',reservation:{state:'reserved',...binding,workerLifetime:lifetime,packetSHA256:packet},transition:{schema:'native-executor-pending-transition/1',rootId:a.rootId,previousInventorySHA256:a.inventorySHA256,inventorySHA256:'7'.repeat(64),operationId:binding.operationId,nativeJobId:binding.nativeJobId,requestSHA256,packetSHA256:packet,workerLifetime:lifetime}}},begin:()=>{throw Error('DUPLICATE_LEGACY_BEGIN')},read:()=>({state:'reserved',workerLifetime:ready.workerLifetime,packetSHA256}),inventory:()=>({complete:true,rootIdentityVerified:true,historySealVerified:!brokenInventory,startupHoldRequired:true,observedRootId:'0:123',observedInventorySHA256:'7'.repeat(64)})};${source.slice(start,end)}return{prepare:bytes=>prepareWorker(bytes,true),startPrepared:startPreparedWorker,drift:()=>{drift=true},breakInventory:()=>{brokenInventory=true},exit:()=>{dead=true},snapshot:()=>({writes:structuredClone(writes),reservations,startSent,startPreparedAttempted,firstError})};`);
+ const build=new Function('strict','isUint8Array','isSharedArrayBuffer','sha','path',`let occupied=null,startAttempted=false,startSent=false,cancelAttempted=false,releaseAttempted=false,childClosed=false,ready=null,inertLifetime=null,expectedSources=null,child=null,terminal=null,destination=null,packetSHA256=null,preparedPacket=null,preparedBytes=null,preparedReceipt=null,explicitPrepared=false,startPreparedAttempted=false,inertAbortAttempted=false,firstError=null;let drift=false,brokenInventory=false,dead=false,reservations=0;const writes=[],outbound=[],binding={operationId:'op_'+ '1'.repeat(32),nativeJobId:'exec_'+ '2'.repeat(32),requestSHA256:'3'.repeat(64),rendererGeneration:'renderer_'+ '4'.repeat(32)},requestSHA256=binding.requestSHA256,request={operationId:binding.operationId,nativeJobId:binding.nativeJobId,plan:{package:{payload:{'a.txt':'5'.repeat(64)},expectedUncompressedBytes:1}}},archive={},staging=false,archiveObserver=false,owner={},HERE='fixed',PYTHON='fixed-python',WORK_BASE='fixed-work',START_MAX=1024*1024+16384;const exact=(v,k)=>v&&typeof v==='object'&&Object.keys(v).length===k.length&&k.every(n=>Object.hasOwn(v,n)),need=(v,c)=>{if(!v)throw Error('OWNED_ZIP_WORKER_'+c)},error=c=>Object.assign(Error('OWNED_ZIP_WORKER_'+c),{owner}),runtime=()=>{},sources=()=>drift?{changed:'yes'}:{},scopeIO={ancestry:()=>[]},wake=()=>{},fail=()=>{},data=()=>{};const stream={on:()=>{}},spawn=()=>({pid:123,stdin:stream,stdout:stream,stderr:stream,on:()=>{}}),childTerminal={observeChildTerminal:()=>({read:()=>({spawnObserved:true,exitObserved:dead,closeObserved:false,childErrorObserved:false,held:false,childResourcesClosed:false})})};const wait=async phase=>{if(phase==='ready')ready={workerLifetime:'worker_'+ '6'.repeat(32),creationTime:'134000000000000000'};return{phase}},write=(value,max,command)=>{writes.push({value:structuredClone(value),command,startSent,startPreparedAttempted})};const journal={reservePending:(bytes,lifetime,packet,anchorBytes)=>{reservations++;const a=JSON.parse(Buffer.from(anchorBytes));return{schema:'native-executor-pending-reservation/1',reservation:{state:'reserved',...binding,workerLifetime:lifetime,packetSHA256:packet},transition:{schema:'native-executor-pending-transition/1',rootId:a.rootId,previousInventorySHA256:a.inventorySHA256,inventorySHA256:'7'.repeat(64),operationId:binding.operationId,nativeJobId:binding.nativeJobId,requestSHA256,packetSHA256:packet,workerLifetime:lifetime}}},begin:()=>{throw Error('DUPLICATE_LEGACY_BEGIN')},read:()=>({state:'reserved',workerLifetime:ready.workerLifetime,packetSHA256}),inventory:()=>({complete:true,rootIdentityVerified:true,historySealVerified:!brokenInventory,startupHoldRequired:true,observedRootId:'0:123',observedInventorySHA256:'7'.repeat(64)})};${source.slice(start,end)}return{prepare:bytes=>prepareWorker(bytes,true),startPrepared:startPreparedWorker,drift:()=>{drift=true},breakInventory:()=>{brokenInventory=true},exit:()=>{dead=true},snapshot:()=>({writes:structuredClone(writes),reservations,startSent,startPreparedAttempted,firstError})};`);
  return build(strict,isUint8Array,isSharedArrayBuffer,digest,path);
 }
 const fixtureAnchor=()=>Buffer.from(JSON.stringify({schema:'native-executor-anchor/1',rootId:'0:123',inventorySHA256:'a'.repeat(64)}));
@@ -488,4 +488,128 @@ ownTest('actual prepared census drift consumes START attempt without writing and
  await assert.rejects(worker.startPrepared(),/JOURNAL_CHANGED/);assert.equal(worker.status().startSent,false);await assert.rejects(worker.startPrepared(),/START_PREPARED_REFUSED/);await assert.rejects(worker.retireInert(),/RETIRE_ACTIVE_REFUSED/);assert.equal(fs.existsSync(path.resolve(HERE,'../../../local-state/owned-zip-worker-work',input.request.operationId)),false);
  // Exact retained test child only, already known never to have received START.
  assert.equal(current().pid,worker.status().workerPid);assert.equal(current().kill('SIGTERM'),true);await worker.waitFor('closed',15000);held(worker.inspectIntent());
+}));
+
+// Independent native metadata query for the existing own archive. File identity
+// comes from FileIdInfo18 on a held read FD, not Python/Node stat conversion.
+const OBSERVER_FILE_IDS = `
+import ctypes as C,ctypes.wintypes as W,json,msvcrt,pathlib,sys
+assert C.sizeof(C.c_void_p)==8
+class Identity(C.Structure):
+ _fields_=[('volume',C.c_uint64),('file',C.c_ubyte*16)]
+assert C.sizeof(Identity)==24 and Identity.file.offset==8
+k=C.WinDLL('kernel32.dll',use_last_error=True)
+k.GetFileInformationByHandleEx.argtypes=[W.HANDLE,C.c_int,C.c_void_p,W.DWORD]
+k.GetFileInformationByHandleEx.restype=W.BOOL
+k.CreateFileW.argtypes=[W.LPCWSTR,W.DWORD,W.DWORD,C.c_void_p,W.DWORD,W.DWORD,W.HANDLE]
+k.CreateFileW.restype=W.HANDLE
+k.CloseHandle.argtypes=[W.HANDLE];k.CloseHandle.restype=W.BOOL
+def identify(handle):
+ value=Identity()
+ assert k.GetFileInformationByHandleEx(handle,18,C.byref(value),C.sizeof(value))
+ assert value.volume>0 and int.from_bytes(bytes(value.file),'little')>0
+ return {'schema':'win-file-id128/1','volumeSerialNumber':str(value.volume),'fileId':str(int.from_bytes(bytes(value.file),'little'))}
+p=pathlib.Path(sys.argv[1])
+with p.open('rb') as stream: leaf=identify(msvcrt.get_osfhandle(stream.fileno()))
+# Existing directory only; explicit native handle owner, no creation or mutation.
+parent=k.CreateFileW(str(p.parent),0x80,7,None,3,0x02200000,None)
+assert parent not in (None,C.c_void_p(-1).value)
+try: directory=identify(parent)
+finally: assert k.CloseHandle(parent)
+print(json.dumps({'parentIdentity':directory,'identity':leaf}))
+`;
+function independentlyObservedArchiveIds(input) {
+  const read=spawnSync('C:/Python314/python.exe',['-I','-S','-B','-c',OBSERVER_FILE_IDS,
+    path.join(input.value.archive.parent,input.value.archive.leaf)],
+    {encoding:'utf8',windowsHide:true,timeout:10000,maxBuffer:4096});
+  assert.equal(read.status,0,read.stderr);
+  return JSON.parse(read.stdout);
+}
+function observerTestOwner(t,input) {
+  const observer=createOwnedArchiveObserver(input.bytes);
+  let primarySet=false;
+  t.after(async()=>{
+    const state=observer.status();
+    if(state.workerPid===null || state.workerTerminal?.childResourcesClosed===true)return;
+    try {await observer.release();}
+    catch(error) {
+      if(!primarySet)throw error;
+      t.diagnostic('Explicit observer cleanup remained held; original test failure preserved.');
+    }
+  });
+  return {observer,preserve(error){primarySet=true;return error;}};
+}
+function assertObserverTerminal(observer,child,exitCode) {
+  const state=observer.status(),terminal=state.workerTerminal;
+  assert(child);assert.equal(child.pid,state.workerPid);assert.equal(child.exitCode,exitCode);
+  assert.equal(state.childClosed,true);assert.equal(terminal.spawnObserved,true);
+  assert.equal(terminal.exitObserved,true);assert.equal(terminal.closeObserved,true);
+  assert.equal(terminal.exitCode,exitCode);assert.equal(terminal.closeCode,exitCode);
+  assert.equal(terminal.exitSignal,null);assert.equal(terminal.closeSignal,null);
+  assert.equal(terminal.childResourcesClosed,true);assert.equal(terminal.held,false);
+  assert.equal(terminal.childErrorObserved,false);
+  for(const pipe of ['stdin','stdout','stderr']){
+    assert.equal(terminal.pipes[pipe].closeObserved,true);assert.equal(terminal.pipes[pipe].errorObserved,false);
+  }
+  assert.equal(state.effectsAllowed,false);assert.equal(state.nativeInstallAccepted,false);assert.equal(state.persistenceVerified,false);
+}
+function assertObserverNoOutputs(input,expectedArchiveLeaves=['own.zip']) {
+  assert.equal(fs.existsSync(path.resolve(HERE,'../../../local-state/owned-zip-worker-work',input.request.operationId)),false);
+  const journal=path.join(process.env.NEXUS_WORKSPACE,'local-state/vortex-agent-build/native-install-executor');
+  for(const [kind,id] of [['operations',input.request.operationId],['jobs',input.request.nativeJobId],['terminals',input.request.operationId],['terminals',input.request.nativeJobId]])
+    assert.equal(fs.existsSync(path.join(journal,kind,id)),false);
+  assert.deepEqual(fs.readdirSync(input.root).sort(),['archives','model-game','model-stage']);
+  assert.deepEqual(fs.readdirSync(path.join(input.root,'archives')).sort(),expectedArchiveLeaves.slice().sort());
+  assert.deepEqual(fs.readdirSync(path.join(input.root,'model-stage')),[]);
+  assert.deepEqual(fs.readdirSync(path.join(input.root,'model-game')),[]);
+  const archive=fs.readFileSync(path.join(input.value.archive.parent,input.value.archive.leaf));
+  assert.equal(archive.length,input.value.archive.bytes);assert.equal(digest(archive),input.value.archive.sha256);
+}
+
+ownTest('actual archive observer returns exact six fields only after native child and pipes close without outputs',async t=>captureChild(async current=>{
+  const input=fixture(1024),scope=observerTestOwner(t,input),observer=scope.observer;
+  try {
+    assert.equal(observer.status().workerPid,null);assert.equal(observer.status().attempted,false);
+    assertObserverNoOutputs(input);
+    const archive=await observer.observe();
+    assert.deepEqual(Object.keys(archive),['parent','parentIdentity','leaf','identity','bytes','sha256']);
+    assert(Object.isFrozen(archive));assert(Object.isFrozen(archive.parentIdentity));assert(Object.isFrozen(archive.identity));
+    const ids=independentlyObservedArchiveIds(input);
+    assert.deepEqual(archive.parentIdentity,ids.parentIdentity);assert.deepEqual(archive.identity,ids.identity);
+    assert.equal(path.win32.normalize(archive.parent).toLowerCase(),path.win32.normalize(input.value.archive.parent).toLowerCase());
+    assert.equal(archive.leaf,'own.zip');assert.equal(archive.bytes,input.value.archive.bytes);assert.equal(archive.sha256,input.value.archive.sha256);
+    assertObserverTerminal(observer,current(),0);assert.equal(observer.status().errorCode,null);
+    assertObserverNoOutputs(input);
+    await assert.rejects(observer.observe(),/START_REFUSED/);
+  } catch(error) {throw scope.preserve(error);}
+}));
+
+ownTest('actual archive observer wrong MD5 fails closed with exit65 and three closed pipes, never metadata',async t=>captureChild(async current=>{
+  const input=fixture(1024);input.request.plan.package.md5=input.value.md5==='0'.repeat(32)?'1'.repeat(32):'0'.repeat(32);
+  input.request.planId=job.installPlanId(input.request.plan);input.bytes=Buffer.from(JSON.stringify(input.request));
+  const scope=observerTestOwner(t,input),observer=scope.observer;
+  try {
+    let archive;
+    await assert.rejects(async()=>{archive=await observer.observe();},/OWNED_TRANSFER_ARCHIVE_MISMATCH/);
+    assert.equal(archive,undefined);
+    await observer.release();
+    assertObserverTerminal(observer,current(),65);
+    assert.equal(observer.status().phase,'failed');assert.equal(observer.status().errorCode,'OWNED_TRANSFER_ARCHIVE_MISMATCH');
+    assertObserverNoOutputs(input);
+  } catch(error) {throw scope.preserve(error);}
+}));
+
+ownTest('actual archive observer rejects an own NTFS hardlink without output or metadata',async t=>captureChild(async current=>{
+  const input=fixture(1024),archiveFile=path.join(input.value.archive.parent,input.value.archive.leaf);
+  fs.linkSync(archiveFile,path.join(input.value.archive.parent,'own-alias.zip'));
+  const scope=observerTestOwner(t,input),observer=scope.observer;
+  try {
+    let archive;
+    await assert.rejects(async()=>{archive=await observer.observe();},/OWNED_TRANSFER_ARCHIVE_MISMATCH/);
+    assert.equal(archive,undefined);await observer.release();
+    assertObserverTerminal(observer,current(),65);assert.equal(observer.status().phase,'failed');
+    assert.equal(observer.status().errorCode,'OWNED_TRANSFER_ARCHIVE_MISMATCH');
+    assertObserverNoOutputs(input,['own.zip','own-alias.zip']);
+    assert.equal(digest(fs.readFileSync(path.join(input.value.archive.parent,'own-alias.zip'))),input.value.archive.sha256);
+  } catch(error) {throw scope.preserve(error);}
 }));
