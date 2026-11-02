@@ -1,0 +1,134 @@
+--- a/src/main/src/store/LevelPersist.ts
++++ b/src/main/src/store/LevelPersist.ts
+@@ -49,6 +49,44 @@
+ 
+ function delay(ms: number): Promise<void> {
+   return new Promise((resolve) => setTimeout(resolve, ms));
++}
++
++export interface NativeTrackedArchiveSelection {
++  schema: "native-tracked-archive-selection/1";
++  gameId: "cyberpunk2077"; profileId: string; downloadId: string;
++}
++export interface NativeTrackedArchiveProjection {
++  schema: "native-tracked-archive-projection/1";
++  activeProfileId: string; profileGameId: "cyberpunk2077";
++  downloadPattern: Readonly<{ present: boolean; value: string | null }>;
++  archive: Readonly<{ id: string; idPresent: boolean; state: "finished"; game: readonly ["cyberpunk2077"];
++    localPath: string; size: number; fileMD5: string }>;
++}
++/** Canonical internal selection, following the existing anchor byte-snapshot convention. */
++export function snapshotNativeTrackedArchiveSelection(bytes: Uint8Array): Readonly<NativeTrackedArchiveSelection> {
++  try {
++    if (!nativeRegistrationTypes.isUint8Array(bytes) || nativeRegistrationTypes.isProxy(bytes)) throw new Error();
++    const typed = Object.getPrototypeOf(Uint8Array.prototype);
++    const size = Object.getOwnPropertyDescriptor(typed, "byteLength")?.get?.call(bytes);
++    const backing = Object.getOwnPropertyDescriptor(typed, "buffer")?.get?.call(bytes);
++    const resizable = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "resizable")?.get;
++    if (typeof size !== "number" || size < 1 || size > 1024 || !nativeRegistrationTypes.isArrayBuffer(backing)
++        || nativeRegistrationTypes.isSharedArrayBuffer(backing) || (resizable !== undefined && resizable.call(backing))) throw new Error();
++    const copy = new Uint8Array(size); Uint8Array.prototype.set.call(copy, bytes);
++    const text = new NativeRegistrationDecoder("utf-8", { fatal: true }).decode(copy);
++    const value: unknown = JSON.parse(text);
++    if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error();
++    const data = value as Record<string, unknown>, keys = ["schema", "gameId", "profileId", "downloadId"];
++    if (Object.keys(data).length !== keys.length || keys.some(key => !Object.hasOwn(data, key))
++        || data.schema !== "native-tracked-archive-selection/1" || data.gameId !== "cyberpunk2077"
++        || typeof data.profileId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(data.profileId)
++        || typeof data.downloadId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(data.downloadId)
++        || ["__proto__", "constructor", "prototype"].includes(data.downloadId.toLowerCase())) throw new Error();
++    const snapshot: NativeTrackedArchiveSelection = { schema: "native-tracked-archive-selection/1", gameId: data.gameId,
++      profileId: data.profileId, downloadId: data.downloadId };
++    if (!Buffer.from(copy).equals(Buffer.from(JSON.stringify(snapshot), "utf8"))) throw new Error();
++    return Object.freeze(snapshot);
++  } catch { throw new Error("NATIVE_TRACKED_ARCHIVE_SELECTION"); }
+ }
+ 
+ export interface NativeNewModRegistrationRequest {
+@@ -734,6 +772,86 @@
+     this.#checkOwnedRegistration(attempt, attempt.phase === "committed");
+   }
+ 
++  #mNativeArchiveProjectionReading = false;
++
++  /** Fixed bounded metadata read only. Main must separately bind readiness/frame and resolve the pattern. */
++  public async readNativeTrackedArchiveProjection(selectionBytes: Uint8Array): Promise<Readonly<NativeTrackedArchiveProjection>> {
++    if (this === null || typeof this !== "object" || nativeRegistrationTypes.isProxy(this) || !(#mConnection in this))
++      throw new Error("NATIVE_TRACKED_ARCHIVE_PROJECTION_REFUSED");
++    // All input bytes are copied/validated before any backend getter or asynchronous work.
++    const selection = snapshotNativeTrackedArchiveSelection(selectionBytes);
++    if (this.#mNativeArchiveProjectionReading || this.#mNativeActive !== 0 || this.#mNativeIneligible()
++        || this.#mNativeWriteHold !== undefined || this.#mNativeRegistration !== undefined
++        || this.#mNativeAnchor !== undefined || this.#mNativeAnchorReading || !this.#anchorConnectionValid())
++      throw new Error("NATIVE_TRACKED_ARCHIVE_PROJECTION_REFUSED");
++    const connection = this.#mConnection, alias = this.#mAlias, read = this.#mAnchorRead;
++    if (read === undefined) throw new Error("NATIVE_TRACKED_ARCHIVE_PROJECTION_REFUSED");
++    this.#mNativeArchiveProjectionReading = true; this.#mNativeActive++;
++    const check = (): void => {
++      if (!this.#mNativeArchiveProjectionReading || this.#mNativeActive !== 1 || this.#mNativeIneligible()
++          || this.#mNativeWriteHold !== undefined || this.#mNativeRegistration !== undefined
++          || this.#mNativeAnchor !== undefined || this.#mNativeAnchorReading
++          || this.#mConnection !== connection || this.#mAlias !== alias || !this.#anchorConnectionValid())
++        throw new Error("NATIVE_TRACKED_ARCHIVE_PROJECTION_HELD");
++    };
++    try {
++      check();
++      const base = ["persistent", "downloads", "files", selection.downloadId].join(SEPARATOR);
++      const stateKey = base + SEPARATOR + "state", gameKey = base + SEPARATOR + "game";
++      const pathKey = base + SEPARATOR + "localPath", sizeKey = base + SEPARATOR + "size";
++      const md5Key = base + SEPARATOR + "fileMD5", idKey = base + SEPARATOR + "id";
++      const activeKey = "settings###profiles###activeProfileId";
++      const profileGameKey = "persistent###profiles###" + selection.profileId + "###gameId";
++      const patternKey = "settings###downloads###path";
++      const keys = [stateKey, gameKey, pathKey, sizeKey, md5Key, idKey, activeKey, profileGameKey, patternKey];
++      const prefixes = new Set<string>();
++      for (const key of keys) { const parts = key.split(SEPARATOR); for (let n = 1; n < parts.length; n++) prefixes.add(parts.slice(0, n).join(SEPARATOR)); }
++      const guards = [...prefixes].sort(); guards.push(base + "###installed");
++      const parameters = [...keys, ...guards], slots = (start: number, count: number) => Array.from({length:count}, (_,n) => "$" + (start + n)).join(",");
++      const descendants = keys.map((_key,n) => "starts_with(key,$" + (n + 1) + " || '###')");
++      descendants.push("starts_with(key,$" + parameters.length + " || '###')");
++      const reader: unknown = await read.call(connection,
++        `SELECT CASE WHEN length(key)<=512 THEN key ELSE NULL END,
++          CASE WHEN key IN (${slots(1,keys.length)}) AND octet_length(encode(value))<=8192 THEN value ELSE NULL END
++         FROM ${alias}.kv WHERE key IS NULL OR key IN (${slots(1,parameters.length)}) OR ${descendants.join(" OR ")} LIMIT 33`, parameters);
++      check();
++      if (reader === null || typeof reader !== "object" || nativeRegistrationTypes.isProxy(reader)) throw new Error("NATIVE_TRACKED_ARCHIVE_PROJECTION_CONFLICT");
++      const getRows = nativeExecutorMethod(reader, "getRows");
++      if (getRows === undefined) throw new Error("NATIVE_TRACKED_ARCHIVE_PROJECTION_CONFLICT");
++      const rows: unknown = getRows.call(reader); check();
++      const values = new Map<string, unknown>();
++      if (!Array.isArray(rows) || nativeRegistrationTypes.isProxy(rows) || rows.length < 7 || rows.length > keys.length)
++        throw new Error("NATIVE_TRACKED_ARCHIVE_PROJECTION_CONFLICT");
++      for (let n = 0; n < rows.length; n++) {
++        const item = Object.getOwnPropertyDescriptor(rows, String(n));
++        const row: unknown = item !== undefined && Object.hasOwn(item, "value") ? item.value : undefined;
++        if (!Array.isArray(row) || nativeRegistrationTypes.isProxy(row) || row.length !== 2) throw new Error("NATIVE_TRACKED_ARCHIVE_PROJECTION_CONFLICT");
++        const kd = Object.getOwnPropertyDescriptor(row,"0"), vd = Object.getOwnPropertyDescriptor(row,"1");
++        if (kd === undefined || !Object.hasOwn(kd,"value") || typeof kd.value !== "string" || !keys.includes(kd.value)
++            || values.has(kd.value) || vd === undefined || !Object.hasOwn(vd,"value") || typeof vd.value !== "string"
++            || Buffer.byteLength(vd.value,"utf8") > 8192) throw new Error("NATIVE_TRACKED_ARCHIVE_PROJECTION_CONFLICT");
++        try { values.set(kd.value, JSON.parse(vd.value)); } catch { throw new Error("NATIVE_TRACKED_ARCHIVE_PROJECTION_CONFLICT"); }
++      }
++      if ([stateKey,gameKey,pathKey,sizeKey,md5Key,activeKey,profileGameKey].some(key => !values.has(key)))
++        throw new Error("NATIVE_TRACKED_ARCHIVE_PROJECTION_CONFLICT");
++      const game = values.get(gameKey), leaf = values.get(pathKey), size = values.get(sizeKey), md5 = values.get(md5Key);
++      if (values.get(stateKey) !== "finished" || !Array.isArray(game) || game.length !== 1 || game[0] !== selection.gameId
++          || values.get(activeKey) !== selection.profileId || values.get(profileGameKey) !== selection.gameId
++          || (values.has(idKey) && values.get(idKey) !== selection.downloadId)
++          || typeof leaf !== "string" || leaf.length < 5 || leaf.length > 204 || !/^[A-Za-z0-9_. -]+\.zip$/i.test(leaf)
++          || /[. ]$/.test(leaf) || /^(?:con|prn|aux|nul|conin\$|conout\$|com[1-9]|lpt[1-9])(?:\.|$)/i.test(leaf)
++          || typeof size !== "number" || !Number.isSafeInteger(size) || size < 1 || size > 64*1024*1024
++          || typeof md5 !== "string" || !/^[a-f0-9]{32}$/.test(md5)) throw new Error("NATIVE_TRACKED_ARCHIVE_PROJECTION_CONFLICT");
++      const pattern = values.has(patternKey) ? values.get(patternKey) : null;
++      if (values.has(patternKey) && (typeof pattern !== "string" || pattern.length > 4096 || /[\x00-\x1f\x7f]/.test(pattern)))
++        throw new Error("NATIVE_TRACKED_ARCHIVE_PROJECTION_CONFLICT");
++      check();
++      return Object.freeze({schema:"native-tracked-archive-projection/1",activeProfileId:selection.profileId,profileGameId:selection.gameId,
++        downloadPattern:Object.freeze({present:values.has(patternKey),value:pattern as string|null}),
++        archive:Object.freeze({id:selection.downloadId,idPresent:values.has(idKey),state:"finished",game:Object.freeze([selection.gameId]) as readonly ["cyberpunk2077"],localPath:leaf,size,fileMD5:md5})});
++    } finally { this.#mNativeArchiveProjectionReading = false; this.#mNativeActive--; this.#anchorDrained(); }
++  }
++
+   async #readTrackedArchive(request: NativeTrackedModRegistrationRequest) {
+     const archive = request.archive, base = ["persistent", "downloads", "files", archive.id].join(SEPARATOR);
+     const source = ["state", "game", "localPath", "size", "fileMD5"].map(key => ({ key: base + SEPARATOR + key,

@@ -213,6 +213,27 @@ Main's genuine tracked-download projection, path resolution, durable public
 request mapping and immutable renderer intake still need wiring before this
 becomes a supported MCP operation.
 
+## Selected archive projection
+
+The prepared backend method reads one selected finished download and its active
+profile context through the existing private database connection. A fixed,
+parameterized SELECT returns at most nine allowed values, bounds row/value sizes,
+and rejects conflicting ancestor or installed-subtree records. Account data,
+download URLs and unrelated mod metadata are excluded. Concurrent reads, raw
+connection exposure and connection-method drift refuse the observation.
+
+The projection is a point-in-time read, not archive custody or an installation
+permit. The configured download pattern remains literal: Main must still resolve
+it through the official path resolver and bind before/after archive observations.
+
+Verification passed 29 complete source-graph tests and 19 projection tests,
+including nine cases using the reviewed native DuckDB package and fresh in-memory
+databases. Strict TypeScript checking of the complete Main program with the exact
+candidate substituted in memory reported zero diagnostics across 1,141 files.
+That check emitted no application build and does not qualify an installed host.
+The graph now contains 133 patches over 26 original files; the manifest cap is
+100 KiB, with token, depth and companion limits unchanged.
+
 ## Next gates
 
 1. Connect Main's genuine tracked-download projection and path resolution to

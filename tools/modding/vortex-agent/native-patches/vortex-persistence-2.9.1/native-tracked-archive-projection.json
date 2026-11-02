@@ -1,0 +1,26 @@
+{
+  "schema": "native-source-patch/1",
+  "upstreamRepository": "https://github.com/Nexus-Mods/Vortex",
+  "upstreamTag": "v2.9.1",
+  "upstreamCommit": "c80326367cbe6d96621ad6cf4a5488ef49bac110",
+  "upstreamPath": "src/main/src/store/LevelPersist.ts",
+  "originalSourceSHA256": "742929670876a79c7332a13d16381cf2098ee55f57f838e3e35668853d1455a1",
+  "inputSHA256": "a032d35840fe5341ae7acd2e02c55a1b99f5bddf51b7d97a7f0c93e113d69620",
+  "outputSHA256": "9531b9c384bbbb0325b6300b417ba35fa6b631cde8069533894fb879dfd3ce33",
+  "patchSHA256": "77aa08b6ec93cd9d6076b4fb7cff40b829f558b7717b0ed487227be9742a26c7",
+  "prerequisitePatch": "native-backend-managed-cohort.patch",
+  "prerequisitePatchSHA256": "2ba00f33c40ecfbaf6abc530fb740cae0db5bd008dac4ec8d6247397fc9c98bc",
+  "preparedOnly": true,
+  "installed": false,
+  "nativeAcceptanceVerified": false,
+  "effectsAllowed": false,
+  "installationPermit": false,
+  "nativeAdmission": false,
+  "globalSQLIsolationVerified": false,
+  "powerLossPersistenceVerified": false,
+  "limitations": [
+    "Fixed bounded Main-private metadata projection only; no observer, resolver, frame/Main-readiness owner or public MCP endpoint is wired.",
+    "Result is point-in-time persisted data, not a write fence, SQLite transaction or native installation permission. Main must recheck genuine readiness/frame and compare projection across its future asynchronous physical observation.",
+    "No backend writer reservation or history/genesis is created. Existing tracked registration retains its global no-replacement checks."
+  ]
+}
