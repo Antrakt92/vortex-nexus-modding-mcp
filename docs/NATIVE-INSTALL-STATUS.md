@@ -151,6 +151,33 @@ This module is a pure dependency for the production intake. It is not yet a
 renderer build input, durable request mapping, native observation producer or
 public tool. Passing its tests does not authorize preparation or installation.
 
+## Stable request lookup
+
+`deriveNativeTrackedRequestIds(requestId)` derives operation and job IDs with
+separate fixed hash domains. Only the public request ID contributes: changing a
+plan, renderer generation or manager cannot turn a retry into new consumption
+keys. Envelope validation uses the same ID validator without computing hashes.
+
+`lookupNativeTrackedRequest(journal, requestId, expectedPlanId, expectedAnchorBytes)`
+reads the existing journal through a branded closure. It verifies the separately
+supplied Main anchor before and after reading stored request/packet hashes, then
+compares the stored plan identity. A matching completed record returns historical
+status; a different plan conflicts on the same IDs. Partial or changed records
+remain held. A null anchor is accepted only as a metadata observation of a missing
+root; it cannot provision or admit an installation.
+
+The journal keeps its six factory methods and existing record formats. No request
+index or second status ledger was added. Every lookup returns `canReplay:false`
+and no installation permit. The two census checks provide point-in-time
+observations, not a writer lock or power-loss durability guarantee. Main and the
+public route still need to call this lookup before starting new work.
+
+Sixteen own-filesystem tests cover restart, plan conflict, partial publication,
+lost replies, mutation between the two census checks and lookup during actual
+writes. The changed SDK also passed capture/bootstrap checks and seven compiler/
+capsule tests, including a real read-only Python child. These checks do not
+qualify the user's installed Vortex.
+
 ## Read-only archive observation
 
 `OwnedArchiveObservation` in

@@ -12,6 +12,23 @@ const exact = (value, keys) => value && typeof value === 'object' && !Array.isAr
   && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
 const sha = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const id = (value, prefix) => typeof value === 'string' && new RegExp('^' + prefix + '_[a-f0-9]{32}$').test(value);
+// Stable across manager lifetimes and plan revisions. Never add runtime/root/
+// generation/plan salt: it would turn a retry into different consumption keys.
+function validateNativeTrackedRequestId(requestId) {
+  need(arguments.length === 1 && typeof requestId === 'string'
+    && requestId.length >= 8 && requestId.length <= 80 && !/[^A-Za-z0-9_-]/.test(requestId),
+  'NATIVE_DISPATCH_INVALID_REQUEST_ID');
+  return requestId;
+}
+function deriveNativeTrackedRequestIds(requestId) {
+  need(arguments.length === 1, 'NATIVE_DISPATCH_INVALID_REQUEST_ID');
+  validateNativeTrackedRequestId(requestId);
+  const derive = domain => crypto.createHash('sha256')
+    .update(JSON.stringify([domain, requestId]), 'utf8').digest('hex').slice(0, 32);
+  return Object.freeze({operationId: 'op_' + derive('native-tracked-request-operation/1'),
+    nativeJobId: 'exec_' + derive('native-tracked-request-job/1')});
+}
+
 function scope(value) {
   if (typeof value !== 'string') return false;
   const match = /^manager-[A-Za-z0-9_-]{1,64}-([1-9][0-9]{0,15})$/.exec(value);
@@ -90,4 +107,5 @@ function createConsumedRegistry(lifetimeBytes) {
     },
   });
 }
-module.exports = {CONTRACT_ID, LIMITS, parseDispatchRequest, dispatchRequestDigest, createConsumedRegistry};
+module.exports = {CONTRACT_ID, LIMITS, parseDispatchRequest, dispatchRequestDigest, createConsumedRegistry,
+  validateNativeTrackedRequestId, deriveNativeTrackedRequestIds};

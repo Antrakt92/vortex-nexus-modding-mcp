@@ -48,6 +48,22 @@ export function appendNativeExecutorTerminalAnchored(journal, binding, evidenceB
   need(write !== undefined, 'INVALID_JOURNAL');
   return write(binding, evidenceBytes, expectedAnchorBytes);
 }
+// Read-only source-owned closures, preserving the frozen six-method factory ABI.
+const trackedRequestLookups = new WeakMap();
+const trackedRequestIds = dispatch.deriveNativeTrackedRequestIds;
+export function lookupNativeTrackedRequest(journal, requestId, expectedPlanId, expectedAnchorBytes) {
+  need(arguments.length === 4, 'INVALID_ARGUMENTS');
+  need(typeof expectedPlanId === 'string' && expectedPlanId.length === 64 && sha(expectedPlanId), 'INVALID_PLAN_ID');
+  // Copy/validate every caller byte before any journal closure or filesystem IO.
+  const anchor = expectedAnchorBytes === null ? null : anchorSnapshot(expectedAnchorBytes);
+  const ids = trackedRequestIds(requestId);
+  need(journal !== null && typeof journal === 'object' && !types.isProxy(journal), 'INVALID_JOURNAL');
+  const lookup = trackedRequestLookups.get(journal);
+  need(lookup !== undefined, 'INVALID_JOURNAL');
+  return lookup(requestId, ids, expectedPlanId, anchor);
+}
+
+
 function codeOf(error) {
   if (error === null || typeof error !== 'object' || types.isProxy(error)) return 'NATIVE_EXECUTOR_IO_FAILED';
   const descriptor = Object.getOwnPropertyDescriptor(error, 'message');
@@ -646,7 +662,72 @@ export function createNativeExecutorJournal(options = {}) {
       } catch (error) {provisionPhase = 'held'; throw error;}
     });
   }
+  let trackedLookupReading = false;
+  function lookupTrackedRequest(requestId, ids, expectedPlanId, anchor) {
+    let observed = null, stored = null, sealVerified = false;
+    const result = (state, code = null) => Object.freeze({schema: 'native-tracked-request-lookup/1', requestId,
+      ...ids, state, planId: stored?.request?.planId ?? null,
+      requestSHA256: stored?.requestSHA256 ?? null, packetSHA256: stored?.packetSHA256 ?? null,
+      historySealVerified: sealVerified,
+      startupHoldRequired: state === 'held' || state === 'conflict' || state === 'reserved'
+        || observed?.startupHoldRequired !== false,
+      code, historicalOnly: true, reconcileRequired: true, canReplay: false, effectsAllowed: false,
+      installationPermit: false, nativeAdmission: false, powerLossPersistenceVerified: false});
+    if (trackedLookupReading || activeWriters !== 0 || pendingReservationInProgress
+        || provisionPhase === 'checking' || terminalTransition?.phase === 'active')
+      return result('held', 'NATIVE_EXECUTOR_LOOKUP_BUSY');
+    if (provisionPhase === 'held' || terminalTransition?.phase === 'held')
+      return result('held', 'NATIVE_EXECUTOR_LOOKUP_HELD');
+    trackedLookupReading = true;
+    try {
+      const options = anchor === null ? {} : {expectedRootId: anchor.rootId, expectedInventorySHA256: anchor.inventorySHA256};
+      const before = inspectInventory(options); observed = before.observation;
+      if (anchor === null) {
+        if (!observed.complete && observed.code === 'NATIVE_EXECUTOR_ROOT_MISSING')
+          return result('not_observed', 'NATIVE_EXECUTOR_ROOT_MISSING');
+        return result('held', 'NATIVE_EXECUTOR_LOOKUP_ANCHOR_REQUIRED');
+      }
+      if (!observed.complete || !observed.historySealVerified || before.census === null)
+        return result('held', observed.code ?? 'NATIVE_EXECUTOR_LOOKUP_SEAL_REQUIRED');
+      const related = observed.records.filter(row => row.operationId === ids.operationId || row.nativeJobId === ids.nativeJobId);
+      let state = 'not_observed', code = null;
+      if (related.length > 1 || related.length === 1
+          && (related[0].operationId !== ids.operationId || related[0].nativeJobId !== ids.nativeJobId)) {
+        state = 'held'; code = 'NATIVE_EXECUTOR_LOOKUP_ID_CONFLICT';
+      } else if (related.length === 1) {
+        const row = related[0];
+        if (!sha(row.requestSHA256) || !sha(row.packetSHA256)
+            || row.state !== 'historical_closed' && row.reason !== 'terminal_missing') {
+          state = 'held'; code = 'NATIVE_EXECUTOR_LOOKUP_PARTIAL';
+        } else {
+          // Stored runtime binding is authoritative for this historical read;
+          // a new manager/generation has a different dispatch digest by design.
+          stored = read(ids.operationId, row.requestSHA256, ids.nativeJobId, row.packetSHA256);
+          if (stored.state !== 'reserved' || stored.request === null) {
+            state = 'held'; code = 'NATIVE_EXECUTOR_LOOKUP_PARTIAL';
+          } else if (stored.request.planId !== expectedPlanId) {
+            state = 'conflict'; code = 'NATIVE_EXECUTOR_LOOKUP_PLAN_CONFLICT';
+          } else state = row.state === 'historical_closed' ? 'historical_closed' : 'reserved';
+        }
+      } else if (observed.startupHoldRequired) {
+        state = 'held'; code = 'NATIVE_EXECUTOR_LOOKUP_UNRESOLVED_HISTORY';
+      }
+      const after = inspectInventory(options);
+      if (!after.observation.complete || !after.observation.historySealVerified || after.census === null
+          || JSON.stringify(after.census) !== JSON.stringify(before.census)) {
+        observed = after.observation;
+        return result('held', 'NATIVE_EXECUTOR_LOOKUP_CHANGED');
+      }
+      observed = after.observation; sealVerified = true;
+      return result(state, code);
+    } catch (error) {
+      return result('held', codeOf(error));
+    } finally {trackedLookupReading = false;}
+  }
+
+
   const journal = Object.freeze({begin, read, appendTerminal, inventory, reservePending, provision});
   anchoredTerminalWriters.set(journal, appendAnchored);
+  trackedRequestLookups.set(journal, lookupTrackedRequest);
   return journal;
 }
