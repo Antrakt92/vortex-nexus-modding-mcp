@@ -128,7 +128,7 @@ test('fixed packet is checked, but an unpinned original can never assemble', () 
 });
 
 test('pinned series closes all fixed nodes, exact source chains and cross-file manager dependencies', () => {
-  assert.equal(series.patches.length, 132); assert.equal(series.files.length, 26);
+  assert.equal(series.patches.length, 133); assert.equal(series.files.length, 26);
   assert.equal(series.schema, 'native-source-series/2');
   assert.deepEqual([...series.files.map(row => row.path)].sort(), [...NATIVE_SOURCE_PATHS].sort());
   const done = new Map(), current = new Map(series.files.map(row => [row.path, row.originalSHA256]));
@@ -199,7 +199,7 @@ test('altered source context, redirected manifest and rewritten series cannot re
 test('oversized fixed manifest is refused before opening or allocating its contents', async t => {
   const fixture = clonePacket(t), assemble = await fixture.load();
   const manifest = path.join(fixture.root, 'native-source-series.json');
-  fs.writeFileSync(manifest, Buffer.alloc(96*1024+1, 32));
+  fs.writeFileSync(manifest, Buffer.alloc(100*1024+1, 32));
   const open = fs.openSync; let opened = false;
   fs.openSync = (file, ...args) => {
     if (file === manifest) opened = true;
@@ -300,7 +300,7 @@ test('Git index and LF checkout preserve strict packet pins from CRLF working in
   fs.writeFileSync(path.join(copy.root, '.gitattributes'), '* text eol=lf\n', {flag: 'wx'});
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith('GIT_')));
   Object.assign(env, {GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: path.join(copy.root, '.git', 'empty-config'), GIT_ATTR_NOSYSTEM: '1'});
-  const git = args => execFileSync('git', ['-C', copy.root, ...args], {env, encoding: 'utf8', timeout: 10000, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']});
+  const git = args => execFileSync('git', ['-c', 'core.longpaths=true', '-C', copy.root, ...args], {env, encoding: 'utf8', timeout: 10000, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']});
   git(['init', '--quiet', '--template=', '--initial-branch=fixture']);
   git(['-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false', 'add', '--', '.gitattributes', ...textFiles]);
   const checkout = path.join(copy.root, 'checkout'); fs.mkdirSync(checkout);
@@ -377,7 +377,7 @@ test('additional companion lists are closed, bounded and matched to the pinned m
       }
     }));
     // Exercise structural guards independently of the separately tested byte cap.
-    assert(fs.statSync(path.join(copy.root, 'native-source-series.json')).size <= 96*1024);
+    assert(fs.statSync(path.join(copy.root, 'native-source-series.json')).size <= 100*1024);
     const assemble = await copy.load();
     assert.throws(() => assemble(dummy()), /^Error: NATIVE_SOURCE_SERIES_GRAPH$/);
   }
@@ -467,5 +467,36 @@ integration('companion packet binding refuses wrong fixed packet and unknown roo
     }));
     const assemble = await copy.load();
     assert.throws(() => assemble(originals()), /^Error: NATIVE_SOURCE_SERIES_GRAPH$/);
+  }
+});
+
+
+test('tracked archive projection follows the genuine backend final without altering its companion prerequisites', () => {
+  const index = series.patches.findIndex(row => row.name === 'native-tracked-archive-projection');
+  assert(index > 0); const row = series.patches[index], parent = series.patches[index-1];
+  assert.equal(parent.name, 'native-backend-managed-cohort'); assert.equal(row.packet, 'persistence');
+  assert.equal(row.path, 'src/main/src/store/LevelPersist.ts');
+  assert.equal(row.inputSHA256, parent.outputSHA256);
+  assert.equal(row.inputSHA256, 'a032d35840fe5341ae7acd2e02c55a1b99f5bddf51b7d97a7f0c93e113d69620');
+  assert.equal(row.prerequisitePatch, parent.name+'.patch'); assert.equal(row.prerequisitePatchSHA256, parent.patchSHA256);
+  assert.equal(parent.requiredCompanionPatch, 'native-sql-managed-cohort.patch');
+  const manifest = JSON.parse(fs.readFileSync(rowFile(row, '.json')));
+  assert.equal(manifest.preparedOnly, true);
+  for (const key of ['installed','nativeAcceptanceVerified','effectsAllowed','installationPermit','nativeAdmission']) assert.equal(manifest[key], false);
+  assert.equal(series.files.find(file => file.path === row.path).finalSHA256, row.outputSHA256);
+  assert.equal(series.patches.filter(row => row.packet === 'persistence').length, 95);
+});
+integration('tracked archive projection assembles its exact full reviewed backend candidate', () => {
+  const result = assembleNativeSources(originals());
+  assert.equal(sha(result.sources['src/main/src/store/LevelPersist.ts']), '9531b9c384bbbb0325b6300b417ba35fa6b631cde8069533894fb879dfd3ce33');
+  assert.equal(result.receipt.patches.length, 133);
+  assert.equal(result.receipt.nativeAdmission, false); assert.equal(result.receipt.installed, false);
+});
+
+test('the tracked archive projection runtime patch and manifest are both mandatory', async t => {
+  const row = series.patches.find(row => row.name === 'native-tracked-archive-projection'); assert(row);
+  for (const suffix of ['.json','.patch']) {
+    const copy = clonePacket(t); fs.unlinkSync(rowFile(row, suffix, copy.packets));
+    const assemble = await copy.load(); assert.throws(() => assemble(dummy()), /^Error: NATIVE_SOURCE_SERIES_PACKET$/);
   }
 });

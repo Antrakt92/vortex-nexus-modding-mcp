@@ -1,6 +1,6 @@
 # Assemble the reviewed Vortex source patches
 
-`native-source-series.mjs` applies the fixed sequence of 132 reviewed patches to
+`native-source-series.mjs` applies the fixed sequence of 133 reviewed patches to
 26 original files from Vortex `v2.9.1`, commit
 `c80326367cbe6d96621ad6cf4a5488ef49bac110`. It replaces manually composing separate
 patch chains before compilation. It does not change an installed application or
@@ -35,14 +35,16 @@ match the pinned series. Patch application requires exact offsets and context;
 it has no fuzzy matching or hash-refresh mode.
 
 The fixed graph combines the 38-patch mod-management/transfer packet with the
-91-patch persistence packet. The latter includes renderer target admission and
+95-patch persistence packet. The latter includes renderer target admission and
 acknowledged diffs, main/preload/shared IPC, backend reservations and managed SQL
-ownership, the main build's runtime binding and startup history classification.
+ownership, the main build's runtime binding, startup history classification and
+the selected tracked-archive projection described in
+[installation status](NATIVE-INSTALL-STATUS.md#selected-archive-projection).
 Both runtime packet directories have separate closed inventories;
 test-only adapters are excluded. A cross-file companion must already have been
 applied with its exact patch and intermediate output hashes. Cross-packet
 companions name one of the same two fixed packet IDs; they cannot add a source
-root. The series manifest is bounded to 96 KiB before opening its contents.
+root. The series manifest is bounded to 100 KiB before opening its contents.
 Later patches may
 then advance that companion source to its pinned final output.
 
