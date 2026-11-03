@@ -7,6 +7,7 @@ const source = Object.freeze({
   startup: '417-index.ts:925-971 -> 399-GameModeManager.ts:281-296',
   discovery: '425-discovery.ts:464-508,525-553 -> 399-GameModeManager.ts:596-606',
   reducer: '421-settings.ts:82-104',
+  discoveryHidden: '403-settings.ts:35-40 -> 421-settings.ts:100-104',
 });
 const pairs = Object.freeze([
   ['assassinscreedunity', 'assassinscreedunity-customlaunch'],
@@ -23,7 +24,7 @@ const invalid = () => { throw Error('INVALID_TECHNICAL_SETTINGS'); };
 
 // Reject values that JSON serialization would silently omit or coerce. Read only
 // data descriptors, so validating a supplied snapshot never invokes its getters.
-function copyJSON(value, ancestors = new Set()) {
+function copyJSON(value, ancestors = new Set(), location = []) {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
   if (typeof value === 'number') { if (!Number.isFinite(value)) invalid(); return value; }
   if (typeof value !== 'object' || ancestors.has(value)) invalid();
@@ -39,7 +40,13 @@ function copyJSON(value, ancestors = new Set()) {
     if (array && key === 'length') continue;
     const descriptor = descriptors[key];
     if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) invalid();
-    Object.defineProperty(result, key, { value: copyJSON(descriptor.value, ancestors), enumerable: true, writable: true, configurable: true });
+    // The pinned discovery reducer can add this own data property as undefined.
+    // Match path components, so slash-containing keys cannot borrow admission.
+    if (!array && key === 'hidden' && descriptor.value === undefined
+        && location.length === 5 && location[0] === 'gameMode'
+        && location[1] === 'discovered' && location[3] === 'tools'
+        && pairs.some(([game, tool]) => location[2] === game && location[4] === tool)) continue;
+    Object.defineProperty(result, key, { value: copyJSON(descriptor.value, ancestors, location.concat(key)), enumerable: true, writable: true, configurable: true });
   }
   ancestors.delete(value);
   return result;

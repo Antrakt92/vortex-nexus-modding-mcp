@@ -70,3 +70,64 @@ test('key order is irrelevant; literal __proto__ data remains strict', () => {
   a.extra = JSON.parse('{"__proto__":{"value":1}}'); b.extra = JSON.parse('{"__proto__":{"value":2}}');
   assert.throws(() => compare(a, b, options), /TECHNICAL_SETTINGS_CHANGED/);
 });
+
+
+test('observed rediscovery hidden:undefined is absence only for eight pinned tools', () => {
+  const before = fixture(), after = fixture();
+  for (const path of paths) {
+    const [, , , game, , tool] = path.split('/');
+    after.gameMode.discovered[game].tools[tool].hidden = undefined;
+  }
+  assert.equal(compare(before, after, options).equal, true);
+  assert.equal(compare(after, before, options).equal, true);
+  for (const path of paths) {
+    const [, , , game, , tool] = path.split('/');
+    const raw = after.gameMode.discovered[game].tools[tool];
+    assert(Object.hasOwn(raw, 'hidden'));
+    assert.equal(raw.hidden, undefined);
+    assert(!Object.hasOwn(normalize(after, options).gameMode.discovered[game].tools[tool], 'hidden'));
+  }
+});
+
+test('explicit hidden booleans and every other tool preference remain strict', () => {
+  for (const value of [false, true]) {
+    const before = fixture(), after = fixture(); node(after).hidden = value;
+    assert.throws(() => compare(before, after, options), /TECHNICAL_SETTINGS_CHANGED/);
+    node(before).hidden = undefined;
+    assert.throws(() => compare(before, after, options), /TECHNICAL_SETTINGS_CHANGED/);
+    assert.equal(normalize(after, options).gameMode.discovered.cyberpunk2077.tools['REDprelauncher.exe'].hidden, value);
+  }
+  const before = fixture(), after = fixture(); node(before).hidden = false; node(after).hidden = true;
+  assert.throws(() => compare(before, after, options), /TECHNICAL_SETTINGS_CHANGED/);
+});
+
+test('undefined elsewhere, path spoofing and case variants cannot use hidden admission', () => {
+  const mutations = [
+    s => { node(s).Hidden = undefined; }, s => { node(s).other = undefined; },
+    s => { s.hidden = undefined; }, s => { s.interface.hidden = undefined; },
+    s => { s.gameMode.discovered.cyberpunk2077.tools.unknown = { hidden: undefined }; },
+    s => { s.gameMode.discovered.unknown = { tools: { 'REDprelauncher.exe': { hidden: undefined } } }; },
+    s => { s['gameMode/discovered/cyberpunk2077/tools/REDprelauncher.exe'] = { hidden: undefined }; },
+    s => { s.gameMode['discovered/cyberpunk2077/tools/REDprelauncher.exe'] = { hidden: undefined }; },
+    s => { s.extra = [undefined]; },
+  ];
+  for (const mutate of mutations) { const raw=fixture(); mutate(raw); assert.throws(() => normalize(raw, options), /INVALID_TECHNICAL_SETTINGS/); }
+});
+
+test('undefined hidden admission never invokes accessors or accepts hidden descriptors', () => {
+  let invoked = 0;
+  for (const mutate of [
+    s => Object.defineProperty(node(s), 'hidden', { enumerable: true, get() { invoked++; return undefined; } }),
+    s => Object.defineProperty(node(s), 'hidden', { enumerable: false, value: undefined }),
+    s => { node(s).hidden = undefined; node(s)[Symbol('hidden')] = undefined; },
+    s => { s.gameMode.discovered.cyberpunk2077.tools['REDprelauncher.exe'] = []; node(s).hidden = undefined; },
+  ]) { const raw=fixture(); mutate(raw); assert.throws(() => normalize(raw, options), /INVALID_TECHNICAL_SETTINGS/); }
+  assert.equal(invoked, 0);
+});
+
+test('hidden admission does not weaken pinned timestamp or source checks', () => {
+  const raw=fixture(); node(raw).hidden=undefined; delete node(raw).timestamp;
+  assert.throws(() => normalize(raw, options), /INVALID_TECHNICAL_SETTINGS/);
+  const valid=fixture(); node(valid).hidden=undefined;
+  assert.throws(() => normalize(valid, {appAsarSHA256:'a'.repeat(64)}), /UNSUPPORTED_SETTINGS_SOURCE/);
+});

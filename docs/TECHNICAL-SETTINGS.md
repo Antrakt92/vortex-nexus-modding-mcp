@@ -17,13 +17,14 @@ The caller must supply the freshly verified Vortex application source pin. A
 copied constant or version label is not independent source verification. Unknown
 pins fail closed with `UNSUPPORTED_SETTINGS_SOURCE`. Both snapshots must contain
 all eight admitted tools and finite, nonnegative safe-integer timestamps.
-Missing nodes, missing timestamps, malformed data and non-JSON values fail with
+Missing nodes, missing timestamps, malformed data and non-JSON values outside the
+explicit discovery exception below fail with
 `INVALID_TECHNICAL_SETTINGS`. Other differences fail with
 `TECHNICAL_SETTINGS_CHANGED`. Errors contain no settings values.
 
 `normalize(settings, options)` returns a new comparison projection. Never write
 it back to Vortex, persist it as the full settings baseline, or use it instead of
-retaining the original baseline. It omits only these exact timestamp leaves:
+retaining the original baseline. It omits these exact timestamp leaves:
 
 | Game | Tool under `gameMode.discovered.GAME.tools.TOOL.timestamp` |
 | --- | --- |
@@ -36,13 +37,21 @@ retaining the original baseline. It omits only these exact timestamp leaves:
 | farcry6 | farcry6-savemanager |
 | witcher3 | witcher3_DX12 |
 
+For those same eight tool objects only, an own enumerable data property
+`hidden: undefined` compares as an absent property. Explicit `hidden: false` or
+`hidden: true` is retained and remains strict; changing between absence and either
+boolean still fails. Accessors, non-enumerable properties and undefined values at
+any other path still fail. Paths are matched by components, not joined strings.
+This exception affects only the comparison copy and never edits native settings.
+
 All other settings remain strict, including tool paths/arguments, user
 preferences, all profile pointers, other games' settings, unknown tools and
 unknown timestamp fields. The exported `paths` and `source` records are frozen;
 there is no caller-supplied wildcard or ignore list. Key order is immaterial;
 array order and values are compared strictly. The JSON validator rejects
 accessors, hidden/symbol fields, cycles, sparse arrays and values that JSON
-serialization would omit or coerce.
+serialization would omit or coerce, except the eight undefined discovery fields
+described above.
 
 ## Source and admission boundary
 
@@ -66,6 +75,19 @@ source pin explicitly. It does not establish that every deployment on every
 Vortex version has harmless settings churn. Extending the path list, accepting
 missing tools or supporting another source pin needs fresh source and snapshot
 review, plus negative regression coverage.
+
+On 3 November 2026, a native descriptor-only capture found exactly eight new
+own enumerable `hidden: undefined` properties at the listed tools, with valid
+unchanged-shape timestamps and no other JSON-shape failures. The saved baseline
+had no own `hidden` properties. Installed source explains the difference:
+`403-settings.ts:35-40` supplies the discovery result without an outer visibility
+field; `421-settings.ts:100-104` assigns
+`hidden: payload.hidden || old.hidden`, which can produce an own undefined field.
+The exact embedded source SHA-256 pins are respectively
+`20a5789912b14894951932cdd6990b95240374047e3d5ef9615ca727f43afe7a` and
+`8ad122e6f9fba490bd0d91a6929590c976b019e3ba6a8995581fedf8d75b4488`.
+The application archive pin above remains mandatory. This observation admits
+only those eight fields; it is not a general undefined-value filter.
 
 Profile-switch pointer changes need the task's separately reviewed policy before
 this comparison; this module never masks those pointers. A helper whose freeze
