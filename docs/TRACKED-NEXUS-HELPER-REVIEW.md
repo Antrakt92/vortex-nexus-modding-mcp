@@ -1,7 +1,7 @@
 # Review a helper for tracked Nexus originals
 
 This is a task-owned preparation/review procedure, not an installer or activation approval.
-The permanent MCP still refuses native installation. The automated
+The permanent MCP still refuses tracked Nexus installation/replacement. New own-local ZIP installation is a separate scoped route. The automated
 [single-own-package preparer](NATIVE-HELPER-PREPARATION.md) does not support a
 multi-Nexus template; do not remove its admission checks to make one pass.
 No helper is installed, materialized, restarted or invoked by this procedure.
@@ -13,6 +13,10 @@ family and one read-capture family listed in `tracked-nexus-template.json`.
 Unknown source/module hashes fail. Output is restricted to a new directory below
 this source checkout's ignored `local-state/`; its parent must already exist.
 It copies code only, never archives, old baselines, controls or approvals.
+The three historical preference/scope/settlement reference policies are replaced
+unconditionally by maintained owner modules. Preparation reads those owner bytes
+directly; their runtime pins and copy-map order remain enforced. Other referenced
+source inputs still require their exact catalog hashes.
 
 First review a held plan: 1–4 unique exact Nexus mod/file pairs, versions, bytes
 and SHA-256 values. Actual tracked/provider/type/flag/payload/baseline bindings
@@ -49,10 +53,21 @@ node tools/modding/vortex-agent/prepare-tracked-nexus.mjs capture-verify 'C:/Too
 Capture code preserves the admitted native metadata/previous-provider selection,
 all-game mod/profile digests, complete stages and protected disk/preferences
 checks. The timestamp policy is copied/pinned locally rather than loaded from a
-historical task path; an old task-specific diagnostic is removed. This reviewed
-capture family remains scoped to Cyberpunk and profile `ptndev1016`; it never
-switches profiles. Returned `missingBindings` lists fresh inputs still required.
+historical task path; an old task-specific diagnostic is removed. The family
+remains scoped to Cyberpunk. With no profile argument, it retains its historical
+`ptndev1016` restriction. To prepare for another exact current profile, add
+`--profile-id CURRENT_PROFILE_ID` to the capture preparation command. The opaque
+ID is pinned into both the new kit contract and generated native context guard;
+materialization must match the same ID. No profile is selected or switched.
+Existing kits cannot be retargeted by editing their bound health/configuration.
+A new kit is required; old contracts without a target field remain DEV-only.
+Malformed profile IDs refuse rather than silently falling back to the default.
+Returned `missingBindings` lists fresh inputs still required.
 Preparing this code does not perform a capture or verify live freshness.
+Selecting a profile is code/configuration binding only. It does not establish
+source admission for the current host, approve a native caller/version choice,
+prove profile transfers or authorize installation. Complete the same disk,
+all-profile, protected-owner and fresh host/materializer gates below.
 
 An own published Collection Patches original uses a **separate one-item Nexus
 batch**, with `ownStableCPIncluded=true`, a source commit and own-source proof

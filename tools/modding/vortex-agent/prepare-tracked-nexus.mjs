@@ -126,14 +126,18 @@ export function prepareTracked({ reference, planFile, planSha256, output, apply 
   const plan = JSON.parse(planBytes), pins = scopeFromHeld(plan), contents = new Map();
   const original = read(path.join(reference, catalog.entry));
   need(sha(original) === catalog.entrySHA256, 'TRACKED_REFERENCE_ENTRY_DRIFT');
+  const owners = ownerContent();
   for (const name of referenceModules) {
+    // These three legacy policies are replaced unconditionally below. Admit
+    // the maintained owner directly, preserving runtime order and its pins.
+    if (owners.has(name)) { contents.set(name, owners.get(name)); continue; }
     const hash = catalog.modules[name];
     const bytes = read(path.join(reference, name));
     need(sha(bytes) === hash, 'TRACKED_REFERENCE_MODULE_DRIFT'); contents.set(name, bytes);
   }
   contents.set('reference-index.js', original);
   contents.set('index.prepared.js', adaptTrackedIndex(original));
-  for (const [name, bytes] of ownerContent()) contents.set(name, bytes);
+  for (const [name, bytes] of owners) contents.set(name, bytes);
   contents.set('scope-pins.json', Buffer.from(JSON.stringify(pins, null, 2) + '\n'));
   const runtime = runtimeFiles(contents);
   const held = { purpose: 'tracked-nexus-native-install/1', activationApproved: false, activationHold: true, allActivationHold: true,
@@ -256,7 +260,17 @@ export function verifyTracked(value, { materialization = false } = {}) {
     activationGranted: false, nativeEffects: false };
 }
 
-function captureCode(entry, body) {
+const LEGACY_CAPTURE_PROFILE = 'ptndev1016';
+function captureProfile(value) {
+  need(typeof value === 'string' && /^[A-Za-z0-9_-]{1,200}$/.test(value), 'EXACT_CAPTURE_PROFILE_REQUIRED');
+  return value;
+}
+function contractCaptureProfile(contract) {
+  // Old immutable kits retain their original DEV restriction.
+  return Object.hasOwn(contract, 'targetProfileId') ? captureProfile(contract.targetProfileId) : LEGACY_CAPTURE_PROFILE;
+}
+export function adaptTrackedCapture(entry, body, targetProfileId = LEGACY_CAPTURE_PROFILE) {
+  captureProfile(targetProfileId);
   let index = entry.toString('utf8').replaceAll('\r\n', '\n');
   index = once(index, "'read-only-morning-native-capture-20261029-v3/1'", "'tracked-nexus-read-capture/1'");
   index = once(index, "   save('CP-SETTLEMENT-DIAGNOSTIC',require('./own-diagnostic.cjs').project(context.api.getState(),cfg.health.profileId));\n", '');
@@ -266,10 +280,14 @@ function captureCode(entry, body) {
   code = code.slice(0, start) + "const toolTimestamps=require('./tool-timestamps.cjs');\n" + code.slice(end);
   code = once(code, "installBaseline:{schema:'hardening-native-install-baseline/1',health:h,packages,",
     "installBaseline:{schema:'hardening-native-install-baseline/1',health:h,packages,profilesDigest:initial.expectedNativeProfilesSHA256,");
+  if (targetProfileId !== LEGACY_CAPTURE_PROFILE) {
+    code = once(code, "h.profileId==='ptndev1016'", `h.profileId===${JSON.stringify(targetProfileId)}`);
+  }
   return { index: Buffer.from(index), body: Buffer.from(code) };
 }
 const captureScopeAlias = Buffer.from("'use strict';\nmodule.exports={validate:require('./tracked-nexus-policy.cjs').createScopePolicy(require('./scope-pins.json')).captureScope};\n");
-export function prepareTrackedCapture({ reference, installKit, output, apply = false }) {
+export function prepareTrackedCapture({ reference, installKit, output, profileId, apply = false }) {
+  const targetProfileId = profileId === undefined ? LEGACY_CAPTURE_PROFILE : captureProfile(profileId);
   need(typeof apply === 'boolean', 'INVALID_TRACKED_PREPARATION_ARGUMENTS');
   reference = absolute(reference); installKit = absolute(installKit); output = absolute(output);
   need(inside(scratch, output) && output !== scratch && !inside(reference, output)
@@ -281,7 +299,7 @@ export function prepareTrackedCapture({ reference, installKit, output, apply = f
   const entry = read(path.join(reference, 'index.prepared.js')), body = read(path.join(reference, 'capture.cjs'));
   need(sha(entry) === catalog.capture.entrySHA256 && sha(body) === catalog.capture.bodySHA256,
     'TRACKED_CAPTURE_REFERENCE_DRIFT');
-  const adapted = captureCode(entry, body), contents = new Map();
+  const adapted = adaptTrackedCapture(entry, body, targetProfileId), contents = new Map();
   for (const [name, pin] of Object.entries(catalog.capture.modules)) {
     const bytes = read(path.join(reference, name)); need(sha(bytes) === pin, 'TRACKED_CAPTURE_REFERENCE_DRIFT');
     contents.set(name, bytes);
@@ -308,6 +326,7 @@ export function prepareTrackedCapture({ reference, installKit, output, apply = f
   contents.set('COPY-MAP.prepared.json', Buffer.from(JSON.stringify(maps.map(([destination, source]) => ({ source, destination,
     sha256: contents.has(source) ? sha(contents.get(source)) : null })), null, 2) + '\n'));
   const contract = { schema: 'tracked-nexus-capture-kit/1', runtime,
+    ...(profileId === undefined ? {} : { targetProfileId }),
     installKitEntrySHA256: source.helperSHA256, scopePins: JSON.parse(contents.get('scope-pins.json')),
     files: Object.fromEntries([...contents].map(([n, b]) => [n, sha(b)])), activationGranted: false, nativeEffects: false };
   contents.set('TRACKED-CAPTURE-KIT.json', Buffer.from(JSON.stringify(contract, null, 2) + '\n'));
@@ -315,7 +334,7 @@ export function prepareTrackedCapture({ reference, installKit, output, apply = f
     ordinary(output); fs.mkdirSync(output);
     for (const [name, bytes] of contents) { const file = path.join(output, name); ordinary(file); fs.writeFileSync(file, bytes, { flag: 'wx' }); }
   }
-  return { status: apply ? 'tracked-capture-held' : 'plan', output, packages: cfg.packages.length,
+  return { status: apply ? 'tracked-capture-held' : 'plan', output, targetProfileId, packages: cfg.packages.length,
     runtime: runtime.length, files: contents.size, activationGranted: false, nativeEffects: false };
 }
 
@@ -339,7 +358,8 @@ export function verifyTrackedCapture(value, { materialization = false } = {}) {
     && contract.files['scope.cjs'] === sha(captureScopeAlias), 'TRACKED_CAPTURE_POLICY_DIFFERS');
   const entry = read(path.join(dir, 'reference-index.js')), body = read(path.join(dir, 'reference-capture.cjs'));
   need(sha(entry) === catalog.capture.entrySHA256 && sha(body) === catalog.capture.bodySHA256, 'TRACKED_CAPTURE_REFERENCE_DRIFT');
-  const code = captureCode(entry, body);
+  const targetProfileId = contractCaptureProfile(contract);
+  const code = adaptTrackedCapture(entry, body, targetProfileId);
   need(sha(code.index) === contract.files['index.prepared.js'] && sha(code.body) === contract.files['capture.cjs'], 'TRACKED_CAPTURE_ENTRY_DIFFERS');
   const pins = JSON.parse(read(path.join(dir, 'scope-pins.json'))), policy = createScopePolicy(pins);
   need(JSON.stringify(pins) === JSON.stringify(contract.scopePins), 'TRACKED_CAPTURE_SCOPE_DIFFERS');
@@ -352,6 +372,7 @@ export function verifyTrackedCapture(value, { materialization = false } = {}) {
     && new Set(cfg.packages.map(p => p.nexusModId)).size === cfg.packages.length
     && cfg.packages.every(p => { const x = pins[p.nexusModId]; return x && p.nexusFileId === x.nexusFileId
       && p.bytes === x.size && p.sha256 === x.sha256 && p.version === x.version; }), 'TRACKED_CAPTURE_SCOPE_DIFFERS');
+  need(cfg.health == null || cfg.health.gameId === 'cyberpunk2077' && cfg.health.profileId === targetProfileId, 'TRACKED_CAPTURE_PROFILE_DIFFERS');
   const keys = ['health', 'expectedHostVersion', 'guard', 'sourcePins', 'diskBaseline', 'manifestPath', 'admissionFile', 'admissionSHA256', 'nativeTempPath', 'pluginPath'];
   const missingBindings = keys.filter(k => cfg[k] === null || cfg[k] === undefined);
   const missingPackageBindings = cfg.packages.map(p => ({ key: p.key,
@@ -372,7 +393,7 @@ export function verifyTrackedCapture(value, { materialization = false } = {}) {
   if (materialization) {
     policy.captureScope(cfg.packages);
     need(missingBindings.length === 0 && cfg.freshRootDiskBaselineFinalized === true
-      && cfg.health?.gameId === 'cyberpunk2077' && cfg.health.profileId === 'ptndev1016'
+      && cfg.health?.gameId === 'cyberpunk2077' && cfg.health.profileId === targetProfileId
       && cfg.diskBaseline && sha(read(absolute(cfg.diskBaseline.path), 64 * 1024 * 1024)) === cfg.diskBaseline.sha256
       && sha(read(absolute(cfg.admissionFile))) === cfg.admissionSHA256, 'FRESH_TRACKED_CAPTURE_BINDING_REQUIRED');
     need(samePath(cfg.control, dir) && samePath(cfg.guard, path.join(here, 'guard.cjs'))
@@ -384,7 +405,7 @@ export function verifyTrackedCapture(value, { materialization = false } = {}) {
       && ready.host.sha256 === sha(read(ready.host.path)), 'TRACKED_CAPTURE_HOST_BINDING_DIFFERS');
     need(ready.runtimeModules === runtime.length, 'TRACKED_CAPTURE_COPY_MAP_INCOMPLETE'); checkMap(ready.filesToCopy, true);
   }
-  return { status: 'tracked-capture-code-verified', packages: cfg.packages.length, runtime: runtime.length,
+  return { status: 'tracked-capture-code-verified', targetProfileId, packages: cfg.packages.length, runtime: runtime.length,
     missingBindings, missingPackageBindings, materializationMappingVerified: materialization,
     liveFreshnessVerified: false, activationGranted: false, nativeEffects: false };
 }
@@ -395,7 +416,7 @@ export function main(args = process.argv.slice(2)) {
   if (args[0] === 'verify' && (args.length === 2 || args.length === 3 && args[2] === '--materialization'))
     return verifyTracked(args[1], { materialization: args.length === 3 });
   const capture = args[0] === 'capture'; if (capture) args = args.slice(1);
-  const opts = {}, keys = capture ? { '--reference': 'reference', '--output': 'output', '--install-kit': 'installKit' }
+  const opts = {}, keys = capture ? { '--reference': 'reference', '--output': 'output', '--install-kit': 'installKit', '--profile-id': 'profileId' }
     : { '--reference': 'reference', '--plan': 'planFile', '--plan-sha256': 'planSha256', '--output': 'output' };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--apply' && opts.apply === undefined) opts.apply = true;

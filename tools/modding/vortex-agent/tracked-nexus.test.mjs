@@ -7,7 +7,8 @@ import crypto from 'node:crypto';
 import vm from 'node:vm';
 import { createRequire, isBuiltin } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { scopeFromHeld, prepareTracked, verifyTracked, prepareTrackedCapture, verifyTrackedCapture } from './prepare-tracked-nexus.mjs';
+import { scopeFromHeld, prepareTracked, verifyTracked, prepareTrackedCapture, verifyTrackedCapture,
+  adaptTrackedCapture, main as preparationCLI } from './prepare-tracked-nexus.mjs';
 const require = createRequire(import.meta.url);
 const { createScopePolicy } = require('./tracked-nexus-policy.cjs');
 const { wait, flagsReady } = require('./tracked-nexus-settlement.cjs');
@@ -297,4 +298,232 @@ test('generated entrypoint admits the exact reviewed batch at baseline startup f
         assert.throws(() => check(duplicate), /DUPLICATE_TRACKED_NEXUS_TARGET/);
       }
     }
+  });
+
+
+const LEGACY_CAPTURE_BODY_SHA256 = 'afaaf45ceb5b85547700bde934cc8b7834aecf6e7b30aa427b79ad5ff13e6ef6';
+const LEGACY_CAPTURE_ENTRY_SHA256 = 'bcbd0f01d41af5347aa8cd08af8d0656ef7b02fef2eb9757a1cfb1cf4aa10a93';
+const ordinaryProfile = 'ordinary-profile_42';
+const captureReferencesAvailable = !!(process.env.VORTEX_TRACKED_REFERENCE && process.env.VORTEX_TRACKED_CAPTURE_REFERENCE);
+
+function profileFixture(t) {
+  const root = fs.mkdtempSync(path.join(scratch, 'tracked-profile-test-'));
+  t.after(() => { assert(root.startsWith(scratch + path.sep)); fs.rmSync(root, {recursive: true}); });
+  const planFile = path.join(root, 'plan.json'), bytes = Buffer.from(JSON.stringify(held()));
+  fs.writeFileSync(planFile, bytes);
+  const installKit = path.join(root, 'install');
+  prepareTracked({reference: process.env.VORTEX_TRACKED_REFERENCE, planFile,
+    planSha256: sha(bytes), output: installKit, apply: true});
+  const capture = (name, extra = {}) => {
+    const output = path.join(root, name);
+    const result = prepareTrackedCapture({reference: process.env.VORTEX_TRACKED_CAPTURE_REFERENCE,
+      installKit, output, ...extra, apply: true});
+    return {output, result};
+  };
+  return {root, planFile, bytes, installKit, capture};
+}
+
+function modeledQuiet(dir) {
+  const file = path.join(dir, 'capture.cjs'), mod = {exports: {}};
+  let touched = 0;
+  const denied = new Proxy({}, {get() { touched++; throw Error('UNEXPECTED_NATIVE_ACCESS'); }});
+  vm.runInNewContext(fs.readFileSync(file, 'utf8'), {module: mod, exports: mod.exports,
+    Buffer, process: denied, setTimeout() { throw Error('UNEXPECTED_NATIVE_TIMER'); },
+    require(id) {
+      if (['original-fs', 'fs', 'node:fs'].includes(id)) return denied;
+      if (id.startsWith('./')) return {};
+      assert(isBuiltin(id)); return require(id);
+    },
+  }, {filename: file, timeout: 1000});
+  assert.equal(typeof mod.exports.quiet, 'function');
+  return {quiet: mod.exports.quiet, untouched: () => assert.equal(touched, 0)};
+}
+
+function quietContext(profileId = ordinaryProfile) {
+  const state = {activeGame: 'cyberpunk2077', activeProfile: profileId, app: {appVersion: '2.9.1'},
+    settings: {automation: {install: false, enable: false}},
+    session: {collections: {}, base: {toolsRunning: {}}, mods: {changes: {}, deploymentFailures: {}}, notifications: {dialogs: []}},
+    persistent: {mods: {cyberpunk2077: {old: {state: 'installed'}}}}};
+  return {state, cfg: {health: {gameId: 'cyberpunk2077', profileId}, expectedHostVersion: '2.9.1'},
+    selectors: {activeGameId: s => s.activeGame, activeProfileId: s => s.activeProfile}};
+}
+
+test('explicit capture profiles reject malformed values before reading paths, and only capture accepts the CLI option', () => {
+  for (const profileId of [null, false, 7, {}, [], '', 'with space', 'control\nprofile', 'nul\0profile', 'x'.repeat(201), 'quote"profile']) {
+    assert.throws(() => prepareTrackedCapture({profileId}), /EXACT_CAPTURE_PROFILE_REQUIRED/);
+    assert.throws(() => adaptTrackedCapture(Buffer.alloc(0), Buffer.alloc(0), profileId), /EXACT_CAPTURE_PROFILE_REQUIRED/);
+  }
+  assert.throws(() => preparationCLI(['--profile-id', ordinaryProfile]), /INVALID_TRACKED_PREPARATION_ARGUMENTS/);
+  assert.throws(() => preparationCLI(['capture', '--profile-id', 'bad!']), /EXACT_CAPTURE_PROFILE_REQUIRED/);
+  assert.throws(() => preparationCLI(['capture', '--profile-id', ordinaryProfile, '--profile-id', ordinaryProfile]), /INVALID_TRACKED_PREPARATION_ARGUMENTS/);
+});
+
+test('explicit capture target binds actual native quiet guard while preserving every existing refusal',
+  {skip: !captureReferencesAvailable}, async t => {
+    const f = profileFixture(t), ordinary = f.capture('ordinary', {profileId: ordinaryProfile});
+    const result = verifyTrackedCapture(ordinary.output);
+    assert.equal(result.targetProfileId, ordinaryProfile); assert.equal(result.runtime, 9);
+    assert.equal(result.activationGranted, false); assert.equal(result.nativeEffects, false);
+    const loaded = modeledQuiet(ordinary.output), good = quietContext();
+    assert.doesNotThrow(() => loaded.quiet(good.state, good.cfg, good.selectors));
+    for (const profileId of ['ptndev1016', ordinaryProfile.toUpperCase(), 'another-profile']) {
+      const c = quietContext(profileId);
+      assert.throws(() => loaded.quiet(c.state, c.cfg, c.selectors), /ACTIVE_CONTEXT_CHANGED/);
+    }
+    for (const [mutate, code] of [
+      [s => {s.app.appVersion = 'changed';}, 'HOST_VERSION_CHANGED'],
+      [s => {s.activeGame = 'another-game';}, 'ACTIVE_CONTEXT_CHANGED'],
+      [s => {s.activeProfile = 'another-profile';}, 'ACTIVE_CONTEXT_CHANGED'],
+      [s => {s.session.collections.activeSession = {};}, 'ACTIVE_COLLECTION_SESSION'],
+      [s => {s.settings.automation.install = true;}, 'AUTOMATION_ENABLED'],
+      [s => {s.settings.automation.enable = true;}, 'AUTOMATION_ENABLED'],
+      [s => {s.session.base.toolsRunning.running = {};}, 'PENDING_NATIVE_ACTIVITY'],
+      [s => {s.session.mods.changes.pending = {};}, 'PENDING_NATIVE_ACTIVITY'],
+      [s => {s.session.mods.deploymentFailures.cyberpunk2077 = {failed: {}};}, 'PENDING_NATIVE_ACTIVITY'],
+      [s => {s.session.notifications.dialogs.push({});}, 'NATIVE_DIALOG_PENDING'],
+      [s => {s.persistent.mods.cyberpunk2077.old.state = 'installing';}, 'NATIVE_INSTALL_OR_REMOVAL_IN_PROGRESS'],
+    ]) {
+      const c = quietContext(); mutate(c.state);
+      assert.throws(() => loaded.quiet(c.state, c.cfg, c.selectors), new RegExp(code));
+    }
+    // The same actual quiet guard is used after awaited native reads.
+    await Promise.resolve(); good.state.activeProfile = 'drift-after-read';
+    assert.throws(() => loaded.quiet(good.state, good.cfg, good.selectors), /ACTIVE_CONTEXT_CHANGED/);
+    loaded.untouched(); inert(ordinary.output);
+    assert.equal(verifyTrackedCapture(ordinary.output).liveFreshnessVerified, false);
+    assert.throws(() => verifyTrackedCapture(ordinary.output, {materialization: true}), /EXACT_TRACKED_CAPTURE_INPUT_REQUIRED/);
+  });
+
+test('legacy no-profile capture keeps its exact generated source and cannot silently retarget',
+  {skip: !captureReferencesAvailable}, t => {
+    const f = profileFixture(t), legacy = f.capture('legacy'), explicitDev = f.capture('explicit-dev', {profileId: 'ptndev1016'});
+    const legacyContract = JSON.parse(fs.readFileSync(path.join(legacy.output, 'TRACKED-CAPTURE-KIT.json')));
+    assert.equal(Object.hasOwn(legacyContract, 'targetProfileId'), false);
+    for (const kit of [legacy, explicitDev]) {
+      assert.equal(sha(fs.readFileSync(path.join(kit.output, 'capture.cjs'))), LEGACY_CAPTURE_BODY_SHA256);
+      assert.equal(sha(fs.readFileSync(path.join(kit.output, 'index.prepared.js'))), LEGACY_CAPTURE_ENTRY_SHA256);
+      assert.equal(verifyTrackedCapture(kit.output).targetProfileId, 'ptndev1016');
+      const loaded = modeledQuiet(kit.output), good = quietContext('ptndev1016');
+      assert.doesNotThrow(() => loaded.quiet(good.state, good.cfg, good.selectors));
+      const wrong = quietContext(); assert.throws(() => loaded.quiet(wrong.state, wrong.cfg, wrong.selectors), /ACTIVE_CONTEXT_CHANGED/);
+      loaded.untouched();
+    }
+    const ordinary = f.capture('ordinary', {profileId: ordinaryProfile});
+    const code = fs.readFileSync(path.join(ordinary.output, 'capture.cjs'), 'utf8');
+    assert.equal(sha(Buffer.from(code.replace(`h.profileId===${JSON.stringify(ordinaryProfile)}`, "h.profileId==='ptndev1016'"))), LEGACY_CAPTURE_BODY_SHA256);
+  });
+
+test('capture contract and non-null bound health cannot retarget a prepared profile, even before materialization',
+  {skip: !captureReferencesAvailable}, t => {
+    const f = profileFixture(t), {output} = f.capture('ordinary', {profileId: ordinaryProfile});
+    const contractFile = path.join(output, 'TRACKED-CAPTURE-KIT.json'), original = fs.readFileSync(contractFile);
+    const contract = JSON.parse(original);
+    for (const profileId of ['ptndev1016', 'another-profile']) {
+      fs.writeFileSync(contractFile, JSON.stringify({...contract, targetProfileId: profileId}));
+      assert.throws(() => verifyTrackedCapture(output), /TRACKED_CAPTURE_ENTRY_DIFFERS/);
+    }
+    const removed = {...contract}; delete removed.targetProfileId;
+    fs.writeFileSync(contractFile, JSON.stringify(removed));
+    assert.throws(() => verifyTrackedCapture(output), /TRACKED_CAPTURE_ENTRY_DIFFERS/);
+    for (const profileId of [null, false, 7, '', 'with space', 'bad\nprofile', 'x'.repeat(201)]) {
+      fs.writeFileSync(contractFile, JSON.stringify({...contract, targetProfileId: profileId}));
+      assert.throws(() => verifyTrackedCapture(output), /EXACT_CAPTURE_PROFILE_REQUIRED/);
+    }
+    fs.writeFileSync(contractFile, original);
+    const cfgFile = path.join(output, 'reviewed.prepared.json'), cfg = JSON.parse(fs.readFileSync(cfgFile));
+    for (const health of [{gameId: 'cyberpunk2077', profileId: 'ptndev1016'},
+      {gameId: 'cyberpunk2077', profileId: ordinaryProfile.toUpperCase()},
+      {gameId: 'other-game', profileId: ordinaryProfile}, {}]) {
+      fs.writeFileSync(cfgFile, JSON.stringify({...cfg, health}));
+      assert.throws(() => verifyTrackedCapture(output), /TRACKED_CAPTURE_PROFILE_DIFFERS/);
+    }
+    fs.writeFileSync(cfgFile, JSON.stringify({...cfg, health: {gameId: 'cyberpunk2077', profileId: ordinaryProfile}}));
+    const checked = verifyTrackedCapture(output);
+    assert.equal(checked.targetProfileId, ordinaryProfile); assert.equal(checked.materializationMappingVerified, false);
+    assert.equal(checked.activationGranted, false); assert.equal(checked.liveFreshnessVerified, false);
+    assert.throws(() => verifyTrackedCapture(output, {materialization: true}));
+
+    // Model only: these owned JSON files are not native admission or disk proof.
+    const baselineFile = path.join(f.root, 'model-disk-baseline.json');
+    const admissionFile = path.join(f.root, 'model-source-admission.json');
+    fs.writeFileSync(baselineFile, '{"modelOnly":true,"nativeDiskVerified":false}');
+    fs.writeFileSync(admissionFile, '{"modelOnly":true,"nativeAdmissionVerified":false}');
+    const guard = path.join(here, 'guard.cjs'), modelRows = bound().rows;
+    const boundConfig = {...cfg, expectedHostVersion: '2.9.1', guard,
+      sourcePins: {[guard]: sha(fs.readFileSync(guard))},
+      health: {gameId: 'cyberpunk2077', profileId: ordinaryProfile,
+        gamePath: path.join(f.root, 'model-game'), stagingPath: path.join(f.root, 'model-stage'),
+        downloadPath: path.join(f.root, 'model-downloads'),
+        filesystemIds: {gamePath: '1:2', stagingPath: '1:3', downloadPath: '1:4'}},
+      freshRootDiskBaselineFinalized: true,
+      diskBaseline: {path: baselineFile, sha256: sha(fs.readFileSync(baselineFile))},
+      manifestPath: path.join(f.root, 'model-game', 'vortex.deployment.json'),
+      admissionFile, admissionSHA256: sha(fs.readFileSync(admissionFile)),
+      nativeTempPath: path.join(f.root, 'model-temp'), pluginPath: path.join(f.root, 'inactive-plugin'),
+      packages: cfg.packages.map((p, i) => ({...p, requiredDownloadId: modelRows[i].requiredDownloadId,
+        expectedModId: modelRows[i].expectedModId, archive: path.join(f.root, `model-archive-${i}.zip`),
+        md5: 'a'.repeat(32), crcVerified: true}))};
+    const cfgBytes = Buffer.from(JSON.stringify(boundConfig));
+    fs.writeFileSync(cfgFile, cfgBytes); fs.writeFileSync(path.join(output, 'reviewed.json'), cfgBytes);
+    fs.writeFileSync(path.join(output, 'info.json'), '{"name":"Offline capture model"}');
+    const map = JSON.parse(fs.readFileSync(path.join(output, 'COPY-MAP.prepared.json')));
+    map.find(row => row.source === 'reviewed.json').sha256 = sha(cfgBytes);
+    map.find(row => row.source === 'info.json').sha256 = sha(fs.readFileSync(path.join(output, 'info.json')));
+    const mapBytes = Buffer.from(JSON.stringify(map));
+    fs.writeFileSync(path.join(output, 'COPY-MAP.prepared.json'), mapBytes);
+    const mappedContract = structuredClone(contract);
+    mappedContract.files['COPY-MAP.prepared.json'] = sha(mapBytes);
+    fs.writeFileSync(contractFile, JSON.stringify(mappedContract));
+    const host = path.join(output, 'host.prepared.ps1'); fs.writeFileSync(host, 'throw "MODEL ONLY - never invoke"');
+    fs.writeFileSync(path.join(output, 'READY.prepared.json'), JSON.stringify({control: output,
+      pluginPath: boundConfig.pluginPath, purpose: boundConfig.purpose,
+      preparedOnly: true, activationApproved: false, runtimeModules: 9,
+      filesToCopy: map, host: {path: host, sha256: sha(fs.readFileSync(host))}}));
+    assert.equal(map.length, 12);
+    const mapped = verifyTrackedCapture(output, {materialization: true});
+    assert.equal(mapped.materializationMappingVerified, true);
+    assert.equal(mapped.activationGranted, false); assert.equal(mapped.liveFreshnessVerified, false);
+    assert.equal(mapped.nativeEffects, false);
+    fs.writeFileSync(cfgFile, JSON.stringify({...boundConfig,
+      health: {...boundConfig.health, profileId: 'ptndev1016'}}));
+    assert.throws(() => verifyTrackedCapture(output, {materialization: true}), /TRACKED_CAPTURE_PROFILE_DIFFERS/);
+  });
+
+test('overwritten legacy reference policies are unused while active owned and reference policies remain pinned',
+  {skip: !process.env.VORTEX_TRACKED_REFERENCE}, t => {
+    const root = fs.mkdtempSync(path.join(scratch, 'tracked-owner-inputs-test-'));
+    t.after(() => { assert(root.startsWith(scratch + path.sep)); fs.rmSync(root, {recursive: true}); });
+    const reference = path.join(root, 'reference'); fs.cpSync(process.env.VORTEX_TRACKED_REFERENCE, reference, {recursive: true});
+    const unused = ['preference-policy.cjs', 'scope-policy.cjs', 'settlement.cjs'];
+    for (const name of unused) fs.writeFileSync(path.join(reference, name), "throw Error('UNUSED_REFERENCE_INPUT');\n");
+    const planFile = path.join(root, 'plan.json'), bytes = Buffer.from(JSON.stringify(held())); fs.writeFileSync(planFile, bytes);
+    const make = name => {
+      const output = path.join(root, name);
+      prepareTracked({reference, planFile, planSha256: sha(bytes), output, apply: true});
+      assert.equal(verifyTracked(output).runtime, 20); return output;
+    };
+    const withUnused = make('with-unused');
+    for (const name of unused) fs.unlinkSync(path.join(reference, name));
+    const withoutUnused = make('without-unused');
+    const a = JSON.parse(fs.readFileSync(path.join(withUnused, 'TRACKED-NEXUS-KIT.json')));
+    const b = JSON.parse(fs.readFileSync(path.join(withoutUnused, 'TRACKED-NEXUS-KIT.json')));
+    assert.deepEqual(a.runtime, b.runtime);
+    for (const name of [...a.runtime, 'index.prepared.js', 'reference-index.js', 'COPY-MAP.prepared.json'])
+      assert.deepEqual(fs.readFileSync(path.join(withUnused, name)), fs.readFileSync(path.join(withoutUnused, name)), name);
+    const ca = JSON.parse(fs.readFileSync(path.join(withUnused, 'reviewed.prepared.json')));
+    const cb = JSON.parse(fs.readFileSync(path.join(withoutUnused, 'reviewed.prepared.json')));
+    assert.deepEqual({...ca, control: null}, {...cb, control: null});
+    for (const name of unused) {
+      const file = path.join(withoutUnused, name), saved = fs.readFileSync(file);
+      fs.appendFileSync(file, '\n// altered active owner\n');
+      const changedContract = structuredClone(b); changedContract.files[name] = sha(fs.readFileSync(file));
+      fs.writeFileSync(path.join(withoutUnused, 'TRACKED-NEXUS-KIT.json'), JSON.stringify(changedContract));
+      assert.throws(() => verifyTracked(withoutUnused), /STALE_TRACKED_KIT/);
+      fs.writeFileSync(file, saved);
+    }
+    fs.writeFileSync(path.join(withoutUnused, 'TRACKED-NEXUS-KIT.json'), JSON.stringify(b));
+    assert.equal(verifyTracked(withoutUnused).status, 'tracked-code-contract-verified');
+    fs.appendFileSync(path.join(reference, 'native-selectors.cjs'), '\n// altered active reference\n');
+    assert.throws(() => make('bad-reference'), /TRACKED_REFERENCE_MODULE_DRIFT/);
+    assert.equal(fs.existsSync(path.join(root, 'bad-reference')), false);
   });
