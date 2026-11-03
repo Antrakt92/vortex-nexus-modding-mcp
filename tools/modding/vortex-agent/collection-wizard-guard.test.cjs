@@ -57,7 +57,7 @@ async function fixture(t) {
     filesystemIds: { gamePath: identity(dir), stagingPath: identity(dir), downloadPath: identity(dir) } };
   const args = { ...common, requestId: 'wizard_request_start', modId: 'owner', archiveId: 'archive',
     collectionId: 123, revisionId: 456, revisionNumber: 13, action: 'install_now' };
-  return { dir, state, controller, wizard, ops, args, common,
+  return { dir, state, controller, wizard, ops, args, common, api, selectors,
     read: async name => JSON.parse(await fs.readFile(path.join(dir, 'receipts', name), 'utf8')),
     get clicks() { return clicks; }, get writes() { return writes; },
     set mode(value) { mode = value; }, set versionRead(value) { versionRead = value; },
@@ -128,3 +128,33 @@ test('click without native transition never writes a successful completion', asy
   await assert.rejects(fs.access(path.join(f.dir, 'receipts', f.args.requestId + '.completion.json')));
   assert.equal((await f.ops.reconcile_operation({ requestId: f.args.requestId })).terminalOperationVerified, false);
 });
+
+
+test('dialog guard shares durable intent, synchronous response boundary and two completion rechecks',async t=>{
+ const f=await fixture(t);let responses=0,checks=0;const args={...f.args,requestId:'dialog_response_01',dialogId:'dialog-a',action:'update_current_profile'};
+ const result={modId:args.modId,archiveId:args.archiveId,collectionId:args.collectionId,revisionId:args.revisionId,revisionNumber:args.revisionNumber,profileId:args.profileId,dialogId:args.dialogId,action:args.action,sessionId:'session-a',memberKey:'member-a',downloadId:'member-archive',oldModIds:['other'],nativeDialogDismissalVerified:true,installationCompleted:false};
+ const dialog={async prepare(){await fs.access(path.join(f.dir,'receipts/mutation.lock'));},validate(){return true;},respond(){assert.ok(require('node:fs').existsSync(path.join(f.dir,'receipts/unresolved.json')));responses++;},async waitForTransition(){return result;},verifyTransition(a,r){assert.equal(a,args);assert.equal(r,result);checks++;return true;}};
+ const ops=createOperations(f.api,{},f.selectors,{dialog,receipts:path.join(f.dir,'receipts'),stopped:()=>{}});const status=await ops.respond_collection_dialog(args);
+ assert.equal(responses,1);assert.equal(checks,2);assert.equal(status.nativeDialogDismissalVerified,true);assert.equal(status.installationCompleted,false);const a=await f.read(args.requestId+'.attempt.json'),c=await f.read(args.requestId+'.completion.json');assert.equal(receipts.validCompletion(c,a),true);await assert.rejects(fs.access(path.join(f.dir,'receipts/unresolved.json')));
+});
+test('dialog response uncertainty retains global interlock and blocks different operation IDs',async t=>{
+ const f=await fixture(t);let responses=0;const dialog={async prepare(){},validate(){},respond(){responses++;},async waitForTransition(){throw Error('COLLECTION_DIALOG_TRANSITION_TIMEOUT');},verifyTransition(){}};
+ const ops=createOperations(f.api,{},f.selectors,{dialog,receipts:path.join(f.dir,'receipts'),stopped:()=>{}});const args={...f.args,requestId:'dialog_response_02',dialogId:'dialog-a',action:'update_current_profile'};
+ await assert.rejects(ops.respond_collection_dialog(args),/TRANSITION_TIMEOUT/);assert.equal(responses,1);await fs.access(path.join(f.dir,'receipts/unresolved.json'));await assert.rejects(f.ops.set_mods_enabled({...f.common,requestId:'different_write_02',modIds:['other'],enabled:true}),/UNRESOLVED_OPERATION_INTERLOCK/);assert.equal(responses,1);
+});
+
+test('real dialog controller and guard commit exact response with repeated completion verification',async t=>{
+ const f=await fixture(t),{createCollectionDialogController}=require('./collection-dialog-controller.cjs'),{QUESTION_TEXT,ACTIONS}=require('./collection-dialog-policy.cjs');
+ const args={...f.args,requestId:'real_dialog_response',dialogId:'dialog-a',action:'update_current_profile'},b={gameId:args.gameId,profileId:args.profileId,modId:args.modId,archiveId:args.archiveId,collectionId:123,revisionId:456,revisionNumber:13,sessionId:'session-a',epochReady:true,invalidated:false};
+ f.state.session.collections.activeSession={sessionId:b.sessionId,collectionId:b.modId,gameId:b.gameId,profileId:b.profileId,mods:{member:{status:'installing',type:'requires',rule:{type:'requires',reference:{repo:{gameId:b.gameId,modId:12,fileId:34}}}}}};
+ f.state.persistent.mods[b.gameId].other.attributes={modId:12};f.state.persistent.downloads.files.incoming={state:'finished',game:[b.gameId],modInfo:{nexus:{ids:{gameId:b.gameId,modId:12,fileId:34}}}};
+ f.state.session.notifications.dialogs=[{id:args.dialogId,type:'question',title:'Old mod',defaultAction:undefined,actions:[...ACTIONS],content:{text:QUESTION_TEXT,options:{wrap:true},checkboxes:[{id:'remember',value:false,text:'Remember my choice'}]}}];
+ const handlers=new Map();f.api.onAsync=(name,fn)=>handlers.set(name,fn);let answers=0;f.api.closeDialog=(id,action,input)=>{assert.equal(id,args.dialogId);assert.equal(action,'Update current profile');assert.deepEqual(input,{remember:false});answers++;f.state.session.notifications.dialogs.shift();};
+ const admit=async()=>({});admit.revalidate=()=>true;const dialog=createCollectionDialogController(f.api,{selectors:f.selectors,util:{renderModName:mod=>mod.type==='collection'?'Collection':'Old mod'},getBinding:()=>b,admit,admitRead:admit,pollMs:1,transitionTimeoutMs:20});
+ await handlers.get('will-install-mod')(b.gameId,'incoming','provisional');
+ const ops=createOperations(f.api,{},f.selectors,{dialog,receipts:path.join(f.dir,'receipts'),stopped:()=>{}}),r=await ops.respond_collection_dialog(args);
+ assert.equal(answers,1);assert.equal(r.nativeDialogDismissalVerified,true);const a=await f.read(args.requestId+'.attempt.json'),c=await f.read(args.requestId+'.completion.json');assert.equal(receipts.validCompletion(c,a),true);assert.equal(c.installationCompleted,false);await assert.rejects(fs.access(path.join(f.dir,'receipts/unresolved.json')));
+});
+
+test('update prompt named guard commits dismissal through shared durable intent with two checks',async t=>{const f=await fixture(t);const args={...f.common,requestId:'update_prompt_01',oldModId:'old-owner',collectionId:123,collectionSlug:'some-slug',revisionNumber:13,action:'download_update'};let clicks=0,checks=0,commits=0;const result={oldModId:args.oldModId,collectionId:123,collectionSlug:args.collectionSlug,revisionNumber:13,action:args.action,nativePromptDismissalVerified:true,installationCompleted:false};const updatePrompt={async prepare(){await fs.access(path.join(f.dir,'receipts/mutation.lock'));},validate(){},click(){assert.ok(require('fs').existsSync(path.join(f.dir,'receipts/unresolved.json')));clicks++;},async waitForTransition(){return result;},verifyTransition(a,r){assert.equal(a,args);assert.equal(r,result);checks++;},committed(){commits++;}};const ops=createOperations(f.api,{},f.selectors,{updatePrompt,receipts:path.join(f.dir,'receipts'),stopped:()=>{}});const status=await ops.advance_collection_update_prompt(args);assert.equal(clicks,1);assert.equal(checks,2);assert.equal(commits,1);assert.equal(status.installationCompleted,false);const a=await f.read(args.requestId+'.attempt.json'),c=await f.read(args.requestId+'.completion.json');assert.equal(receipts.validCompletion(c,a),true);await assert.rejects(fs.access(path.join(f.dir,'receipts/unresolved.json')));});
+test('update prompt uncertainty does not call committed and blocks other shared writes',async t=>{const f=await fixture(t);let commits=0;const updatePrompt={async prepare(){},validate(){},click(){},async waitForTransition(){throw Error('COLLECTION_UPDATE_PROMPT_TRANSITION_TIMEOUT');},verifyTransition(){},committed(){commits++;}};const ops=createOperations(f.api,{},f.selectors,{updatePrompt,receipts:path.join(f.dir,'receipts'),stopped:()=>{}});await assert.rejects(ops.advance_collection_update_prompt({...f.common,requestId:'update_prompt_02',oldModId:'old-owner',collectionId:123,collectionSlug:'some-slug',revisionNumber:13,action:'download_update'}),/TRANSITION_TIMEOUT/);assert.equal(commits,0);await assert.rejects(f.ops.set_mods_enabled({...f.common,requestId:'update_prompt_other',modIds:['other'],enabled:true}),/UNRESOLVED_OPERATION_INTERLOCK/);});

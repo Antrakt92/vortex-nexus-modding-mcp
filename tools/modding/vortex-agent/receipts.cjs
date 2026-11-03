@@ -2,16 +2,21 @@
 const path = require('node:path');
 const PROTOCOL = 'vortex-agent/1', VERSION = 2;
 const VERIFICATION = 'External manifest/owners/protected hashes/staging-game bytes/hardlink verification and runtime acceptance';
-const operations = new Set(['install_download', 'install_local_archive', 'set_mods_enabled', 'deploy_mods', 'download_nexus', 'advance_collection_wizard']);
+const operations = new Set(['install_download', 'install_local_archive', 'set_mods_enabled', 'deploy_mods', 'download_nexus', 'advance_collection_wizard', 'respond_collection_dialog', 'advance_collection_update_prompt']);
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const id = value => typeof value === 'string' && value.length > 0 && value.length <= 200 && !/[\r\n\0]/.test(value);
+const dialogIdentity = value => typeof value === 'string' && value.length > 0 && value.length <= 512 && !/[\x00-\x1f\x7f]/.test(value);
 const requestId = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{8,80}$/.test(value);
 const at = value => typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value) && Number.isFinite(Date.parse(value));
 const keys = (value, allowed) => object(value) && Object.keys(value).every(k => allowed.includes(k));
 const common = ['protocol', 'receiptVersion', 'requestId', 'operation', 'gameId', 'profileId', 'at'];
 function validParameters(a, operation) {
   if (!operations.has(operation)) return false;
-  const allowed = operation === 'advance_collection_wizard'
+  const allowed = operation === 'advance_collection_update_prompt'
+    ? ['gameId','profileId','requestId','gamePath','stagingPath','downloadPath','filesystemIds','oldModId','collectionId','collectionSlug','revisionNumber','action']
+    : operation === 'respond_collection_dialog'
+    ? ['gameId', 'profileId', 'requestId', 'gamePath', 'stagingPath', 'downloadPath', 'filesystemIds', 'modId', 'archiveId', 'collectionId', 'revisionId', 'revisionNumber', 'dialogId', 'action']
+    : operation === 'advance_collection_wizard'
     ? ['gameId', 'profileId', 'requestId', 'gamePath', 'stagingPath', 'downloadPath', 'filesystemIds', 'modId', 'archiveId', 'collectionId', 'revisionId', 'revisionNumber', 'action']
     : ['gameId', 'profileId', 'requestId', 'gamePath', 'stagingPath', 'downloadPath', 'filesystemIds', 'modIds', 'enabled', 'downloadId', 'size', 'sha256', 'archivePath', 'nexusModId', 'nexusFileId', 'reuseOnly'];
   if (!keys(a, allowed)
@@ -22,6 +27,12 @@ function validParameters(a, operation) {
   if (operation === 'advance_collection_wizard' && !(a.gameId === 'cyberpunk2077' && id(a.modId) && id(a.archiveId)
     && ['collectionId', 'revisionId', 'revisionNumber'].every(key => Number.isSafeInteger(a[key]) && a[key] > 0)
     && ['install_now', 'done'].includes(a.action))) return false;
+  if (operation === 'respond_collection_dialog' && !(a.gameId === 'cyberpunk2077' && id(a.modId) && id(a.archiveId) && id(a.dialogId)
+    && ['collectionId', 'revisionId', 'revisionNumber'].every(key => Number.isSafeInteger(a[key]) && a[key] > 0)
+    && a.action === 'update_current_profile')) return false;
+  if (operation === 'advance_collection_update_prompt' && !(a.gameId === 'cyberpunk2077' && id(a.oldModId) && typeof a.collectionSlug === 'string' && /^[A-Za-z0-9_-]{1,200}$/.test(a.collectionSlug)
+    && ['collectionId','revisionNumber'].every(key => Number.isSafeInteger(a[key]) && a[key] > 0)
+    && a.action === 'download_update')) return false;
   if (operation === 'set_mods_enabled' && !(Array.isArray(a.modIds) && a.modIds.length >= 1 && a.modIds.length <= 100 && a.modIds.every(id) && typeof a.enabled === 'boolean')) return false;
   if (['download_nexus', 'install_download', 'install_local_archive'].includes(operation) && !(Number.isSafeInteger(a.size) && a.size > 0 && typeof a.sha256 === 'string' && /^[a-f0-9]{64}$/.test(a.sha256))) return false;
   if (operation === 'install_local_archive' && !(typeof a.archivePath === 'string' && path.isAbsolute(a.archivePath) && /\.zip$/.test(a.archivePath))) return false;
@@ -52,6 +63,15 @@ function validCompletion(value, attempt) {
   if (value.operation === 'advance_collection_wizard') return keys(value, [...fields, 'modId', 'archiveId', 'collectionId', 'revisionId', 'revisionNumber', 'action', 'transition', 'nativeTransitionVerified'])
     && ['modId', 'archiveId', 'collectionId', 'revisionId', 'revisionNumber', 'action'].every(key => value[key] === a[key])
     && value.transition === (a.action === 'install_now' ? 'started' : 'finished') && value.nativeTransitionVerified === true;
+  if (value.operation === 'advance_collection_update_prompt') return keys(value,[...fields,'oldModId','collectionId','collectionSlug','revisionNumber','action','nativePromptDismissalVerified','installationCompleted'])
+    && ['oldModId','collectionId','collectionSlug','revisionNumber','action'].every(key=>value[key] === a[key])
+    && value.nativePromptDismissalVerified === true && value.installationCompleted === false;
+  if (value.operation === 'respond_collection_dialog') return keys(value, [...fields, 'modId', 'archiveId', 'collectionId', 'revisionId', 'revisionNumber', 'dialogId', 'action', 'sessionId', 'memberKey', 'downloadId', 'oldModIds', 'nativeDialogDismissalVerified', 'installationCompleted'])
+    && ['modId', 'archiveId', 'collectionId', 'revisionId', 'revisionNumber', 'dialogId', 'action'].every(key => value[key] === a[key])
+    && ['sessionId', 'memberKey', 'downloadId'].every(key => dialogIdentity(value[key]))
+    && Array.isArray(value.oldModIds) && value.oldModIds.length > 0 && value.oldModIds.length <= 100 && value.oldModIds.every(dialogIdentity)
+    && new Set(value.oldModIds).size === value.oldModIds.length && JSON.stringify(value.oldModIds) === JSON.stringify([...value.oldModIds].sort())
+    && value.nativeDialogDismissalVerified === true && value.installationCompleted === false;
   if (value.operation === 'set_mods_enabled') return keys(value, [...fields, 'modIds', 'enabled', 'enabledFlagsVerified'])
     && JSON.stringify(value.modIds) === JSON.stringify(a.modIds) && value.enabled === a.enabled && value.enabledFlagsVerified === true;
   if (value.operation === 'deploy_mods') return keys(value, [...fields, 'deploymentPromiseResolved']) && value.deploymentPromiseResolved === true;

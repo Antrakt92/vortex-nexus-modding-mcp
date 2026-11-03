@@ -30,11 +30,12 @@ test('built extension wire: allowlist, SDK2 HTTP, legacy bridge, schemas and bro
   // Native API lifecycle collaborators only; this wire fixture has no real DOM
   // and therefore cannot acquire wizard admission or click a native action.
   const api = { getState: () => state, store: { getState: () => state }, ext: {},
-    events: new EventEmitter(), awaitUI: async () => {}, translate: key => key };
+    events: new EventEmitter(), onAsync() {}, closeDialog() { throw Error('NO_NATIVE_RESPONSE_IN_WIRE_MODEL'); }, awaitUI: async () => {}, translate: key => key };
   const vortex = { actions: {}, selectors: { activeProfileId: () => 'p', activeGameId: () => 'cyberpunk2077',
     knownGames: () => [{ id: 'cyberpunk2077' }], activeProfile: () => state.persistent.profiles.p,
     installPathForGame: () => modelDir, downloadPathForGame: () => modelDir }, util: {}, fs: {}, log: () => {} };
   let nativeVersion = '2.9.1', nativeUpdaterFailure = false, nativeGetterCalls = 0;
+  vortex.util.renderModName = mod => mod.id;
   vortex.util.getVortexPath = name => { assert.equal(name, 'userData'); return modelDir; };
   vortex.util.getGame = () => ({getModPaths: () => ({'': modelDir, own_alias: modelDir})});
   const nativePreflightWindow = () => ({api: {
@@ -72,7 +73,7 @@ test('built extension wire: allowlist, SDK2 HTTP, legacy bridge, schemas and bro
     assert.deepEqual(list.tools.map(tool => tool.name).sort(), [
       'health', 'read_native_preflight', 'reconcile_operation', 'list_profiles', 'list_mods', 'list_downloads',
       'list_mod_rules', 'find_mod_dependents', 'read_mod_lifecycle', 'assess_installed_candidates', 'list_file_conflicts', 'list_known_mod_conflicts',
-      'list_unsolved_conflicts', 'read_collection_health', 'read_collection_wizard', 'advance_collection_wizard', 'list_dialogs', 'list_external_changes',
+      'list_unsolved_conflicts', 'read_collection_health', 'read_collection_wizard', 'advance_collection_wizard', 'read_collection_dialog', 'respond_collection_dialog', 'read_collection_update_prompt', 'advance_collection_update_prompt', 'list_dialogs', 'list_external_changes',
       'set_mods_enabled', 'deploy_mods', 'download_nexus', 'install_local_archive', 'read_local_install_readiness',
     ].sort());
     assert.equal(list.tools.some(tool => tool.name === 'install_download'), false);
@@ -81,6 +82,15 @@ test('built extension wire: allowlist, SDK2 HTTP, legacy bridge, schemas and bro
     assert.equal(localInstallTool.annotations.readOnlyHint, false);
     assert.equal(localInstallTool.annotations.destructiveHint, true);
     assert.equal(list.tools.find(tool => tool.name === 'read_local_install_readiness').annotations.readOnlyHint, true);
+    const promptTool=list.tools.find(tool=>tool.name==='advance_collection_update_prompt');
+    assert.equal(promptTool.annotations.destructiveHint,true);
+    assert.equal(promptTool.inputSchema.properties.revisionId,undefined);
+    assert.equal(promptTool.inputSchema.properties.archiveId,undefined);
+    const dialogTool=list.tools.find(tool=>tool.name==='respond_collection_dialog');
+    assert.equal(dialogTool.annotations.destructiveHint,true);
+    assert.deepEqual(dialogTool.inputSchema.properties.action,{type:'string',const:'update_current_profile'});
+    const badDialog=await call('tools/call',{name:'respond_collection_dialog',arguments:{action:'update_all_profiles'}});
+    assert.equal(badDialog.isError,true);
     const missingPins = await call('tools/call', {name: 'install_local_archive', arguments: {archivePath: 'own.zip'}});
     assert.equal(missingPins.isError, true, 'Installation cannot omit context and package pins');
     const nativeTool = list.tools.find(tool => tool.name === 'read_native_preflight');

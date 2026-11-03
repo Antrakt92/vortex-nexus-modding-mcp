@@ -7,6 +7,15 @@ const { actions, selectors, util, log } = require('@nexusmods/vortex-api');
 const control = require('./vortexControl');
 const { createOperations, safe } = require('./guard.cjs');
 const { getCollectionWizardController } = require('./collection-wizard-controller.cjs');
+const { createCollectionDialogController } = require('./collection-dialog-controller.cjs');
+const { getCollectionUpdatePromptController } = require('./collection-update-prompt.cjs');
+const dialogControllers = new WeakMap();
+function collectionControllers(api) {
+  const wizard = getCollectionWizardController(api, { selectors, util });
+  if (!dialogControllers.has(api)) dialogControllers.set(api, createCollectionDialogController(api, { selectors, util, getBinding: () => wizard.dialogBinding() }));
+  const updatePrompt = getCollectionUpdatePromptController(api, { selectors, util });
+  return { wizard, dialog: dialogControllers.get(api), updatePrompt };
+}
 const { dialogs, conflicts, externalChanges, listDownloads, collectionHealth, unresolvedConflicts } = require('./inspection.cjs');
 const { readModLifecycle } = require('./lifecycle-inspection.cjs');
 const { assessInstalledCandidates, LIMITS: ASSESSMENT_LIMITS } = require('./installed-candidate-assessment.cjs');
@@ -19,11 +28,11 @@ const { publicErrorCode } = require('./serialization.cjs');
 const { localInstallAdmission } = require('./local-install-binding.cjs');
 const { validInstallDiagnostics, PHASES, STATES, REASONS, WAITS, METRICS } = require('./install-diagnostics.cjs');
 function register(server, api, options = {}) {
-  const wizard = getCollectionWizardController(api, { selectors, util });
+  const { wizard, dialog, updatePrompt } = collectionControllers(api);
   const credentials = options.credentials || [];
   const catalog = catalogFromDisk(util);
   const admitLocalInstallHost = localInstallAdmission(api, util, options.localInstallHostBinding);
-  const operations = createOperations(api, actions, selectors, { credentials, catalog, wizard,
+  const operations = createOperations(api, actions, selectors, { credentials, catalog, wizard, dialog, updatePrompt,
     admitLocalInstallHost: admitLocalInstallHost });
   const id = z.string().min(1).max(200);
   const read = { gameId: id.optional(), limit: z.number().int().min(1).max(500).default(100) };
@@ -39,18 +48,21 @@ function register(server, api, options = {}) {
     phaseTimes:z.record(z.enum(PHASES),milliseconds),
     metrics:z.record(z.enum(METRICS),z.strictObject({calls:milliseconds,totalMs:milliseconds})) });
   const status = z.strictObject({ protocol: z.literal('vortex-agent/1'), requestId: id,
-    operation: z.enum(['install_download', 'install_local_archive', 'set_mods_enabled', 'deploy_mods', 'download_nexus', 'advance_collection_wizard']),
+    operation: z.enum(['install_download', 'install_local_archive', 'set_mods_enabled', 'deploy_mods', 'download_nexus', 'advance_collection_wizard', 'respond_collection_dialog', 'advance_collection_update_prompt']),
     operationCompleted: z.literal(true), diskDeploymentVerified: z.literal(false), verificationRequired: z.literal(VERIFICATION),
     modId: id.optional(), installedRecordVerified: z.boolean().optional(), enabled: z.boolean().optional(),
     modIds: z.array(id).optional(), enabledFlagsVerified: z.boolean().optional(), deploymentPromiseResolved: z.boolean().optional(),
-    downloadId: id.optional(), reused: z.boolean().optional(), archiveSha256Verified: z.boolean().optional(),
+    downloadId: z.string().min(1).max(512).optional(), reused: z.boolean().optional(), archiveSha256Verified: z.boolean().optional(),
     size: z.number().int().positive().optional(), autoInstall: z.literal(false).optional(), archiveCRCVerified: z.literal(false).optional(),
     payloadFilesVerified: z.number().int().positive().optional(),
     archiveId: id.optional(), collectionId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
     revisionId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
     revisionNumber: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
-    action: z.enum(['install_now', 'done']).optional(), transition: z.enum(['started', 'finished']).optional(),
+    action: z.enum(['install_now', 'done', 'update_current_profile', 'download_update']).optional(), transition: z.enum(['started', 'finished']).optional(),
     nativeTransitionVerified: z.literal(true).optional(),
+    gameId: id.optional(), profileId: id.optional(), dialogId: id.optional(), sessionId: z.string().min(1).max(512).optional(),
+    memberKey: z.string().min(1).max(512).optional(), oldModIds: z.array(z.string().min(1).max(512)).min(1).max(100).optional(), nativeDialogDismissalVerified: z.literal(true).optional(), installationCompleted: z.literal(false).optional(),
+    oldModId: id.optional(), collectionSlug: id.optional(), nativePromptDismissalVerified: z.literal(true).optional(),
     installDiagnostics: diagnosticsSchema.optional(),
   });
   const add = (name, fields, fn, writes = false, description) => server.registerTool(name, {
@@ -112,6 +124,20 @@ function register(server, api, options = {}) {
     revisionNumber: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
     action: z.enum(['install_now', 'done']) }, operations.advance_collection_wizard, true,
     'Advance one exact source-admitted collection wizard through Install Now or Done. Requires active context, filesystem pins and a unique requestId. Native transition only; not installation or disk deployment proof. Reconcile uncertain effects before retry.');
+  add('read_collection_update_prompt', {}, () => updatePrompt.readiness(), false,
+    'Read one source-admitted stock collection Download update prompt observed from its genuine collection-update epoch. No download, revision archive or installation proof.');
+  add('advance_collection_update_prompt', { ...write, oldModId: id, collectionId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    collectionSlug: z.string().regex(/^[A-Za-z0-9_-]{1,200}$/), revisionNumber: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    action: z.literal('download_update') }, operations.advance_collection_update_prompt, true,
+    'Click only the exact stock Download update control for an observed collection-update prompt. Requires live context and unique requestId; verifies prompt dismissal only, not target revisionId/archive identity, download or installation success. Reconcile uncertain effects before retry.');
+  add('read_collection_dialog', {}, () => dialog.readiness(), false,
+    'Read one stock previous-version question joined to the retained collection session and observed install epoch. Metadata only; callback origin and target archive identity remain unverified.');
+  add('respond_collection_dialog', { ...write, modId: id, archiveId: id, dialogId: id,
+    collectionId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    revisionId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    revisionNumber: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    action: z.literal('update_current_profile') }, operations.respond_collection_dialog, true,
+    'Answer only one exact stock previous-version collection question with Update current profile and remember=false. Requires source admission, retained observed lifecycle epoch, exact identities and unique requestId. Verifies dialog dismissal only, never installation, callback origin, target archive identity or deployment. Reconcile uncertain effects before retry.');
   add('list_dialogs', {}, () => dialogs(api));
   add('list_external_changes', {}, () => externalChanges(api));
   add('install_download', { ...write, ...pins, downloadId: id }, operations.install_download, true);
@@ -123,7 +149,7 @@ function register(server, api, options = {}) {
 }
 function start(api, port = 3701, options = {}) {
   // Observe the wizard epoch before accepting requests, not at first tool use.
-  getCollectionWizardController(api, { selectors, util });
+  collectionControllers(api);
   const host = localhostHostValidation(), origin = localhostOriginValidation();
   const listener = http.createServer(async (req, res) => {
     if (req.url !== '/mcp') return res.writeHead(404).end();

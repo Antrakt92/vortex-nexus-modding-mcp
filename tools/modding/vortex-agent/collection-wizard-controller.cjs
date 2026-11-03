@@ -135,6 +135,24 @@ function createCollectionWizardController(api,options){
  }
  return {
   initialized,
+  dialogBinding(){
+   need(ready&&!invalidated&&binding&&!binding.invalidated,'BINDING_UNAVAILABLE');
+   const n=native();need(stable(n.owner)===binding.ownerIdentity,'OWNER_CHANGED');
+   const raw=state().session.collections.activeSession;
+   need(raw&&raw.collectionId===binding.modId&&raw.gameId===binding.gameId&&raw.profileId===binding.profileId,'SESSION_IDENTITY_CHANGED');
+   need(n.gameId===binding.gameId&&n.profileId===binding.profileId&&n.nextProfileId===binding.profileId,'ACTIVE_CONTEXT_CHANGED');
+   // InstallManager can emit will-install-mod before the click's asynchronous
+   // transition poll resumes. Only the consumed, fresh Install Now epoch may
+   // supply this early session; an existing/history session is never adopted.
+   const sessionId=binding.sessionId??(prepared?.consumed&&prepared.action==='install_now'
+    &&typeof raw.sessionId==='string'&&!prepared.oldSessions.has(raw.sessionId)?raw.sessionId:null);
+   need(typeof sessionId==='string'&&sessionId.length>0&&raw.sessionId===sessionId,'SESSION_NOT_OBSERVED');
+   const rules=stable(rawOwner(binding.modId).rules??[]);
+   need(rules===binding.rules||rules===binding.augmentedRules,'RULES_CHANGED');
+   return {...Object.fromEntries(['gameId','profileId','modId','archiveId'].map(k=>[k,binding[k]])),
+    ...Object.fromEntries(['collectionId','revisionId','revisionNumber'].map(k=>[k,n.owner[k]])),
+    sessionId,epochReady:true,invalidated:false};
+  },
   async readiness(){
    const work=readQueue.then(async()=>{
    await initialized;
@@ -172,7 +190,7 @@ function createCollectionWizardController(api,options){
    const downloadInfo=stable(state().persistent.downloads.files[args.archiveId].modInfo);
    const revision=args.action==='install_now'?await versionPreflight(args):null;
    const raw=state().session.collections.activeSession;
-   prepared={requestId:args.requestId,consumed:false,completed:false,element:d.candidate.element,modal:d.candidate.modal,
+   prepared={requestId:args.requestId,action:args.action,consumed:false,completed:false,element:d.candidate.element,modal:d.candidate.modal,
     rules:ruleKey,downloadInfo,augmentedRules:revision?stable(rulesAfterStart(rules,revision)):ruleKey,
     oldSessions:new Set(Object.keys(state().session.collections.sessionHistory??{})),sessionId:raw?.sessionId,
     completedSession:n.session?stable(n.session):null};

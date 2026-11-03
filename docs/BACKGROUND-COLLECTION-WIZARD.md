@@ -1,7 +1,8 @@
 # Background collection wizard
 
-Resident implementation is locally built, installed and model-tested. Live acceptance of
-Install Now/Done remains pending; an idle DOM read does not establish that gate.
+Install Now has passed an authorized live collection test on official Vortex 2.9.1.
+Done still needs live acceptance through MCP. Closing a resumed installation through
+Windows UI Automation does not establish that gate.
 
 The official Vortex 2.9.1 collection extension exposes session inspection, but
 not its exact Install Now/Done transitions as extension APIs. A renderer extension
@@ -24,7 +25,8 @@ Implementation checklist:
 - [x] Verify integrated source/model behavior and malformed/concurrent scenarios.
 - [x] Package/install the resident integration and verify normal tool discovery.
 - [x] Retire reconciled task-only probes, preserving their final evidence.
-- [ ] Accept Install Now/Done against a real authorized collection flow.
+- [x] Accept Install Now against a real authorized collection flow.
+- [ ] Accept Done through MCP in the same uninterrupted collection flow.
 
 Initial scope: Cyberpunk 2077, reviewed Vortex 2.9.1 sources, a newly observed
 collection owner, and unambiguous Install Now/Done branches in that same flow.
@@ -94,3 +96,55 @@ Successful transition acceptance does not prove final archive/staging/deployment
 bytes or gameplay. Those remain the caller's separate lifecycle verification.
 The agent never grabs mouse/keyboard input or enables a debugging port. Native
 Vortex dialogs can still require attention; unknown prompts are not acknowledged.
+
+
+## Stock collection version questions
+
+The locally verified `read_collection_dialog({})` and `respond_collection_dialog`
+source wiring adds only the stock previous-version question during a retained,
+observed collection session. The response requires normal write context, the same
+seven collection identity fields, exact `dialogId`, a unique request ID, and
+`action: update_current_profile`. It invokes the captured native `closeDialog`
+with the fixed Update current profile action and `remember: false`. Other
+questions, Update all profiles, generic responses and remembered choices refuse.
+The observer is created once per API before server requests, so it does not guess
+install events missed before its startup. Read and write source proofs are independent.
+
+This route shares the mutation lock, durable intent, uncertain-outcome interlock
+and receipt verification. Success proves only `nativeDialogDismissalVerified`;
+`installationCompleted` and disk-deployment proof remain false. Inspect the
+original receipt after uncertainty instead of answering again with a new ID.
+
+Stock dialog records expose no incoming archive identity or callback-origin token.
+The controller joins an observed native install epoch to one exact retained
+session, member rule, finished download and installed old-mod display identities. Same-title candidates are accepted only
+when every candidate has the same positive Nexus mod ID and none is a collection;
+all candidate IDs are reported as `oldModIds`, without claiming which private
+callback record stock selected.
+Those bounded joins do not prove private callback origin or target archive identity;
+readiness explicitly reports both unverified. This is source/model evidence; a real
+response through the installed MCP remains a separate acceptance check.
+
+When the approved installation plan already includes updating the current profile,
+agents should handle these recognized questions serially through the named tools.
+Use a stable request ID for each dialog, leave remembered choices off, and observe
+the next question after each verified dismissal. This standard choice does not
+require asking the user again. An unfamiliar question or a held readiness result
+requires diagnosis; it does not authorize replaying the installation.
+
+
+## Stock Download update prompt
+
+`read_collection_update_prompt({})` observes the exact stock prelude from its
+genuine `collection-update` event, with a persistent observer initialized before
+requests. `advance_collection_update_prompt` accepts normal write context plus
+`oldModId`, positive `collectionId`, `collectionSlug`, positive `revisionNumber`
+and only `action: download_update`. It clicks the captured fixed Download update
+control after independent source admission and immediate native/DOM revalidation.
+It exposes no arbitrary selector or generic dispatch.
+
+The shared mutation lock and durable interlock apply. A successful receipt proves
+`nativePromptDismissalVerified: true` and retains `installationCompleted: false`.
+The prompt provides no target `revisionId` or archive identity; dismissal does not
+prove download success or installation. The prelude has local model coverage;
+its actual R13 UI automation observation is not live acceptance of these MCP tools.

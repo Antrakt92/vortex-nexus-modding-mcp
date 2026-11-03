@@ -159,7 +159,9 @@ async function server(options = {}) {
       // HTTP-only fixture has no native UI epoch; wizard behavior is tested separately.
       : id === './collection-wizard-controller.cjs' ? {getCollectionWizardController: () => ({
         readiness: async () => { throw Error('COLLECTION_WIZARD_CONTROLLER_UNAVAILABLE'); },
-      })} : id.startsWith('./') ? require(id) : upstream(id), module, module.exports);
+      })} : id === './collection-dialog-controller.cjs' ? {createCollectionDialogController: () => ({readiness:async()=>({status:'held',sourceAdmitted:false})})}
+      : id === './collection-update-prompt.cjs' ? {getCollectionUpdatePromptController: () => ({readiness:async()=>({status:'held',sourceAdmitted:false})})}
+      : id.startsWith('./') ? require(id) : upstream(id), module, module.exports);
   const listener = module.exports.start(f.api, 0, { tokenProvider: async () => '7'.repeat(64), ...options });
   try { await waitForServerListening(listener); }
   catch (error) {

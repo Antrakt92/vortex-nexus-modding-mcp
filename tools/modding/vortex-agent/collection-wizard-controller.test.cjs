@@ -53,6 +53,18 @@ test('no native transition is not success and cannot be retried',async()=>{const
 test('another native session is not completion',async()=>{const f=fixture();await f.c.initialized;f.install();await f.c.prepare(f.args);f.c.click(f.args);f.s.session.collections.activeSession.collectionId='other';await assert.rejects(f.c.waitForTransition(f.args),/SESSION_IDENTITY_CHANGED/);});
 test('source generation change between prepare and click refuses',async()=>{const f=fixture();await f.c.initialized;f.install();await f.c.prepare(f.args);f.source=false;assert.throws(()=>f.c.click(f.args));assert.equal(f.clicks,0);});
 test('controller registration is per API, not per HTTP request',async()=>{const f=fixture();const a=getCollectionWizardController(f.api,f.options),b=getCollectionWizardController(f.api,f.options);assert.equal(a,b);await a.initialized;});
+test('dialog binding observes the consumed new session before the transition poll',async()=>{
+ const f=fixture();await f.c.initialized;f.install();
+ assert.throws(()=>f.c.dialogBinding(),/SESSION_IDENTITY_CHANGED/);
+ await f.c.prepare(f.args);f.c.click(f.args);
+ const b=f.c.dialogBinding();assert.equal(b.sessionId,'session-new');assert.equal(b.modId,'owner');assert.equal(b.collectionId,123);
+ f.s.session.collections.activeSession.profileId='foreign';assert.throws(()=>f.c.dialogBinding(),/SESSION_IDENTITY_CHANGED/);
+});
+test('dialog binding cannot adopt a session before its Install Now effect',async()=>{
+ const f=fixture();await f.c.initialized;f.install();
+ f.s.session.collections.activeSession={sessionId:'unrequested',collectionId:'owner',gameId:'cyberpunk2077',profileId:'profile',totalRequired:0,totalOptional:0,mods:{}};
+ assert.throws(()=>f.c.dialogBinding(),/SESSION_NOT_OBSERVED/);
+});
 test('Done does not rebase changed rules after started acceptance',async()=>{
  const f=fixture();await f.c.initialized;f.install();await f.c.prepare(f.args);f.c.click(f.args);const r=await f.c.waitForTransition(f.args);f.c.verifyTransition(f.args,r);
  f.owner.rules=[{type:'requires',reference:{id:'foreign'}}];f.mode='finish';

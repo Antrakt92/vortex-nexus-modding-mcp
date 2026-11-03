@@ -2,7 +2,7 @@
 const path = require('node:path');
 const { PHASES, STATES, REASONS, WAITS } = require('./install-diagnostics.cjs');
 const { SCHEMA: ASSESSMENT_SCHEMA, STATUSES: ASSESSMENT_STATUSES, REASONS: ASSESSMENT_REASONS } = require('./installed-candidate-assessment.cjs');
-const OPERATIONS = new Set(['install_download', 'install_local_archive', 'set_mods_enabled', 'deploy_mods', 'download_nexus', 'advance_collection_wizard']);
+const OPERATIONS = new Set(['install_download', 'install_local_archive', 'set_mods_enabled', 'deploy_mods', 'download_nexus', 'advance_collection_wizard', 'respond_collection_dialog', 'advance_collection_update_prompt']);
 const URI = /\b(?:[a-z][a-z0-9+.-]*:\/\/|[a-z][a-z0-9+.-]+:|[a-z]:(?![\\/]))[^\s"'<>]+/gi;
 const PATH_FIELD = /^(?:game|staging|download)Path$/;
 function insist(ok, code) { if (!ok) throw new Error(code); }
@@ -10,6 +10,35 @@ function insist(ok, code) { if (!ok) throw new Error(code); }
 // Policies apply to exact positions in outputs of named curated producers. They
 // are NOT a global exemption for arbitrary objects having a key named gameId/id.
 function operational(kind, trail) {
+  if (kind === 'read_collection_update_prompt' && trail.length === 1) {
+    const key=trail[0];
+    if (['gameId','profileId'].includes(key)) return key;
+    if (['oldModId','collectionSlug'].includes(key)) return 'modId';
+    if (['collectionId','revisionNumber'].includes(key)) return 'wizardPositive';
+    if (key === 'schema') return 'wizardUpdateSchema';
+    if (key === 'status') return 'wizardUpdateStatus';
+    if (key === 'reason') return 'wizardUpdateReason';
+    if (key === 'action') return 'wizardUpdateAction';
+    if (key === 'sourceAdmitted') return 'wizardBoolean';
+    if (['writesAvailable','nativePromptDismissalVerified','installationCompleted'].includes(key)) return 'wizardFalse';
+  }
+  if (kind === 'read_collection_dialog' && trail.length === 2 && trail[0] === 'oldModIds' && /^\d+$/.test(trail[1])) return 'modId';
+  if (kind === 'read_collection_dialog' && trail.length === 1) {
+    const key = trail[0];
+    if (['gameId','profileId','modId'].includes(key)) return key;
+    if (key === 'archiveId') return 'downloadId';
+    if (key === 'downloadId') return 'dialogIdentity';
+    if (key === 'dialogId') return 'modId';
+    if (['sessionId','memberKey'].includes(key)) return 'dialogIdentity';
+    if (key === 'oldModIds') return 'dialogOldModIds';
+    if (key === 'schema') return 'wizardDialogSchema';
+    if (key === 'status') return 'wizardDialogStatus';
+    if (key === 'reason') return 'wizardDialogReason';
+    if (key === 'sourceAdmitted') return 'wizardBoolean';
+    if (['callbackOriginVerified','targetArchiveIdentityVerified','nativeTransitionVerified'].includes(key)) return 'wizardFalse';
+    if (['collectionId','revisionId','revisionNumber'].includes(key)) return 'wizardPositive';
+    if (key === 'action') return 'wizardDialogAction';
+  }
   if (kind === 'read_collection_wizard' && trail.length === 1) {
     const key = trail[0];
     if (['protocol', 'gameId', 'profileId', 'modId'].includes(key)) return key;
@@ -102,17 +131,24 @@ function operational(kind, trail) {
     if (trail.length === 1 && trail[0] === 'modId') return 'modId';
     if (trail.length === 1 && trail[0] === 'archiveId') return 'downloadId';
     if (trail.length === 1 && ['collectionId', 'revisionId', 'revisionNumber'].includes(trail[0])) return 'wizardPositive';
-    if (trail.length === 1 && trail[0] === 'action') return 'wizardAction';
+    if (trail.length === 1 && trail[0] === 'action') return 'wizardWriteAction';
+    if (trail.length === 1 && ['dialogId','oldModId','collectionSlug'].includes(trail[0])) return 'modId';
     if (trail.length === 1 && PATH_FIELD.test(trail[0])) return 'absolutePath';
-    if (trail.length === 2 && trail[0] === 'modIds' && /^\d+$/.test(trail[1])) return 'modId';
+    if (trail.length === 2 && ['modIds','oldModIds'].includes(trail[0]) && /^\d+$/.test(trail[1])) return 'modId';
     if (trail.length === 2 && trail[0] === 'filesystemIds' && PATH_FIELD.test(trail[1])) return 'filesystemId';
   }
   if (kind === 'receipt' || kind === 'operation_status' || OPERATIONS.has(kind)) {
+    if (trail.length === 1 && trail[0] === 'oldModIds') return 'dialogOldModIds';
+    if (trail.length === 2 && trail[0] === 'oldModIds' && /^\d+$/.test(trail[1])) return 'modId';
     if (trail[0] === 'parameters') return operational('parameters', trail.slice(1));
     if (trail.length === 1 && ['protocol', 'operation', 'requestId', 'gameId', 'profileId', 'modId', 'downloadId', 'at'].includes(trail[0])) return trail[0];
     if (trail.length === 1 && trail[0] === 'archiveId') return 'downloadId';
     if (trail.length === 1 && ['collectionId', 'revisionId', 'revisionNumber'].includes(trail[0])) return 'wizardPositive';
-    if (trail.length === 1 && trail[0] === 'action') return 'wizardAction';
+    if (trail.length === 1 && trail[0] === 'action') return 'wizardWriteAction';
+    if (trail.length === 1 && ['dialogId','oldModId','collectionSlug'].includes(trail[0])) return 'modId';
+    if (trail.length === 1 && ['sessionId','memberKey'].includes(trail[0])) return 'dialogIdentity';
+    if (trail.length === 1 && ['nativeDialogDismissalVerified','nativePromptDismissalVerified'].includes(trail[0])) return 'wizardTrue';
+    if (trail.length === 1 && trail[0] === 'installationCompleted') return 'wizardFalse';
     if (trail.length === 1 && trail[0] === 'transition') return 'wizardTransition';
     if (trail.length === 1 && trail[0] === 'nativeTransitionVerified') return 'wizardTrue';
     if (trail.length === 2 && trail[0] === 'modIds' && /^\d+$/.test(trail[1])) return 'modId';
@@ -142,6 +178,15 @@ function operational(kind, trail) {
   return null;
 }
 function validOperational(type, value) {
+  if (type === 'wizardUpdateSchema') return value === 'collection-update-prompt-readiness/1';
+  if (type === 'wizardUpdateStatus') return ['idle','held','ready'].includes(value);
+  if (type === 'wizardUpdateAction') return value === 'download_update';
+  if (type === 'wizardUpdateReason') return typeof value === 'string' && /^COLLECTION_(?:UPDATE_PROMPT|WIZARD)_[A-Z0-9_]{1,100}$/.test(value);
+  if (type === 'wizardDialogSchema') return value === 'collection-dialog-readiness/1';
+  if (type === 'wizardDialogStatus') return ['held','ready'].includes(value);
+  if (type === 'wizardDialogReason') return typeof value === 'string' && /^COLLECTION_(?:DIALOG|WIZARD)_[A-Z0-9_]{1,100}$/.test(value);
+  if (type === 'wizardDialogAction') return value === 'update_current_profile';
+  if (type === 'wizardWriteAction') return ['install_now','done','update_current_profile','download_update'].includes(value);
   if (type === 'wizardPositive') return Number.isSafeInteger(value) && value > 0;
   if (type === 'wizardOptionalPositive') return value === null || (Number.isSafeInteger(value) && value > 0);
   if (type === 'wizardBoolean') return typeof value === 'boolean';
@@ -171,6 +216,7 @@ function validOperational(type, value) {
   if (type === 'nativeStagingCode') return /^NATIVE_PREFLIGHT_STAGING_TAG_(?:MISSING|UNAVAILABLE|UNSAFE|CHANGED)$/.test(value);
   if (type === 'nativeStagingStatus') return ['missing','present','unknown'].includes(value);
   if (type === 'nativeUpdaterState') return ['disabled', 'idle', 'checking', 'available', 'downgrade-offered', 'downloading', 'staged', 'error'].includes(value);
+  if (type === 'dialogIdentity' || type === 'downloadId') return value.length > 0 && value.length <= 512 && !/[\x00-\x1f\x7f]/.test(value);
   if (type === 'protocol') return value === 'vortex-agent/1';
   if (type === 'operation') return OPERATIONS.has(value);
   if (type === 'extensionVersion') return value === '1.1.0';
@@ -212,6 +258,17 @@ function safe(value, api, kind = 'display', additionalCredentials = []) {
     const key = trail.at(-1) || '';
     if (/token|credential|cookie|apikey|password|authorization|url|^(?:userInfo|account|username|email|userId)$/i.test(key)) return '[redacted]';
     const type = operational(kind, trail);
+    if (type === 'dialogIdentity') {
+      insist(typeof item === 'string' && validOperational(type,item) && !new RegExp(URI.source,'i').test(item), 'OPERATIONAL_VALUE_NOT_CURATED');
+      insist(![...credentials].some(secret=>item.includes(secret)), 'OPERATIONAL_SECRET_OVERLAP'); return item;
+    }
+    if (type === 'dialogOldModIds') {
+      insist(Array.isArray(item) && item.length > 0 && item.length <= 100
+        && item.every(id => typeof id === 'string' && validOperational('dialogIdentity', id) && !new RegExp(URI.source, 'i').test(id))
+        && new Set(item).size === item.length, 'OPERATIONAL_VALUE_NOT_CURATED');
+      insist(!item.some(id => [...credentials].some(secret => id.includes(secret))), 'OPERATIONAL_SECRET_OVERLAP');
+      return [...item];
+    }
     if (type && type.startsWith('wizard')) {
       insist(validOperational(type, item), 'OPERATIONAL_VALUE_NOT_CURATED');
       insist(![...credentials].some(secret => String(item).includes(secret)), 'OPERATIONAL_SECRET_OVERLAP');

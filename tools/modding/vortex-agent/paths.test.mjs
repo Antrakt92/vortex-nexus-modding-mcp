@@ -139,7 +139,7 @@ test('compile proof binds the selected runtime and refuses an override changed a
     'own-zip.cjs', 'local-archive-policy.cjs', 'local-archive-install.cjs', 'local-install-host.cjs', 'local-install-binding.cjs',
     'stock-vortex-2.9.1-admission.json', 'install-diagnostics.cjs', 'installed-candidate-assessment.cjs',
     'collection-wizard-controller.cjs', 'collection-wizard-dom.cjs', 'collection-wizard-native.cjs',
-    'collection-wizard-policy.cjs', 'collection-wizard-host.cjs', 'adapted.cjs', 'vortexControl.ts'];
+    'collection-wizard-policy.cjs', 'collection-wizard-host.cjs', 'collection-dialog-controller.cjs', 'collection-dialog-policy.cjs', 'collection-update-prompt.cjs', 'adapted.cjs', 'vortexControl.ts'];
   for (const name of modules) await fs.writeFile(path.join(temp, 'src', name), 'fixture input');
   for (const name of ['package.json', 'pnpm-lock.yaml']) await fs.writeFile(path.join(temp, name), 'fixture input');
   await fs.writeFile(path.join(temp, 'tsup.config.ts'), config);
