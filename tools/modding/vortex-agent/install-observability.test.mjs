@@ -33,7 +33,13 @@ function zip() {
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 const tick = () => new Promise(resolve => setImmediate(resolve));
 async function until(predicate) {
-  for (let i = 0; i < 2000; i++) { if (predicate()) return; await tick(); }
+  // A fixed number of immediate turns can expire before an fsync completes
+  // under parallel suites. Yield to real I/O; the operation's fake clock stays fixed.
+  const deadline = performance.now() + 5000;
+  while (performance.now() < deadline) {
+    if (predicate()) return;
+    await new Promise(resolve => setTimeout(resolve, 1));
+  }
   assert.fail('Fixture did not reach expected stage');
 }
 function clock() {

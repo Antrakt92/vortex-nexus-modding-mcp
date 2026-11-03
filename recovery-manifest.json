@@ -928,7 +928,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/install-observability.test.mjs",
-      "sha256_lf": "3f43ebf1eed8b1385793954581849a026930c345fc6bb74d385e8ac368de619d"
+      "sha256_lf": "87f8bf06b7913dde7cc244215393d95af4f3fed1bb5d31a00bc90c593387b1dd"
     },
     {
       "path": "tools/modding/vortex-agent/install-settlement.cjs",
