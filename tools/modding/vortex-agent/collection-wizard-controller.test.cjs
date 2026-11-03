@@ -27,7 +27,7 @@ function fixture(){
 }
 test('observed new owner starts and finishes via exact native session, one click each',async()=>{
  const f=fixture();await f.c.initialized;assert.equal((await f.c.readiness()).status,'idle');f.install();
- assert.equal((await f.c.readiness()).status,'ready');await f.c.prepare(f.args);f.c.validate(f.args);f.c.click(f.args);
+ const observed=await f.c.readiness();assert.equal(observed.status,'held');assert.equal(observed.modId,'owner');assert.equal(observed.reason,'COLLECTION_WIZARD_SOURCE_NOT_ADMITTED');await f.c.prepare(f.args);f.c.validate(f.args);f.c.click(f.args);
  const result=await f.c.waitForTransition(f.args);assert.equal(result.transition,'started');f.c.verifyTransition(f.args,result);assert.equal(f.clicks,1);
  const done={...f.args,requestId:'wizard_request_2',action:'done'};f.mode='finish';await f.c.prepare(done);f.c.click(done);
  const finished=await f.c.waitForTransition(done);assert.equal(finished.transition,'finished');f.c.verifyTransition(done,finished);assert.equal(f.clicks,2);
@@ -68,4 +68,11 @@ test('a committed Done arms the next new collection without restarting Vortex',a
  f.s.persistent.mods.cyberpunk2077['next-owner']=structuredClone(f.owner);f.owner.attributes.customFileName='Previous';
  f.mode='start';f.api.events.emit('did-install-mod','cyberpunk2077','archive','next-owner');
  const ready=await f.c.readiness();assert.equal(ready.modId,'next-owner');assert.equal(ready.status,'ready');
+});
+test('readiness during a prepared action cannot refresh or invalidate its source proof',async()=>{
+ const f=fixture();let admissions=0;const proof={};
+ f.options.admit=async()=>{admissions++;return proof;};f.options.admit.revalidate=p=>assert.equal(p,proof);
+ const c=createCollectionWizardController(f.api,f.options);await c.initialized;f.install();
+ await c.readiness();assert.equal(admissions,0);await c.prepare(f.args);await c.readiness();await c.readiness();
+ assert.equal(admissions,1);c.click(f.args);assert.equal(f.clicks,1);
 });

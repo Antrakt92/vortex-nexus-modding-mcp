@@ -140,10 +140,12 @@ function createCollectionWizardController(api,options){
     bindingReady:false,writesAvailable:false,nativeTransitionVerified:false};
    if(!binding){const d=dom();if(ready&&!invalidated&&d.status==='idle'){out.status='idle';out.reason='COLLECTION_WIZARD_IDLE';}return out;}
    try{
-    proof=await admit();const {n,d}=observe();
+    // A read must not replace the opaque admission proof while a guarded action
+    // is awaiting native work. Only prepare owns asynchronous admission.
+    if(proof)admit.revalidate(proof);const {n,d}=observe();
     Object.assign(out,{gameId:n.gameId,profileId:n.profileId,modId:n.owner.id,archiveId:n.owner.archiveId,
      collectionId:n.owner.collectionId,revisionId:n.owner.revisionId,revisionNumber:n.owner.revisionNumber,
-     phase:d.phase??null,action:d.phase==='start'?'install_now':d.phase==='finish'?'done':null,sourceAdmitted:true,bindingReady:true});
+     phase:d.phase??null,action:d.phase==='start'?'install_now':d.phase==='finish'?'done':null,sourceAdmitted:proof!==null,bindingReady:true});
     validateCollectionWizard({expected:out,native:n,dom:d,binding});
     out.status='ready';out.reason='COLLECTION_WIZARD_PREFLIGHT_REQUIRED';
     // Readiness never substitutes for asynchronous metadata/source preparation.

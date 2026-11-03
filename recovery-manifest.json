@@ -216,7 +216,7 @@
     },
     {
       "path": "docs/BACKGROUND-COLLECTION-WIZARD.md",
-      "sha256_lf": "47b44a9cf252d7b0f123869e3828ccb8af39be8270414860082237b369e44f32"
+      "sha256_lf": "3156b023aa5c37f3c36a63c7680a01abadc8036cbce28dc1290a2918ed7166b0"
     },
     {
       "path": "docs/CHILD-TERMINAL-OBSERVER.md",
@@ -816,11 +816,11 @@
     },
     {
       "path": "tools/modding/vortex-agent/collection-wizard-controller.cjs",
-      "sha256_lf": "cbb5f8487db52780a2671b6cdf8b34b78750461ec21273625ba011e960695405"
+      "sha256_lf": "fb59d75107426cac8249527f481f9f8bedf033a9d1ca368fc3bd63f8733f78ad"
     },
     {
       "path": "tools/modding/vortex-agent/collection-wizard-controller.test.cjs",
-      "sha256_lf": "7c0c1327f6add21d9d3cf1b64a245c11007648ee5cb09e01f0fdf5d20db6ed49"
+      "sha256_lf": "6646e5208239a748c06b810a08aba40529178a78edae2ebe156cfdb53aa2aa76"
     },
     {
       "path": "tools/modding/vortex-agent/collection-wizard-dom.cjs",

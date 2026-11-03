@@ -39,7 +39,10 @@ restarting Vortex; uncertain operations keep the shared interlock.
 Call `read_collection_wizard` with no arguments. It returns only curated identity,
 phase and hold reasons. `status: ready` means the observed binding passes the
 local policy; `writesAvailable: false` records that asynchronous preflight has
-not yet approved an action. The read performs no action or network lookup.
+not yet approved an action. The read performs no action or network lookup and
+never refreshes a source proof that a concurrent action may be using. On the
+first observed owner it reports `COLLECTION_WIZARD_SOURCE_NOT_ADMITTED` with the
+exact identity; `advance_collection_wizard` performs that admission in preparation.
 
 Call `advance_collection_wizard` with the normal live game/profile/path and
 filesystem pins, a unique request ID, exact `modId`, `archiveId`, positive numeric
