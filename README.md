@@ -40,6 +40,10 @@ disabled through MCP on the reviewed official Vortex 2.9.1 host.
 | Publish your own mod | Check an archive locally and upload an update through the official Nexus uploader | [Publication runner](tools/modding/nexus-publish/README.md) |
 | Inspect a Cyberpunk API cache | Check input/tool/output pins and explain failed or incomplete generation without retrying | [Pristine API cache](docs/PRISTINE-API-CACHE.md) |
 
+Collection prompt commands cover source-bound Install Now, Done, Download Update
+and current-profile version questions. See [supported flows and live acceptance
+limits](docs/BACKGROUND-COLLECTION-WIZARD.md) before using them.
+
 The MCP bridge exposes `inspect_session`, `find_collection_downloads`,
 `run_mod_plan` and `inspect_mod_plan`. Before changing mods, the adapter checks the active profile and
 folder identities. It records each operation so an interrupted request can be

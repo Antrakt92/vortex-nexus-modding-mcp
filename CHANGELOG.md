@@ -8,6 +8,7 @@ embedded Vortex adapter's compatibility label.
 
 | Version | Published | Main changes |
 | --- | --- | --- |
+| [0.8.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.8.0) | 2026-11-03 | Guarded collection prompts, explicit capture profiles and settings comparison fixes |
 | [0.7.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.7.0) | 2026-11-03 | Own-ZIP installation plans, installed-candidate assessment and bounded install diagnostics |
 | [0.6.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.6.0) | 2026-11-03 | New own-local ZIP installation through official Vortex, source readiness and recovery checks |
 | [0.5.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.5.0) | 2026-10-31 | Process-check benchmarks, experimental Rust CLI and native install contracts |
@@ -16,6 +17,58 @@ embedded Vortex adapter's compatibility label.
 | [0.2.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.2.0) | 2026-10-29 | Offline helper preparation, installation diagnostics and development dependencies |
 | [0.1.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.1.0) | 2026-10-29 | Combined inspection, collection download reuse and coordinated plans |
 | [Recovery sources](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/recovery-sources-20261025) | 2026-10-25 | Pinned upstream Git bundles for source recovery |
+
+## 0.8.0 — 2026-11-03
+
+Add named MCP commands for stock collection prompts on official Vortex 2.9.1.
+Changes since [0.7.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/compare/v0.7.0...v0.8.0).
+
+### Added
+
+- Add `read_collection_wizard` and `advance_collection_wizard` for Install Now
+  and Done in a newly observed collection session. Use fixed renderer controls,
+  exact collection/profile/archive bindings and durable operation receipts.
+  No desktop input, debugging port or Vortex application patch is used.
+- Add `read_collection_update_prompt` and `advance_collection_update_prompt`
+  for the stock Download Update prelude observed from its original update event.
+- Add `read_collection_dialog` and `respond_collection_dialog` for the stock
+  previous-version question in the retained collection session. Only Update
+  current profile is supported, with remembered choices off. A successful reply
+  proves dialog dismissal, not completed installation or deployed bytes.
+- Allow tracked-Nexus read-capture preparation for an explicit current profile
+  with `--profile-id`. Existing kits retain their original profile restriction;
+  preparation never switches profiles or authorizes installation.
+
+### Fixed
+
+- Allow another version question to append while the current answer is being
+  prepared, while preserving the original queue prefix and selected records.
+  Known failures before any answer release only that preparation slot; uncertain
+  or consumed operations remain blocked and cannot be replayed.
+- Use the maintained preference, scope and settlement policies directly when
+  preparing tracked-Nexus helpers, rather than requiring replaced legacy copies.
+- Compare an own `hidden: undefined` discovery property as absent only at eight
+  source-reviewed tool paths. Explicit visibility values, unrelated undefined
+  fields and all other settings remain strict; native settings are not modified.
+- Admit source-reviewed temporary helpers for collection inspection without
+  weakening the separate admission rules for ordinary local ZIP installation.
+
+### Upgrading and verification
+
+- Rebuild and upgrade the adapter, then refresh the MCP bridge/client to discover
+  the named commands. The embedded compatibility label remains 1.1.0; identify
+  the actual code by its bundle hash. Dependencies are unchanged.
+- Install Now passed a real authorized collection test. Download Update,
+  previous-version responses and Done through MCP still require live acceptance.
+  Separate Windows UI Automation used to finish that test does not prove those
+  MCP actions. See [the scope and acceptance record](docs/BACKGROUND-COLLECTION-WIZARD.md).
+- Source/model tests cover binding drift, appended questions, ambiguous records,
+  source admission, receipts and uncertain outcomes. The updated adapter was
+  loaded locally; ordinary ZIP readiness and collection inspection passed.
+- Resume, arbitrary dialogs, general Nexus installation/replacement and managed
+  removal are outside these new commands. Existing sessions with missed lifecycle
+  events are not adopted. Verify staged/deployed files and preserved profiles
+  separately; a native transition is not installation or gameplay proof.
 
 ## 0.7.0 — 2026-11-03
 
