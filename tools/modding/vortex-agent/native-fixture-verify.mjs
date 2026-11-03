@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import paths from './paths.cjs';
 import receipts from './receipts.cjs';
+import { validInstallDiagnostics } from './install-diagnostics.cjs';
 import { assertOrdinaryModSnapshot } from './native-fixture-snapshot.mjs';
 const base = path.join(paths.workspace, 'local-state/vortex-agent-native-fixture');
 const root = path.resolve(process.argv[2] || '');
@@ -44,6 +45,36 @@ for (const suffix of completionSuffixes) {
     assert.equal(completion.modId, install.modId); assert.equal(completion.downloadId, install.downloadId);
     assert.equal(completion.archiveSha256Verified, true); assert.equal(completion.installedRecordVerified, true);
     assert.equal(completion.enabled, false); assert.equal(completion.payloadFilesVerified, 1);
+    const observation = event('mcp-local-install-diagnostics');
+    const completed = event('mcp-local-install-completed').result;
+    const sidecar = read(`local-state/vortex-agent-build/receipts/${input.runId}_install.diagnostics.json`);
+    assert.deepEqual(Object.keys(sidecar).sort(), ['attemptAt', 'diagnostics', 'operation', 'requestId', 'schema']);
+    assert.equal(sidecar.schema, 'install-diagnostic-record/1');
+    assert.equal(sidecar.operation, attempt.operation); assert.equal(sidecar.requestId, attempt.requestId);
+    assert.equal(sidecar.attemptAt, attempt.at);
+    assert.equal(observation.requestId, attempt.requestId); assert.equal(completed.requestId, attempt.requestId);
+    assert.ok(Array.isArray(observation.samples) && observation.samples.length > 0 && observation.samples.length <= 90);
+    assert.ok(observation.samples.some(sample => sample.source === 'live' && sample.diagnostics), 'Live installation diagnostics were never observed');
+    for (const sample of observation.samples) {
+      assert.deepEqual(Object.keys(sample).sort(), ['attemptAt', 'diagnostics', 'source']);
+      assert.ok(['unavailable', 'live', 'retained'].includes(sample.source));
+      if (sample.diagnostics) {
+        assert.equal(validInstallDiagnostics(sample.diagnostics), true);
+        assert.equal(sample.attemptAt, attempt.at);
+        assert.notEqual(sample.source, 'unavailable');
+      } else assert.equal(sample.source, 'unavailable');
+    }
+    assert.deepEqual(Object.keys(observation.retained).sort(), ['attemptAt', 'diagnostics', 'source']);
+    assert.equal(observation.retained.source, 'retained'); assert.equal(observation.retained.attemptAt, attempt.at);
+    const final = sidecar.diagnostics;
+    assert.equal(validInstallDiagnostics(final), true);
+    assert.equal(final.state, 'completed'); assert.equal(final.phase, 'finalizing_receipt');
+    assert.equal(final.reason, 'none'); assert.equal(final.waitReason, 'none');
+    assert.equal(final.effectsMayHaveOccurred, true); assert.equal(final.nativeMayContinue, false);
+    assert.ok(Object.values(final.metrics).every(metric => metric.calls >= 1));
+    assert.equal(final.metrics.archive_proof.calls, 2);
+    for (const metric of ['native_import', 'import_settle', 'native_install', 'staged_proof', 'receipt_commit']) assert.equal(final.metrics[metric].calls, 1);
+    assert.deepEqual(final, completed.installDiagnostics); assert.deepEqual(final, observation.retained.diagnostics);
   }
 }
 assert.equal(fs.existsSync(path.join(root, 'local-state/vortex-agent-build/receipts/unresolved.json')), false);
@@ -103,6 +134,7 @@ assert.match(log, /clean application end/);
 const proof = { passed: true, root, checks: ['native import/install', 'authenticated compiled agent enable/deploy/disable/restore', 'manifest ownership', 'deployed hardlink identity', 'original hash and filesystem identity restored', 'post-shutdown game/staging hashes', 'ZIP size/SHA-256/CRC',
   completionSuffixes.length === 5 ? 'five durable completions without unresolved marker' : 'four durable completions without unresolved marker',
   ...(input.withExistingMod ? ['existing mod/flags/staged identity preserved', 'same-archive collision refused before effects'] : []),
+  ...(input.installRoute === 'mcp-local-archive' ? ['live bounded install diagnostics and retained sidecar bound to original attempt'] : []),
   'ordinary health/profile/mod inventory/manifest/process preservation', 'clean native shutdown'], nexusReuse: receipt.nexusReuse, at: new Date().toISOString() };
 fs.writeFileSync(path.join(root, 'independent-verification.json'), JSON.stringify(proof, null, 2), { flag: 'wx' });
 console.log(JSON.stringify(proof));

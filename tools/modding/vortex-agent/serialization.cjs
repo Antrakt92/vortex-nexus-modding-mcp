@@ -1,5 +1,6 @@
 'use strict';
 const path = require('node:path');
+const { PHASES, STATES, REASONS, WAITS } = require('./install-diagnostics.cjs');
 const OPERATIONS = new Set(['install_download', 'install_local_archive', 'set_mods_enabled', 'deploy_mods', 'download_nexus']);
 const URI = /\b(?:[a-z][a-z0-9+.-]*:\/\/|[a-z][a-z0-9+.-]+:|[a-z]:(?![\\/]))[^\s"'<>]+/gi;
 const PATH_FIELD = /^(?:game|staging|download)Path$/;
@@ -8,6 +9,16 @@ function insist(ok, code) { if (!ok) throw new Error(code); }
 // Policies apply to exact positions in outputs of named curated producers. They
 // are NOT a global exemption for arbitrary objects having a key named gameId/id.
 function operational(kind, trail) {
+  if (kind === 'install_diagnostics') {
+    if (trail[0] === 'diagnostics') return operational('install_diagnostics', trail.slice(1));
+    if (trail.length === 1 && trail[0] === 'schema') return 'installDiagnosticSchema';
+    if (trail.length === 1 && ['operation', 'requestId'].includes(trail[0])) return trail[0];
+    if (trail.length === 1 && trail[0] === 'attemptAt') return 'at';
+    if (trail.length === 1 && ['phase', 'state', 'reason', 'waitReason'].includes(trail[0]))
+      return 'installDiagnostic_' + trail[0];
+  }
+  if (['operation_status', 'reconcile_operation', 'install_local_archive'].includes(kind) && trail[0] === 'installDiagnostics')
+    return operational('install_diagnostics', trail.slice(1));
   if (kind === 'read_native_preflight') {
     if (trail.length === 1 && trail[0] === 'protocol') return 'protocol';
     if (trail.length === 1 && trail[0] === 'schema') return 'nativePreflightSchema';
@@ -83,6 +94,11 @@ function operational(kind, trail) {
   return null;
 }
 function validOperational(type, value) {
+  if (type === 'installDiagnosticSchema') return ['install-diagnostics/1','install-diagnostic-record/1'].includes(value);
+  if (type === 'installDiagnostic_phase') return PHASES.includes(value);
+  if (type === 'installDiagnostic_state') return STATES.includes(value);
+  if (type === 'installDiagnostic_reason') return REASONS.includes(value);
+  if (type === 'installDiagnostic_waitReason') return WAITS.includes(value);
   if (type === 'nativePreflightSchema') return value === 'native-preflight/1';
   if (type === 'nativePreflightStatus') return ['ok', 'partial'].includes(value);
   if (type === 'nativeAppVersion') return value.length <= 128 && /^\d{1,4}(?:\.\d{1,6}){2,3}(?:-[0-9A-Za-z][0-9A-Za-z.-]{0,63})?(?:\+[0-9A-Za-z][0-9A-Za-z.-]{0,31})?$/.test(value);

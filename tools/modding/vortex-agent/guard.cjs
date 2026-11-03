@@ -8,6 +8,9 @@ const { safe } = require('./serialization.cjs');
 const downloads = require('./download-identity.cjs');
 const receipts = require('./receipts.cjs');
 const { installLocalArchive } = require('./local-archive-install.cjs');
+const { createInstallDiagnostics, validInstallDiagnostics } = require('./install-diagnostics.cjs');
+const liveInstallDiagnostics = new Map();
+const diagnosticKey = (dir, requestId) => path.resolve(dir) + '\0' + requestId;
 const RECEIPTS = require('./paths.cjs').receipts;
 const PROTOCOL = 'vortex-agent/1';
 const processes = Object.freeze({
@@ -147,7 +150,7 @@ async function durable(file, value) {
   try { await handle.writeFile(JSON.stringify(value)); await handle.sync(); }
   finally { await handle.close(); }
 }
-async function commitCompletion(file, value, verify) {
+async function commitCompletion(file, value, verify, published = () => {}) {
   // A final name is never visible before the bytes are fsynced. link() is an
   // atomic no-overwrite publication (rename() could overwrite an old request).
   const pending = file + '.pending-' + crypto.randomUUID();
@@ -156,6 +159,7 @@ async function commitCompletion(file, value, verify) {
   // before publishing its final name. Other operations retain their old route.
   if (verify) verify();
   await fs.link(pending, file);
+  published();
   await fs.unlink(pending);
 }
 function modIdentity(state, gameId, id) {
@@ -194,7 +198,9 @@ function createOperations(api, actions, selectors, options = {}) {
     return exclusive(dir, async () => {
       try { await fs.access(path.join(dir, 'unresolved.json')); throw new Error('UNRESOLVED_OPERATION_INTERLOCK'); }
       catch (error) { if (error.code !== 'ENOENT') throw error; }
-      check(args);
+      const diagnostics = name === 'install_local_archive' ? createInstallDiagnostics(options.installDiagnosticsOptions) : null;
+      const measuredCheck = () => diagnostics ? diagnostics.measureSync('context_checks', () => check(args)) : check(args);
+      measuredCheck();
       insist(/^[a-zA-Z0-9_-]{8,80}$/.test(args.requestId || ''), 'INVALID_REQUEST_ID');
       const attempt = path.join(dir, args.requestId + '.attempt.json');
       const receipt = sanitize({ protocol: PROTOCOL, receiptVersion: receipts.VERSION, operation: name,
@@ -202,20 +208,24 @@ function createOperations(api, actions, selectors, options = {}) {
         parameters: args, at: new Date().toISOString() }, 'receipt');
       insist(receipts.validAttempt(receipt), 'INVALID_ATTEMPT_RECEIPT');
       await durable(attempt, receipt);
-      let effects = false, armed = false;
+      const key = diagnosticKey(dir, args.requestId);
+      if (diagnostics) liveInstallDiagnostics.set(key, {attemptAt: receipt.at, diagnostics});
+      let effects = false, armed = false, completionPublished = false, diagnosticFinished = false;
       const effect = async (fn, eligible = () => {}) => {
+        diagnostics?.assertWork();
         // One operation can have several native stages (import, then install).
         // Retain the original interlock across all stages; never overwrite it.
         if (!armed) { await durable(path.join(dir, 'unresolved.json'), receipt); armed = true; }
         // Synchronous realpath/identity + active context + Windows process checks,
         // immediately followed by invocation: no further awaits before the effect.
-        check(args); eligible(); effects = true;
+        measuredCheck(); eligible(); diagnostics?.markEffects(); effects = true;
         return fn();
       };
       try {
+        diagnostics?.assertWork();
         let verifyCompletion;
-        const result = await run(effect, verify => { verifyCompletion = verify; });
-        check(args);
+        const result = await run(effect, verify => { verifyCompletion = verify; }, diagnostics, measuredCheck);
+        measuredCheck();
         if (verifyCompletion) verifyCompletion();
         const status = { protocol: PROTOCOL, requestId: args.requestId, operation: name,
           operationCompleted: true, diskDeploymentVerified: false,
@@ -223,20 +233,62 @@ function createOperations(api, actions, selectors, options = {}) {
         const publicStatus = sanitize(status, 'operation_status');
         const completion = sanitize({ ...status, receiptVersion: receipts.VERSION, gameId: args.gameId, profileId: args.profileId, at: new Date().toISOString() }, 'receipt');
         insist(receipts.validCompletion(completion, receipt), 'INVALID_COMPLETION_RECEIPT');
-        await commitCompletion(path.join(dir, args.requestId + '.completion.json'), completion,
-          verifyCompletion ? () => { check(args); verifyCompletion(); } : undefined);
-        if (armed) await fs.unlink(path.join(dir, 'unresolved.json'));
+        diagnostics?.finalizing();
+        const commit = async () => {
+          await commitCompletion(path.join(dir, args.requestId + '.completion.json'), completion,
+            verifyCompletion ? () => { measuredCheck(); verifyCompletion(); } : undefined,
+            () => { completionPublished = true; });
+          if (armed) await fs.unlink(path.join(dir, 'unresolved.json'));
+        };
+        if (diagnostics) await diagnostics.measure('receipt_commit', commit); else await commit();
+        const snapshot = diagnostics?.finish('completed', 'none', true);
+        diagnosticFinished = true;
+        if (snapshot && validInstallDiagnostics(snapshot)) {
+          try { return sanitize({...publicStatus, installDiagnostics: snapshot}, 'operation_status'); }
+          catch { /* Optional observations cannot undo a committed operation. */ }
+        }
         return publicStatus;
       } catch (error) {
+        // Publication is irreversible. A cleanup error after link() must not
+        // manufacture a conflicting failure next to a valid completion.
+        if (completionPublished) {
+          const cleanup = new Error('COMPLETION_PUBLISHED_CLEANUP_PENDING');
+          if (diagnostics) cleanup.installDiagnostics = diagnostics.finish('held', 'receipt_cleanup', true);
+          diagnosticFinished = true;
+          throw cleanup;
+        }
         // Deliberately exclude upstream exception text (may contain authenticated URLs).
-        await durable(path.join(dir, args.requestId + '.failed.json'), sanitize({
+        const fail = () => durable(path.join(dir, args.requestId + '.failed.json'), sanitize({
           protocol: PROTOCOL, receiptVersion: receipts.VERSION, requestId: args.requestId, operation: name, gameId: args.gameId, profileId: args.profileId,
           operationCompleted: false, effectsMayHaveOccurred: effects, inspectBeforeRetry: effects,
           errorCode: /^[A-Z][A-Z0-9_]+$/.test(error?.message || '') ? error.message : 'UPSTREAM_FAILURE',
           at: new Date().toISOString(),
         }, 'receipt'));
+        if (diagnostics) await diagnostics.measure('receipt_commit', fail); else await fail();
         if (armed && !effects) await fs.unlink(path.join(dir, 'unresolved.json'));
+        if (diagnostics) {
+          const code = /^[A-Z][A-Z0-9_]+$/.test(error?.message || '') ? error.message : 'UPSTREAM_FAILURE';
+          const outward = new Error(code);
+          outward.code = code;
+          outward.installDiagnostics = diagnostics.finish(effects ? 'held' : 'failed_before_effect', 'operation_error');
+          diagnosticFinished = true;
+          throw outward;
+        }
+        diagnosticFinished = true;
         throw error;
+      } finally {
+        if (diagnostics) {
+          try {
+            const snapshot = diagnosticFinished ? diagnostics.snapshot()
+              : diagnostics.finish(effects ? 'held' : 'failed_before_effect', 'operation_error', completionPublished);
+            // Observations are optional and never authorize completion or retry.
+            // One bounded final record avoids filesystem writes on every poll.
+            const record = sanitize({schema:'install-diagnostic-record/1',operation:name,
+              requestId:args.requestId,attemptAt:receipt.at,diagnostics:snapshot}, 'install_diagnostics');
+            if (validInstallDiagnostics(record.diagnostics)) await durable(path.join(dir,args.requestId+'.diagnostics.json'),record);
+          } catch { /* Receipt authority is independent of optional diagnostics. */ }
+          finally { liveInstallDiagnostics.delete(key); }
+        }
       }
     });
   }
@@ -251,8 +303,8 @@ function createOperations(api, actions, selectors, options = {}) {
       // (including an empty inventory) instead of claiming preflight guarantees.
       insist(false, 'INSTALL_DISABLED_NONREPLACEMENT_NOT_PROVABLE');
     }),
-    install_local_archive: args => mutate('install_local_archive', args, async effect =>
-      installLocalArchive(api, args, { check: () => check(args), effect, admitHost: options.admitLocalInstallHost })),
+    install_local_archive: args => mutate('install_local_archive', args, async (effect, _beforeCompletion, diagnostics, measuredCheck) =>
+      installLocalArchive(api, args, { check: measuredCheck, effect, admitHost: options.admitLocalInstallHost, diagnostics })),
     set_mods_enabled: args => mutate('set_mods_enabled', args, async effect => {
       const before = flags(args);
       const identities = args.modIds.map(id => modIdentity(api.getState(), args.gameId, id));
@@ -319,11 +371,11 @@ function createOperations(api, actions, selectors, options = {}) {
     reconcile_operation: async args => {
       insist(/^[a-zA-Z0-9_-]{8,80}$/.test(args.requestId || ''), 'INVALID_REQUEST_ID');
       const issues = [];
-      const read = async name => {
+      const read = async (name, readIssues = issues, limit = 1024 * 1024) => {
         let handle;
-        try { handle = await fs.open(path.join(dir, name), 'r'); const bytes = Buffer.alloc(1024 * 1024 + 1); const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
-          insist(bytesRead <= 1024 * 1024, 'RECEIPT_LIMIT'); return { observed: true, value: JSON.parse(bytes.subarray(0, bytesRead).toString('utf8')) }; }
-        catch (error) { if (error.code === 'ENOENT') return { observed: false, value: null }; issues.push('INVALID_RECEIPT'); return { observed: true, value: null }; }
+        try { handle = await fs.open(path.join(dir, name), 'r'); const bytes = Buffer.alloc(limit + 1); const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+          insist(bytesRead <= limit, 'RECEIPT_LIMIT'); return { observed: true, value: JSON.parse(bytes.subarray(0, bytesRead).toString('utf8')) }; }
+        catch (error) { if (error.code === 'ENOENT') return { observed: false, value: null }; readIssues.push('INVALID_RECEIPT'); return { observed: true, value: null }; }
         finally { if (handle) await handle.close(); }
       };
       const a = await read(args.requestId + '.attempt.json'), c = await read(args.requestId + '.completion.json'), f = await read(args.requestId + '.failed.json'), u = await read('unresolved.json');
@@ -351,7 +403,21 @@ function createOperations(api, actions, selectors, options = {}) {
       } : null;
       let download = [];
       let localInstall = null;
+      let installDiagnostics = null, installDiagnosticsSource = 'unavailable';
+      const diagnosticsIssues = [];
       if (attempt?.operation === 'install_local_archive') {
+        const live = liveInstallDiagnostics.get(diagnosticKey(dir, args.requestId));
+        if (live && live.attemptAt === attempt.at) {
+          installDiagnostics = live.diagnostics.snapshot(); installDiagnosticsSource = 'live';
+        } else {
+          const observed = await read(args.requestId+'.diagnostics.json', diagnosticsIssues, 32768);
+          const record = observed.value;
+          if (record && Object.keys(record).sort().join(',') === 'attemptAt,diagnostics,operation,requestId,schema'
+            && record.schema === 'install-diagnostic-record/1' && record.operation === attempt.operation
+            && record.requestId === attempt.requestId && record.attemptAt === attempt.at && validInstallDiagnostics(record.diagnostics)) {
+            installDiagnostics = record.diagnostics; installDiagnosticsSource = 'retained';
+          } else if (observed.observed) diagnosticsIssues.push('INVALID_INSTALL_DIAGNOSTICS');
+        }
         const modId = path.basename(attempt.parameters.archivePath, '.zip');
         const mod = state.persistent?.mods?.[attempt.gameId]?.[modId];
         localInstall = { modId, installed: mod?.state === 'installed',
@@ -367,7 +433,8 @@ function createOperations(api, actions, selectors, options = {}) {
         catch { issues.push('DOWNLOAD_IDENTITY_UNVERIFIABLE'); }
       }
       return { protocol: PROTOCOL, attempt, completion, failure, interlock, download, enabledFlags, deployment,
-        ...(localInstall ? {localInstall} : {}),
+        ...(localInstall ? {localInstall,installDiagnostics,installDiagnosticsSource,
+          diagnosticsIssues: diagnosticsIssues.length ? ['INVALID_INSTALL_DIAGNOSTICS'] : []} : {}),
         receiptIssues: [...new Set(issues)], incompleteCompletionObserved: incomplete,
         adapterTerminalReceiptObserved: c.observed || f.observed,
         terminalOperationVerified: !!completion && issues.length === 0 && !f.observed, interlockCleared: false,
