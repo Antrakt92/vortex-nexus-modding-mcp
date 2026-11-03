@@ -302,6 +302,61 @@ function createOperations(api, actions, selectors, options = {}) {
   return {
     health: () => ({ protocol: PROTOCOL, extensionVersion: '1.1.0', targetVortexVersion: '2.7.2.0', ...context(api, selectors),
       security: 'per-user-DPAPI-bearer', installSupported: false, diskDeploymentVerified: false }),
+    advance_collection_wizard: args => {
+      const wizard = options.wizard;
+      insist(wizard && ['prepare', 'validate', 'click', 'waitForTransition', 'verifyTransition'].every(key => typeof wizard[key] === 'function'),
+        'COLLECTION_WIZARD_CONTROLLER_UNAVAILABLE');
+      return mutate('advance_collection_wizard', args, async (effect, beforeCompletion) => {
+      const sync = (fn, code) => {
+        const value = fn();
+        if (value && typeof value.then === 'function') {
+          void Promise.resolve(value).catch(() => {});
+          throw Error(code);
+        }
+        insist(value !== false, code);
+        return value;
+      };
+      await wizard.prepare(args);
+      check(args);
+      await effect(() => sync(() => wizard.click(args), 'COLLECTION_WIZARD_CLICK_MUST_BE_SYNCHRONOUS'),
+        () => sync(() => wizard.validate(args), 'COLLECTION_WIZARD_VALIDATION_MUST_BE_SYNCHRONOUS'));
+      const result = await wizard.waitForTransition(args);
+      beforeCompletion(() => sync(() => wizard.verifyTransition(args, result), 'COLLECTION_WIZARD_TRANSITION_MUST_BE_SYNCHRONOUS'));
+      return result;
+      }).then(result => { wizard.committed?.(args); return result; });
+    },
+    advance_collection_update_prompt: args => {
+      const prompt = options.updatePrompt;
+      insist(prompt && ['prepare','validate','click','waitForTransition','verifyTransition'].every(key=>typeof prompt[key] === 'function'),
+        'COLLECTION_UPDATE_PROMPT_CONTROLLER_UNAVAILABLE');
+      return mutate('advance_collection_update_prompt',args,async(effect,beforeCompletion)=>{
+        const sync=(fn,code)=>{const value=fn();if(value&&typeof value.then==='function'){void Promise.resolve(value).catch(()=>{});throw Error(code);}insist(value!==false,code);return value;};
+        await prompt.prepare(args);check(args);
+        await effect(()=>sync(()=>prompt.click(args),'COLLECTION_UPDATE_PROMPT_CLICK_MUST_BE_SYNCHRONOUS'),
+          ()=>sync(()=>prompt.validate(args),'COLLECTION_UPDATE_PROMPT_VALIDATION_MUST_BE_SYNCHRONOUS'));
+        const result=await prompt.waitForTransition(args);
+        beforeCompletion(()=>sync(()=>prompt.verifyTransition(args,result),'COLLECTION_UPDATE_PROMPT_TRANSITION_MUST_BE_SYNCHRONOUS'));
+        return result;
+      }).then(result=>{prompt.committed?.(args);return result;});
+    },
+    respond_collection_dialog: args => {
+      const dialog = options.dialog;
+      insist(dialog && ['prepare', 'validate', 'respond', 'waitForTransition', 'verifyTransition'].every(key => typeof dialog[key] === 'function'),
+        'COLLECTION_DIALOG_CONTROLLER_UNAVAILABLE');
+      return mutate('respond_collection_dialog', args, async (effect, beforeCompletion) => {
+        const sync = (fn, code) => {
+          const value = fn();
+          if (value && typeof value.then === 'function') { void Promise.resolve(value).catch(() => {}); throw Error(code); }
+          insist(value !== false, code); return value;
+        };
+        await dialog.prepare(args); check(args);
+        await effect(() => sync(() => dialog.respond(args), 'COLLECTION_DIALOG_RESPONSE_MUST_BE_SYNCHRONOUS'),
+          () => sync(() => dialog.validate(args), 'COLLECTION_DIALOG_VALIDATION_MUST_BE_SYNCHRONOUS'));
+        const result = await dialog.waitForTransition(args);
+        beforeCompletion(() => sync(() => dialog.verifyTransition(args, result), 'COLLECTION_DIALOG_TRANSITION_MUST_BE_SYNCHRONOUS'));
+        return {gameId:args.gameId,...result};
+      });
+    },
     install_download: args => mutate('install_download', args, async () => {
       await archive(api, args, args.downloadId, selectors, catalog); check(args);
       // v2.7.2 InstallManager can silently replace by newestFileId/Nexus identity,

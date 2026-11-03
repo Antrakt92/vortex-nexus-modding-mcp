@@ -156,6 +156,11 @@ async function server(options = {}) {
   const control = { listExternalChanges: () => f.state.session.mods.changes };
   const module = { exports: {} }; vm.runInThisContext('(function(require,module,exports){' + await fs.readFile(new URL('./extension.cjs', import.meta.url), 'utf8') + '\n})')(
     id => id === '@nexusmods/vortex-api' ? { actions: {}, selectors: f.selectors, util: {}, log: () => {} } : id === './vortexControl' ? control
+      // HTTP-only fixture has no native UI epoch; wizard behavior is tested separately.
+      : id === './collection-wizard-controller.cjs' ? {getCollectionWizardController: () => ({
+        readiness: async () => { throw Error('COLLECTION_WIZARD_CONTROLLER_UNAVAILABLE'); },
+      })} : id === './collection-dialog-controller.cjs' ? {createCollectionDialogController: () => ({readiness:async()=>({status:'held',sourceAdmitted:false})})}
+      : id === './collection-update-prompt.cjs' ? {getCollectionUpdatePromptController: () => ({readiness:async()=>({status:'held',sourceAdmitted:false})})}
       : id.startsWith('./') ? require(id) : upstream(id), module, module.exports);
   const listener = module.exports.start(f.api, 0, { tokenProvider: async () => '7'.repeat(64), ...options });
   try { await waitForServerListening(listener); }
