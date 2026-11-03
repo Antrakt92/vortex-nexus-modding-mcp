@@ -31,8 +31,9 @@ disabled through MCP on the reviewed official Vortex 2.9.1 host.
 | --- | --- | --- |
 | Inspect a mod setup | Read profiles, mods, downloads, dialogs and conflicts in a combined snapshot | [Session inspection](docs/NO-RESTART-WORKFLOW.md) |
 | Inspect mod usage | Read all-profile usage, incoming requirements and archive references for exact installed IDs | [Lifecycle preflight](docs/LIFECYCLE-PERFORMANCE.md) |
+| Compare installed variants | Assess exact collection requirements and installer choices, with explicit conflicts and unknowns | [Candidate assessment](docs/INSTALLED-CANDIDATES.md) |
 | Prepare a collection | Match exact Nexus mod/file IDs to existing tracked downloads | [Download reuse](docs/COLLECTION-DOWNLOADS.md) |
-| Change enabled mods and deploy | Check a plan before running it, apply changes one at a time and deploy once at the end | [Plan format](docs/NO-RESTART-WORKFLOW.md#run-the-reviewed-plan-through-mcp) |
+| Install own builds, enable mods and deploy | Check a plan, install new own ZIPs disabled, apply explicit activation and deploy once at the end | [Plan format](docs/NO-RESTART-WORKFLOW.md#run-the-reviewed-plan-through-mcp) |
 | Install a new own-local ZIP | Verify a reviewed host and archive, import once and install disabled without a temporary plugin | [Local ZIP installation](docs/STOCK-LOCAL-INSTALL.md) |
 | Check an interrupted plan | Read its saved intents and reconcile the exact operation receipts without replay | [Plan status](docs/NO-RESTART-WORKFLOW.md#inspect-a-plan-after-a-disconnect) |
 | Research Nexus Mods | Search public metadata and requirements through the community CLI | [Nexus CLI](tools/modding/nexus-cli/README.md) |

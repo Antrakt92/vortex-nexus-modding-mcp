@@ -68,6 +68,12 @@ After success, review the mod's resources and priority, then use the existing
 deployment owners, protected bytes and staging/game hardlink identity separately.
 An installation receipt is not deployment or gameplay proof.
 
+For several new own ZIPs, use the existing
+[reviewed plan](NO-RESTART-WORKFLOW.md): exact install steps first, then explicit
+activation and at most one final deploy. Each step retains its original receipt.
+An uncertain installation stops later installs, activation and deployment; inspect
+the original attempt before preparing any remaining work.
+
 The CLI fallback uses the same tool and credentials:
 
 ```powershell

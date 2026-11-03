@@ -5,6 +5,7 @@ import { remote } from './bridge.mjs';
 import {CONTEXT_KEYS, ROOTS, validateContext, validatePlan, planQueue} from './plan-contract.mjs';
 import {canonicalPlanId, createPlanJournal} from './plan-journal.mjs';
 import strictJSON from './strict-json.cjs';
+import receipts from './receipts.cjs';
 export {validateContext, validatePlan} from './plan-contract.mjs';
 
 const PROTOCOL = 'vortex-agent/1';
@@ -139,14 +140,29 @@ function cleanUnusedReceipt(value) {
     && value.attempt === null && value.completion === null && value.failure === null && value.interlock === null,
   'REQUEST_ID_USED_OR_RECEIPT_UNCERTAIN');
 }
-function verifiedAcknowledgement(value, operation, args) {
+const INSTALL_AUTHORITY_KEYS = ['protocol', 'requestId', 'operation', 'operationCompleted', 'diskDeploymentVerified',
+  'verificationRequired', 'modId', 'downloadId', 'installedRecordVerified', 'enabled', 'archiveSha256Verified', 'payloadFilesVerified'];
+function installAuthority(value) {return Object.fromEntries(INSTALL_AUTHORITY_KEYS.map(key => [key, value[key]]));}
+function verifiedAcknowledgement(value, operation, args, receipt = false) {
   insist(object(value) && value.protocol === PROTOCOL && value.operation === operation && value.requestId === args.requestId
     && value.operationCompleted === true && value.diskDeploymentVerified === false, 'WRITE_ACKNOWLEDGEMENT_UNCERTAIN');
   if (operation === 'deploy_mods') insist(value.deploymentPromiseResolved === true, 'WRITE_ACKNOWLEDGEMENT_UNCERTAIN');
   else if (operation === 'download_nexus') insist(id(value.downloadId) && typeof value.reused === 'boolean'
     && (!args.reuseOnly || value.reused) && value.autoInstall === false && value.archiveSha256Verified === true
     && value.archiveCRCVerified === false && value.size === args.size, 'WRITE_ACKNOWLEDGEMENT_UNCERTAIN');
-  else insist(value.enabledFlagsVerified === true && value.enabled === args.enabled && same(value.modIds, args.modIds), 'WRITE_ACKNOWLEDGEMENT_UNCERTAIN');
+  else if (operation === 'install_local_archive') {
+    const allowed = [...INSTALL_AUTHORITY_KEYS, ...(receipt ? ['receiptVersion', 'gameId', 'profileId', 'at'] : ['installDiagnostics'])];
+    insist(Object.keys(value).every(key => allowed.includes(key))
+      && INSTALL_AUTHORITY_KEYS.every(key => Object.hasOwn(value, key))
+      && value.verificationRequired === receipts.VERIFICATION
+      && value.modId === path.win32.basename(args.archivePath, '.zip') && id(value.downloadId)
+      && value.installedRecordVerified === true && value.enabled === false && value.archiveSha256Verified === true
+      && Number.isSafeInteger(value.payloadFilesVerified) && value.payloadFilesVerified > 0 && value.payloadFilesVerified <= 4096,
+    'WRITE_ACKNOWLEDGEMENT_UNCERTAIN');
+    if (receipt) insist(value.receiptVersion === receipts.VERSION && value.gameId === args.gameId && value.profileId === args.profileId
+      && typeof value.at === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value.at)
+      && Number.isFinite(Date.parse(value.at)), 'TERMINAL_RECEIPT_UNCERTAIN');
+  } else insist(value.enabledFlagsVerified === true && value.enabled === args.enabled && same(value.modIds, args.modIds), 'WRITE_ACKNOWLEDGEMENT_UNCERTAIN');
 }
 function verifiedReceipt(value, operation, args, acknowledgement) {
   insist(object(value) && value.protocol === PROTOCOL && value.terminalOperationVerified === true
@@ -156,8 +172,11 @@ function verifiedReceipt(value, operation, args, acknowledgement) {
     && value.attempt?.gameId === args.gameId && value.attempt?.profileId === args.profileId
     && value.completion?.gameId === args.gameId && value.completion?.profileId === args.profileId
     && same(value.attempt?.parameters, args), 'TERMINAL_RECEIPT_UNCERTAIN');
-  verifiedAcknowledgement(value.completion, operation, args);
-  insist(same(acknowledgement, Object.fromEntries(Object.keys(acknowledgement).map(key => [key, value.completion[key]]))), 'ACK_RECEIPT_MISMATCH');
+  verifiedAcknowledgement(value.completion, operation, args, true);
+  if (operation === 'install_local_archive') {
+    insist(receipts.validCompletion(value.completion, value.attempt), 'TERMINAL_RECEIPT_UNCERTAIN');
+    insist(same(installAuthority(acknowledgement), installAuthority(value.completion)), 'ACK_RECEIPT_MISMATCH');
+  } else insist(same(acknowledgement, Object.fromEntries(Object.keys(acknowledgement).map(key => [key, value.completion[key]]))), 'ACK_RECEIPT_MISMATCH');
 }
 function receiptSummary(value) {
   return {attemptObserved: object(value?.attempt), completionObserved: object(value?.completion), failureObserved: object(value?.failure),
@@ -189,6 +208,15 @@ export async function runPlan(input, {apply = false, call = createToolCaller(), 
       current = {...queue[failed], invoked: false};
       throw Error(preflight[failed].error);
     }
+    if (queue.some(item => item.operation === 'install_local_archive')) {
+      checkCancellation();
+      const readiness = await call('read_local_install_readiness', {});
+      insist(object(readiness) && readiness.localArchiveInstallSupported === true && readiness.sourceAdmissionVerified === true
+        && readiness.hostVersion === '2.9.1' && readiness.nativeEffects === false
+        && Number.isSafeInteger(readiness.reviewedDynamicExtensions) && readiness.reviewedDynamicExtensions >= 0
+        && readiness.reviewedDynamicExtensions <= 256, 'LOCAL_INSTALL_READINESS_UNCERTAIN');
+      checkCancellation();
+    }
     for (const [index, item] of queue.entries()) {
       checkCancellation();
       current = {...item, invoked: false};
@@ -207,6 +235,8 @@ export async function runPlan(input, {apply = false, call = createToolCaller(), 
       // exact receipt first, then stop before invoking any later step.
       verifiedReceipt(await call('reconcile_operation', {requestId: item.args.requestId}), item.operation, item.args, acknowledgement);
       completed.push({operation: item.operation, requestId: item.args.requestId, adapterReceiptVerified: true,
+        ...(item.operation === 'install_local_archive' ? {modId: acknowledgement.modId, downloadId: acknowledgement.downloadId,
+          installedRecordVerified: true, enabled: false, archiveSha256Verified: true, payloadFilesVerified: acknowledgement.payloadFilesVerified} : {}),
         ...(item.operation === 'download_nexus' ? {downloadId: acknowledgement.downloadId, reused: acknowledgement.reused,
           size: acknowledgement.size, archiveSha256Verified: true, archiveCRCVerified: false} : {})});
       recorded(execution.observed(index));
@@ -215,7 +245,7 @@ export async function runPlan(input, {apply = false, call = createToolCaller(), 
     }
     recorded(execution.finish('completed'));
     return {status: 'completed', planId, completed, diskDeploymentVerified: false,
-      verificationRequired: 'Independently verify archive CRC, preserved state, deployment manifest, owners, hashes and hardlinks. Adapter receipts do not prove installation, disk deployment or gameplay acceptance.'};
+      verificationRequired: 'Independently verify archive CRC, preserved state, deployment manifest, owners, hashes and hardlinks. Installation receipts describe their guarded installation only; they do not prove current disk deployment, safe migration or gameplay acceptance.'};
   } catch (error) {
     let reconciliation;
     if (current?.invoked) {

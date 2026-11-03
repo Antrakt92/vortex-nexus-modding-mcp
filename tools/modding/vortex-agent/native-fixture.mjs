@@ -14,6 +14,26 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const must = (ok, code) => { if (!ok) throw Error(code); };
 const sha = b => crypto.createHash('sha256').update(b).digest('hex');
 const write = (p, value) => fs.writeFileSync(p, JSON.stringify(value, null, 2) + '\n', { flag: 'wx' });
+function planClientSources() {
+  const found = new Map(), pending = ['session.mjs'];
+  while (pending.length) {
+    const relative = pending.pop(); if (found.has(relative)) continue;
+    must(found.size < 64 && /^[a-zA-Z0-9_.-]+\.(?:mjs|cjs|json)$/.test(relative), 'FIXTURE_CLIENT_SOURCE_SCOPE');
+    const file = path.join(here, relative);
+    for (let p = file; ; p = path.dirname(p)) { must(!fs.lstatSync(p).isSymbolicLink(), 'FIXTURE_CLIENT_SOURCE_REPARSE'); if (p === path.dirname(p)) break; }
+    const stat = fs.statSync(file, { bigint: true });
+    must(stat.isFile() && stat.size <= 1024n * 1024n, 'FIXTURE_CLIENT_SOURCE_LIMIT');
+    const bytes = fs.readFileSync(file);
+    found.set(relative, { sha256: sha(bytes), generation: [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].join(':') });
+    if (relative.endsWith('.json')) continue;
+    for (const match of bytes.toString('utf8').matchAll(/(?:\bfrom\s*|\bimport\s*\(|\brequire\s*\()\s*['"]([^'"]+)['"]/g)) {
+      if (match[1].startsWith('node:')) continue;
+      must(/^\.\/[a-zA-Z0-9_.-]+\.(?:mjs|cjs|json)$/.test(match[1]), 'FIXTURE_CLIENT_EXTERNAL_IMPORT');
+      pending.push(match[1].slice(2));
+    }
+  }
+  return Object.fromEntries([...found].sort(([a], [b]) => a.localeCompare(b)));
+}
 async function tool(name, args = {}) {
   const ordinaryIndex = process.argv.indexOf('--ordinary-workspace');
   const ordinary = ordinaryIndex >= 0 ? paths.resolvePaths({ env: {
@@ -90,6 +110,9 @@ async function main() {
   must(process.platform === 'win32' && process.argv[2] === '--run', 'USAGE_native-fixture.mjs_--run_--support-extension_PATH_--support-index-sha256_SHA');
   must(!process.argv.includes('--candidate-assessment') || process.argv.includes('--mcp-local-archive')
     && process.argv.includes('--with-existing-mod'), 'CANDIDATE_ASSESSMENT_REQUIRES_EXISTING_CURATED_FIXTURE');
+  must(!process.argv.includes('--own-local-plan') || process.argv.includes('--mcp-local-archive')
+    && process.argv.includes('--with-existing-mod') && !process.argv.includes('--candidate-assessment'),
+  'OWN_LOCAL_PLAN_REQUIRES_EXCLUSIVE_EXISTING_CURATED_FIXTURE');
   const supportIndex = process.argv.indexOf('--support-extension');
   const hashIndex = process.argv.indexOf('--support-index-sha256');
   must(supportIndex > 2 && hashIndex > 2 && process.argv[supportIndex + 1]
@@ -116,6 +139,20 @@ async function main() {
     : process.argv.includes('--local-archive') ? 'local-archive' : 'tracked-download';
   input.withExistingMod = process.argv.includes('--with-existing-mod');
   input.candidateAssessment = process.argv.includes('--candidate-assessment');
+  input.ownLocalPlan = process.argv.includes('--own-local-plan');
+  if (input.ownLocalPlan) {
+    input.planClientRoot = here; input.planClientSources = planClientSources();
+    input.planPackages = ['a', 'b'].map(suffix => {
+      const payloadPath = `archive/pc/mod/native_agent_plan_${suffix}.archive`;
+      const payload = Buffer.from(`OWN SYNTHETIC PLAN PAYLOAD ${suffix}\n`), sentinel = Buffer.from(`ORIGINAL PLAN SENTINEL ${suffix}\n`);
+      const archive = zip(payloadPath, payload), archivePath = path.join(path.dirname(input.archive), `native-agent-plan-${suffix}.zip`);
+      fs.writeFileSync(archivePath, archive, { flag: 'wx' });
+      const target = path.join(input.game, payloadPath); fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, sentinel, { flag: 'wx' });
+      return { modId: `native-agent-plan-${suffix}`, archivePath, payloadPath, archiveSize: archive.length,
+        archiveSha256: sha(archive), payloadSha256: sha(payload), sentinelSha256: sha(sentinel) };
+    });
+  }
   must(!input.withExistingMod || input.installRoute === 'mcp-local-archive', 'EXISTING_MOD_REQUIRES_CURATED_ROUTE');
   if (input.withExistingMod) {
     const payloadPath = 'archive/pc/mod/native_agent_existing.archive';
@@ -150,6 +187,10 @@ async function main() {
   const runtime = original;
   fs.writeFileSync(path.join(driver, 'runtime.cjs'), runtime, { flag: 'wx' });
   fs.copyFileSync(path.join(here, 'native-fixture-worker.cjs'), path.join(driver, 'index.js'), fs.constants.COPYFILE_EXCL);
+  if (input.ownLocalPlan) {
+    input.fixtureWorkerSha256 = sha(fs.readFileSync(path.join(driver, 'index.js')));
+    must(JSON.stringify(planClientSources()) === JSON.stringify(input.planClientSources), 'FIXTURE_CLIENT_SOURCE_CHANGED');
+  }
   if (input.candidateAssessment) {
     input.fixtureWorkerSha256 = sha(fs.readFileSync(path.join(driver, 'index.js')));
     input.candidateAssessmentSourceSha256 = provenance.sources['installed-candidate-assessment.cjs'];

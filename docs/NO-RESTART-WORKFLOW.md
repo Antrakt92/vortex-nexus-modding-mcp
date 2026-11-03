@@ -97,7 +97,7 @@ node tools/modding/vortex-agent/session.mjs plan reviewed-plan.json
 The default only validates the plan locally. It makes **zero Vortex calls**.
 This proves the plan's shape, not the current profile, installed mods or files.
 No request ID is generated automatically. Choose stable IDs for this particular
-reviewed plan and retain the file. A request ID must be 8–80 letters, digits,
+reviewed plan and retain the file. A request ID must be 8â€“80 letters, digits,
 underscores or hyphens and must be unique within the plan.
 
 ## Apply the reviewed plan
@@ -114,10 +114,34 @@ the ID is still unused and reads fresh health to compare the game, profile,
 paths and filesystem IDs against the plan. The adapter independently enforces
 installed-mod eligibility, a stopped game and its ordinary context/effect guards.
 
-`set_mods_enabled` and pinned `download_nexus` steps are accepted. Setting `deploy` to `null` skips
+`set_mods_enabled`, pinned `download_nexus` and new own-local Cyberpunk
+`install_local_archive` steps are accepted. Setting `deploy` to `null` skips
 deployment; otherwise exactly one `deploy_mods` call runs after all steps.
-Enabling a mod does not implicitly request deployment. There is no install,
-replacement, generic dispatch, game launch or restart command.
+Enabling a mod does not implicitly request deployment. Replacement, tracked Nexus
+installation, generic dispatch, game launch and restart remain outside this plan.
+
+An own-local install step has this shape:
+
+```json
+{
+  "operation": "install_local_archive",
+  "requestId": "own_build_install_001",
+  "archivePath": "D:/Modding/Nexus/local-state/own-build/OwnBuild.zip",
+  "size": 219,
+  "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
+```
+
+Replace the example size/hash with the reviewed archive values. The same
+[stock installation limits](STOCK-LOCAL-INSTALL.md) apply: a new ordinary own ZIP,
+exact context/size/SHA-256 pins and installation disabled. All install steps must
+precede activation steps. Each installed basename must be unique ignoring case;
+plans containing installs also require case-insensitive request-ID uniqueness.
+The client checks `read_local_install_readiness` before any plan effect.
+Use the expected ZIP basename without `.zip` as the explicit activation mod ID;
+the installer acknowledgement and original durable receipt must confirm that ID
+before the plan can reach activation. Diagnostic observations are separate from
+the receipt authority fields. There is no inferred migration or automatic retry.
 
 Each successful step needs both a matching acknowledgement and a verified
 terminal adapter receipt. The acknowledgement's fields must also match the
@@ -214,12 +238,13 @@ observes a terminal receipt; it does not authorize replay.
 For a newly acquired package, end the acquisition plan with `deploy:null`, hand
 its exact tracked download ID to the separately reviewed native installer, and
 verify installation before preparing the activation plan. Download completion
-is not installation. This queue does not implement install, import, replacement,
-removal or a reference from a download result to a newly installed mod.
+is not installation. Tracked Nexus installation, replacement, removal and a
+reference from a download result to a newly installed mod remain unsupported.
+The own-local ZIP steps above are a separate route for new local builds.
 
 For an already installed update candidate, batch the explicitly reviewed old
 IDs into one disable step and the new IDs into one enable step, then request one
-final deploy. Each flag step accepts 1–100 exact installed IDs. Preserve the
+final deploy. Each flag step accepts 1â€“100 exact installed IDs. Preserve the
 requested ordering where intermediate state matters; the client never merges,
 reorders or rewrites an existing plan or its request IDs automatically.
 In the modeled ten-disable/ten-enable example, two flag batches plus deployment

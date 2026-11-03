@@ -108,7 +108,8 @@ if (input.withExistingMod) {
   assert.deepEqual(project(event('existing-mod-preserved-after-rollback')), baseline);
   assert.equal(baseline.modId, 'native-agent-existing');
   assert.equal(baseline.mod.state, 'installed');
-  assert.ok(Object.values(baseline.profileFlags).every(flags => flags[baseline.modId] !== true));
+  assert.ok(Object.entries(baseline.profileFlags).every(([profile, flags]) =>
+    input.ownLocalPlan && profile === 'native-agent-plan-second' ? flags[baseline.modId] === true : flags[baseline.modId] !== true));
   assert.equal(hash(input.existingMod.archivePath), input.existingMod.archiveSha256);
   assert.equal(fs.statSync(input.existingMod.archivePath).size, input.existingMod.archiveSize);
   assert.equal(hash(baseline.staged.path), input.existingMod.payloadSha256);
@@ -198,6 +199,108 @@ if (input.candidateAssessment) {
   assert.ok(setupIndex > receipt.events.indexOf(event('existing-mod-preserved-after-rollback')));
   assert.equal(receipt.events.slice(setupIndex).some(e => e.phase.startsWith('deploy_mods_')), false);
 }
+if (input.ownLocalPlan) {
+  assert.equal(input.installRoute, 'mcp-local-archive'); assert.equal(input.withExistingMod, true);
+  assert.equal(input.candidateAssessment, false); assert.equal(input.planPackages.length, 2);
+  const preflight = event('own-local-plan-client-preflight'), intent = event('own-local-plan-intent');
+  const completed = event('own-local-plan-completed'), deployed = event('own-local-plan-disk-deployment-proof');
+  const restored = event('own-local-plan-rollback-proof');
+  assert.equal(preflight.nativeEffects, false); assert.equal(preflight.entry, 'session.mjs');
+  assert.deepEqual(preflight.sources, input.planClientSources); assert.deepEqual(intent.sources, input.planClientSources);
+  assert.equal(preflight.fixtureWorkerSha256, input.fixtureWorkerSha256);
+  assert.equal(hash(path.join(root, 'userdata/plugins/native-agent-fixture/index.js')), input.fixtureWorkerSha256);
+  assert.ok(receipt.events.indexOf(preflight) < receipt.events.indexOf(event('existing-mod-baseline-settled')));
+  assert.ok(receipt.events.indexOf(intent) > receipt.events.indexOf(event('existing-mod-preserved-after-rollback')));
+  for (const [relative, pin] of Object.entries(input.planClientSources)) {
+    assert.match(relative, /^[a-zA-Z0-9_.-]+\.(?:mjs|cjs|json)$/);
+    const file = path.join(input.planClientRoot, relative), stat = fs.statSync(file, {bigint: true});
+    assert.equal(hash(file), pin.sha256);
+    assert.equal([stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].join(':'), pin.generation);
+  }
+  assert.equal(completed.result.status, 'completed'); assert.equal(completed.result.planId, intent.planId);
+  assert.deepEqual(event('own-local-plan-result').result, completed.result);
+  assert.equal(completed.result.diskDeploymentVerified, false); assert.equal(completed.result.completed.length, 4);
+  assert.deepEqual(completed.writes.map(item => item.operation), ['install_local_archive', 'install_local_archive', 'set_mods_enabled', 'deploy_mods']);
+  const queue = [...intent.plan.steps, {operation: 'deploy_mods', ...intent.plan.deploy}];
+  assert.deepEqual(completed.writes.map(item => item.requestId), queue.map(item => item.requestId));
+  const journalRoot = path.join(root, 'plan-journals', intent.planId);
+  const journal = JSON.parse(fs.readFileSync(path.join(journalRoot, 'plan.json')));
+  assert.deepEqual(journal.plan, intent.plan); assert.equal(journal.planId, intent.planId);
+  const names = fs.readdirSync(journalRoot).filter(n => n !== 'plan.json').sort();
+  assert.deepEqual(names, Array.from({length: 9}, (_, i) => String(i + 1).padStart(6, '0') + '.json'));
+  const journalEvents = names.map(name => JSON.parse(fs.readFileSync(path.join(journalRoot, name))));
+  assert.deepEqual(journalEvents, completed.events);
+  for (const [index, item] of queue.entries()) {
+    const pending = journalEvents[index * 2], observed = journalEvents[index * 2 + 1];
+    assert.equal(pending.kind, 'intent'); assert.equal(pending.index, index); assert.equal(pending.operation, item.operation);
+    const {operation, ...args} = item;
+    assert.deepEqual(pending.args, {...intent.plan.context, ...args});
+    assert.equal(observed.kind, 'observed'); assert.equal(observed.index, index);
+  }
+  assert.equal(journalEvents[8].kind, 'terminal'); assert.equal(journalEvents[8].status, 'completed');
+  assert.equal(journalEvents[8].code, null);
+  for (const item of [...queue, {operation: 'set_mods_enabled', requestId: input.runId + '_plan_disable'},
+    {operation: 'deploy_mods', requestId: input.runId + '_plan_restore'}]) {
+    const attempt = read('local-state/vortex-agent-build/receipts/' + item.requestId + '.attempt.json');
+    const completion = read('local-state/vortex-agent-build/receipts/' + item.requestId + '.completion.json');
+    assert.equal(receipts.validAttempt(attempt), true); assert.equal(receipts.validCompletion(completion, attempt), true);
+    assert.equal(attempt.operation, item.operation); assert.equal(completion.operationCompleted, true);
+    assert.equal(completion.diskDeploymentVerified, false);
+  }
+  assert.equal(deployed.manifest.files.length, 2); assert.equal(deployed.manifest.deploymentMethod, 'hardlink_activator');
+  assert.equal(restored.manifest.files.length, 0); assert.equal(restored.installedMods, 4); assert.equal(restored.trackedDownloads, 3);
+  assert.equal(restored.sourceGenerationVerified, true); assert.deepEqual(restored.originals, intent.originals);
+  assert.deepEqual(intent.originals.game, rollback.original); assert.deepEqual(intent.originals.staged, rollback.staging);
+  const second = event('own-local-plan-second-profile-baseline');
+  assert.equal(second.activeProfileId, 'native-agent-fixture'); assert.equal(second.loadOrderCompletionObserved, true);
+  assert.equal(second.starts, 2); assert.equal(second.stops, 2);
+  assert.equal(second.profile.id, 'native-agent-plan-second');
+  assert.deepEqual(second.profile.modState, {'native-agent-existing': {enabled: true, enabledTime: 1}});
+  assert.deepEqual(intent.originals.secondProfile, second.profile); assert.deepEqual(restored.originals.secondProfile, second.profile);
+  assert.equal(event('existing-mod-baseline').profileFlags[second.profile.id]['native-agent-existing'], true);
+  assert.deepEqual(second.sourceBlobs, { profiles: '4b4cddc08c29f5fa2d78b0e7f59ebea8dc3380c1',
+    installManager: '6f847f3f878a0f8a8082b827d8b2bc4ebbcbe221', activity: '250cf30f897938ed1705cfec654b3b6b4f79d598',
+    loadOrder: '8f3044cc73c8d97629da3f4f304382eb7fe71149', loadOrderAction: 'b8f88de149399ed01d346ae8e6b4788438078f30' });
+  assert.equal(completed.checkpoints.length, 2);
+  const beforeActivation = event('own-local-plan-before-activation');
+  assert.deepEqual(beforeActivation.disabledModIds, input.planPackages.map(item => item.modId));
+  assert.equal(beforeActivation.allSentinelsPreserved, true); assert.equal(beforeActivation.installedCheckpoints, 2);
+  assert.ok(receipt.events.indexOf(beforeActivation) > receipt.events.indexOf(event('own-local-plan-disabled-install-2')));
+  for (const [index, item] of input.planPackages.entries()) {
+    const disabled = event('own-local-plan-disabled-install-' + (index + 1));
+    const proof = deployed.deployed[index], restoredItem = restored.restoredPackages[index];
+    assert.deepEqual(completed.checkpoints[index], Object.fromEntries(Object.entries(disabled).filter(([key]) => !['at', 'phase'].includes(key))));
+    assert.equal(disabled.modId, item.modId); assert.equal(disabled.enabled, false);
+    assert.ok(disabled.flagProof.entryPresent === false && disabled.flagProof.enabledType === 'undefined' && disabled.flagProof.enabled === null
+      || disabled.flagProof.entryPresent === true && disabled.flagProof.enabledType === 'boolean' && disabled.flagProof.enabled === false);
+    assert.equal(hash(item.archivePath), item.archiveSha256); assert.equal(fs.statSync(item.archivePath).size, item.archiveSize);
+    assert.equal(hash(disabled.imported.path), item.archiveSha256); assert.equal(disabled.imported.size, item.archiveSize);
+    const archive = fs.readFileSync(disabled.imported.path);
+    assert.equal(archive.readUInt32LE(0), 0x04034b50); assert.equal(archive.readUInt16LE(8), 0);
+    const size = archive.readUInt32LE(18), nameSize = archive.readUInt16LE(26), extraSize = archive.readUInt16LE(28);
+    assert.equal(archive.subarray(30, 30 + nameSize).toString(), item.payloadPath);
+    const payload = archive.subarray(30 + nameSize + extraSize, 30 + nameSize + extraSize + size);
+    let crc = 0xffffffff;
+    for (const byte of payload) { crc ^= byte; for (let n = 0; n < 8; n++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0); }
+    assert.equal((crc ^ 0xffffffff) >>> 0, archive.readUInt32LE(14));
+    assert.equal(crypto.createHash('sha256').update(payload).digest('hex'), item.payloadSha256);
+    assert.equal(disabled.installed.sha256, item.payloadSha256); assert.equal(disabled.original.sha256, item.sentinelSha256);
+    assert.deepEqual(disabled.original, intent.packages[index].original);
+    assert.equal(proof.modId, item.modId); assert.equal(proof.game.sha256, item.payloadSha256);
+    assert.equal(proof.game.filesystemId, proof.installed.filesystemId); assert.ok(proof.game.links >= 2);
+    assert.equal(proof.backup.sha256, item.sentinelSha256); assert.equal(proof.backup.filesystemId, disabled.original.filesystemId);
+    const owner = deployed.manifest.files.find(file => file.relPath.replace(/\\/g, '/') === item.payloadPath);
+    assert.equal(owner.source, item.modId);
+    assert.equal(restoredItem.modId, item.modId); assert.equal(restoredItem.enabled, false);
+    assert.deepEqual(restoredItem.original, disabled.original);
+    assert.equal(hash(restoredItem.original.path), item.sentinelSha256); assert.equal(hash(restoredItem.installed.path), item.payloadSha256);
+    const stat = fs.statSync(restoredItem.original.path, {bigint: true});
+    assert.equal(`${stat.dev}:${stat.ino}`, disabled.original.filesystemId);
+    const installedStat = fs.statSync(restoredItem.installed.path, {bigint: true});
+    assert.equal(`${installedStat.dev}:${installedStat.ino}`, disabled.installed.filesystemId);
+    assert.equal(fs.existsSync(restoredItem.original.path + '.vortex_backup'), false);
+  }
+}
 const before = read('ordinary-before.json'), after = read('ordinary-after.json');
 assertOrdinaryModSnapshot(before.mods); assertOrdinaryModSnapshot(after.mods);
 assert.deepEqual(before.health, after.health); assert.deepEqual(before.profiles, after.profiles); assert.deepEqual(before.mods, after.mods);
@@ -206,9 +309,10 @@ assert.equal(ordinaryProcessesPreserved(before.processes, after.processes), true
 const log = fs.readFileSync(path.join(root, 'userdata/vortex.log'), 'utf8');
 assert.match(log, /clean application end/);
 const proof = { passed: true, root, checks: ['native import/install', 'authenticated compiled agent enable/deploy/disable/restore', 'manifest ownership', 'deployed hardlink identity', 'original hash and filesystem identity restored', 'post-shutdown game/staging hashes', 'ZIP size/SHA-256/CRC',
-  completionSuffixes.length === 5 ? 'five durable completions without unresolved marker' : 'four durable completions without unresolved marker',
+  input.ownLocalPlan ? 'eleven durable completions without unresolved marker' : completionSuffixes.length === 5 ? 'five durable completions without unresolved marker' : 'four durable completions without unresolved marker',
   ...(input.withExistingMod ? ['existing mod/flags/staged identity preserved', 'same-archive collision refused before effects'] : []),
   ...(input.installRoute === 'mcp-local-archive' ? ['live bounded install diagnostics and retained sidecar bound to original attempt'] : []),
+  ...(input.ownLocalPlan ? ['actual two-ZIP runPlan with disabled installation checkpoints, strict receipts/journal, one final deployment and independent restoration'] : []),
   ...(input.candidateAssessment ? ['built native candidate assessment: compatible/conflict/choices/ignored/pending-profile, immutable state and no payload authority'] : []),
   'ordinary health/profile/mod inventory/manifest/process preservation', 'clean native shutdown'], nexusReuse: receipt.nexusReuse, at: new Date().toISOString() };
 fs.writeFileSync(path.join(root, 'independent-verification.json'), JSON.stringify(proof, null, 2), { flag: 'wx' });

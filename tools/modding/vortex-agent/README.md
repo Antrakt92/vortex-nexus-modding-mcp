@@ -22,7 +22,7 @@ node tools/modding/vortex-agent/session.mjs plan reviewed-plan.json
 ```
 
 The plan command is offline by default. Add `--apply` only for an authorized,
-reviewed plan. It uses stable request IDs, serial download/enable changes and one optional
+reviewed plan. It uses stable request IDs, serial download/own-ZIP/enable changes and one optional
 final deployment, then checks acknowledgements and exact terminal receipts.
 See [the no-restart workflow](../../../docs/NO-RESTART-WORKFLOW.md).
 
@@ -91,8 +91,10 @@ in existing MCP sessions, but no Vortex restart or extension upgrade. The bridge
 CLI can call it immediately. See [usage](../../../docs/NO-RESTART-WORKFLOW.md).
 
 `run_mod_plan` brings that reviewed workflow to MCP: offline validation by
-default, explicit `apply:true` for pinned Nexus download-only steps, batched
-enable/disable changes and at most one requested final deploy. Initial receipt
+default, explicit `apply:true` for pinned Nexus download-only steps, new own-local
+Cyberpunk ZIP installations, batched enable/disable changes and at most one
+requested final deploy. Installs run disabled before activation steps and use the
+same readiness, collision and archive checks as `install_local_archive`. Initial receipt
 checks overlap at most four at a time; mutations stay serial. Cancellation or
 disconnection stops later steps after an invoked write's receipt is reconciled.
 Apply persists the exact plan and a durable intent before each write; the full
@@ -100,7 +102,7 @@ Apply persists the exact plan and a durable intent before each write; the full
 Existing journals cannot be replayed or resumed. Status reports historical
 receipts, uncertainty and missing local history, without claiming current state
 or deployment proof. All clients must retain the same configured runtime
-workspace. It does not install or replace mods. See the
+workspace. General Nexus installation and replacement remain unsupported. See the
 [plan guide](../../../docs/NO-RESTART-WORKFLOW.md#run-the-reviewed-plan-through-mcp).
 
 For collection preparation, use the bridge-local `find_collection_downloads`
@@ -217,6 +219,7 @@ Local modeled tests:
 ```powershell
 node --test tools/modding/vortex-agent/tests.mjs tools/modding/vortex-agent/review.test.mjs tools/modding/vortex-agent/rereview.test.mjs tools/modding/vortex-agent/audit-fixes.test.mjs tools/modding/vortex-agent/native-conflicts.test.mjs tools/modding/vortex-agent/process-guard.test.mjs tools/modding/vortex-agent/session.test.mjs tools/modding/vortex-agent/stdio.test.mjs tools/modding/vortex-agent/response-cleanup.test.mjs
 node --test tools/modding/vortex-agent/inspection-client.test.mjs
+node --test tools/modding/vortex-agent/own-local-install-plan.test.mjs tools/modding/vortex-agent/plan-journal.test.mjs tools/modding/vortex-agent/plan-status.test.mjs
 node --test tools/modding/vortex-agent/catalog-snapshot.test.mjs tools/modding/vortex-agent/collection-downloads.test.mjs
 python -B tools/modding/vortex-agent/install.test.py
 ```
