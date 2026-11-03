@@ -23,8 +23,10 @@ docs/AGENT-WORKFLOW.md for skill selection, entrypoints and verification boundar
   several owned windows or a missing MCP shutdown endpoint do not rule out the
   reviewed native close route; pin the exact process and verify full exit.
   Resident reads/download-only/enable/deploy do not require a restart. Native
-  installation remains refused by the adapter until a no-replacement contract is
-  proved. Do not add generic dispatch, arbitrary task code or unsafe install APIs.
+  general installation remains refused. New own-local Cyberpunk ZIPs use the
+  reviewed scoped route in docs/STOCK-LOCAL-INSTALL.md; check readiness, retain
+  exact archive/context pins and reconcile uncertain effects before any retry.
+  Do not add generic dispatch, arbitrary task code or unsafe install APIs.
 - Keep credentials local to the operating-system credential store. A restored
   computer must initialize its own local bearer and Nexus authentication.
 - Check dependencies before changes; prefer pinned verified upstream inputs.

@@ -7,6 +7,7 @@ const { spawnSync } = require('node:child_process');
 const { safe } = require('./serialization.cjs');
 const downloads = require('./download-identity.cjs');
 const receipts = require('./receipts.cjs');
+const { installLocalArchive } = require('./local-archive-install.cjs');
 const RECEIPTS = require('./paths.cjs').receipts;
 const PROTOCOL = 'vortex-agent/1';
 const processes = Object.freeze({
@@ -203,7 +204,9 @@ function createOperations(api, actions, selectors, options = {}) {
       await durable(attempt, receipt);
       let effects = false, armed = false;
       const effect = async (fn, eligible = () => {}) => {
-        await durable(path.join(dir, 'unresolved.json'), receipt); armed = true;
+        // One operation can have several native stages (import, then install).
+        // Retain the original interlock across all stages; never overwrite it.
+        if (!armed) { await durable(path.join(dir, 'unresolved.json'), receipt); armed = true; }
         // Synchronous realpath/identity + active context + Windows process checks,
         // immediately followed by invocation: no further awaits before the effect.
         check(args); eligible(); effects = true;
@@ -248,6 +251,8 @@ function createOperations(api, actions, selectors, options = {}) {
       // (including an empty inventory) instead of claiming preflight guarantees.
       insist(false, 'INSTALL_DISABLED_NONREPLACEMENT_NOT_PROVABLE');
     }),
+    install_local_archive: args => mutate('install_local_archive', args, async effect =>
+      installLocalArchive(api, args, { check: () => check(args), effect, admitHost: options.admitLocalInstallHost })),
     set_mods_enabled: args => mutate('set_mods_enabled', args, async effect => {
       const before = flags(args);
       const identities = args.modIds.map(id => modIdentity(api.getState(), args.gameId, id));
@@ -345,12 +350,24 @@ function createOperations(api, actions, selectors, options = {}) {
         diskDeploymentVerified: false,
       } : null;
       let download = [];
+      let localInstall = null;
+      if (attempt?.operation === 'install_local_archive') {
+        const modId = path.basename(attempt.parameters.archivePath, '.zip');
+        const mod = state.persistent?.mods?.[attempt.gameId]?.[modId];
+        localInstall = { modId, installed: mod?.state === 'installed',
+          enabled: effectiveEnabled(state, attempt.profileId, modId),
+          downloadId: typeof mod?.archiveId === 'string' ? mod.archiveId : null, replayAllowed: false };
+        download = Object.entries(state.persistent?.downloads?.files || {})
+          .filter(([, d]) => d.localPath === path.basename(attempt.parameters.archivePath))
+          .map(([id, d]) => ({ id, state: d.state, terminalObserved: downloads.TERMINAL.has(d.state) }));
+      }
       if (attempt?.operation === 'download_nexus') {
         try { download = downloads.matchingDownloads(state.persistent?.downloads?.files || {}, attempt.parameters, state, selectors, catalog)
           .map(([id, d]) => ({ id, state: d.state, terminalObserved: downloads.TERMINAL.has(d.state) })); }
         catch { issues.push('DOWNLOAD_IDENTITY_UNVERIFIABLE'); }
       }
       return { protocol: PROTOCOL, attempt, completion, failure, interlock, download, enabledFlags, deployment,
+        ...(localInstall ? {localInstall} : {}),
         receiptIssues: [...new Set(issues)], incompleteCompletionObserved: incomplete,
         adapterTerminalReceiptObserved: c.observed || f.observed,
         terminalOperationVerified: !!completion && issues.length === 0 && !f.observed, interlockCleared: false,

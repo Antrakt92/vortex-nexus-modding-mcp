@@ -118,6 +118,7 @@ Supported writes are deliberately separate:
 | `set_mods_enabled` | Installed records, exact IDs and effective flags; auto-deploy disabled |
 | `deploy_mods` | Native `awaitModsDeployment(profileId)`; no manual bypass |
 | `download_nexus` | Exact Nexus IDs, archive size/hash and context pins; download-only, with verified existing-download reuse |
+| `install_local_archive` | New own-local Cyberpunk ZIP; reviewed host/extensions, exact pins, metadata/collision refusal, disabled installation and verified staged payload |
 | `install_download` | Refused before installation; not advertised by the bridge |
 
 Writes require an explicit request ID, active game/profile, canonical
@@ -126,6 +127,9 @@ that the game/tools are stopped, persists attempt/interlock evidence and
 rechecks eligibility immediately before effects. No cached absence of a game
 process authorizes a later write.
 
+Use [the stock local-install guide](../../../docs/STOCK-LOCAL-INSTALL.md) for
+`read_local_install_readiness`, supported archive roots and recovery. It uses
+official Vortex 2.9.1 without Core patches or per-task temporary extensions.
 The [native-install design](LOCAL-PACKAGE-INSTALL-DESIGN.md) explains why a fresh
 archive name and `allowAutoEnable:false` do not prove non-replacement. A queue
 around the same native install event would not repair that boundary.

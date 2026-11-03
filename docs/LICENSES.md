@@ -1,5 +1,11 @@
 # Licenses and source provenance
 
+The stock local-ZIP event/callback approach was investigated from
+[Doodlebot](https://github.com/doodlum/vortex-doodlebot/tree/3b78fdfba1d1d07858908fffea53b32d46033df1),
+by doodlum, based on Alan Tse's vortex-mcp, under GPL-3.0-only. Our scoped
+installer does not include its generic dispatcher or automatic UI responders.
+See [the local-install guide](STOCK-LOCAL-INSTALL.md).
+
 The combined project and adapted Vortex component are distributed under
 **GPL-3.0-only**, with the full license in [LICENSE](../LICENSE). They are not an
 MIT-licensed replacement for the upstream Vortex MCP project.

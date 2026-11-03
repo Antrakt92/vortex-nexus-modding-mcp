@@ -9,7 +9,7 @@ const CACHE = paths.cache;
 const BUILD = paths.build;
 const source = path.dirname(fileURLToPath(import.meta.url));
 const vendor = path.join(source, '../../../dependencies/vortex-mcp');
-const modules = ['paths.cjs', 'paths-core.cjs', 'guard.cjs', 'extension.cjs', 'credential.cjs', 'inspection.cjs', 'lifecycle-inspection.cjs', 'native-preflight.cjs', 'serialization.cjs', 'download-identity.cjs', 'receipts.cjs', 'http-ingress.cjs'];
+const modules = ['paths.cjs', 'paths-core.cjs', 'guard.cjs', 'extension.cjs', 'credential.cjs', 'inspection.cjs', 'lifecycle-inspection.cjs', 'native-preflight.cjs', 'serialization.cjs', 'download-identity.cjs', 'receipts.cjs', 'http-ingress.cjs', 'own-zip.cjs', 'local-archive-policy.cjs', 'local-archive-install.cjs', 'local-install-host.cjs', 'local-install-binding.cjs', 'stock-vortex-2.9.1-admission.json'];
 const sha = async file => crypto.createHash('sha256').update(await fs.readFile(file)).digest('hex');
 
 async function noReparsePaths(...files) {
@@ -91,6 +91,7 @@ export function adaptedConfig(config, workspace = runtimeWorkspace()) {
     throw Error('Unexpected upstream build config');
   const root = paths.absolute(workspace, 'NEXUS_WORKSPACE');
   return config.replace('src/index.ts', 'src/adapted.cjs').replace('outDir: "dist"', 'outDir: "adapted-dist"')
+    .replace('external: ["electron", "@nexusmods/vortex-api"]', 'external: ["electron", "original-fs", "@nexusmods/vortex-api"]')
     .replace('export default defineConfig({', 'export default defineConfig({\n  define: { __NEXUS_WORKSPACE__: '
       + JSON.stringify(JSON.stringify(root)) + ' },');
 }
@@ -196,7 +197,7 @@ if (argv.includes('--prepare')) {
   await fs.copyFile(path.join(BUILD, 'upstream', 'adapted-dist', 'index.js'), path.join(plugin, 'index.js'));
   await fs.copyFile(path.join(BUILD, 'upstream', 'LICENSE.md'), path.join(plugin, 'LICENSE.md'));
   await fs.copyFile(path.join(tree, 'THIRD-PARTY-NOTICES.md'), path.join(plugin, 'THIRD-PARTY-NOTICES.md'));
-  await fs.writeFile(path.join(plugin, 'info.json'), JSON.stringify({ id: 'vortex-agent', name: 'Vortex Agent (guarded MCP)', author: 'Alan Tse; local adapted fork', version: '1.1.0', description: 'DPAPI-authenticated curated MCP adapter; native install refused; external disk verification required', type: 'extension' }, null, 2));
+  await fs.writeFile(path.join(plugin, 'info.json'), JSON.stringify({ id: 'vortex-agent', name: 'Vortex Agent (guarded MCP)', author: 'Alan Tse; local adapted fork', version: '1.1.0', description: 'DPAPI-authenticated curated MCP adapter; reviewed own-local ZIP installation; external deployment verification required', type: 'extension' }, null, 2));
   const sources = {};
   for (const name of [...modules, 'build.mjs', 'bridge.mjs', 'manage-install.py']) sources[name] = await sha(path.join(source, name));
   for (const name of modules) if (await sha(path.join(BUILD, 'upstream/src', name)) !== sources[name]) throw Error('Build copy differs: ' + name);

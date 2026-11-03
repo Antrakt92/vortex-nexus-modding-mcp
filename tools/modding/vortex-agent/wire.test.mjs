@@ -68,9 +68,16 @@ test('built extension wire: allowlist, SDK2 HTTP, legacy bridge, schemas and bro
       'health', 'read_native_preflight', 'reconcile_operation', 'list_profiles', 'list_mods', 'list_downloads',
       'list_mod_rules', 'find_mod_dependents', 'read_mod_lifecycle', 'list_file_conflicts', 'list_known_mod_conflicts',
       'list_unsolved_conflicts', 'read_collection_health', 'list_dialogs', 'list_external_changes',
-      'set_mods_enabled', 'deploy_mods', 'download_nexus',
+      'set_mods_enabled', 'deploy_mods', 'download_nexus', 'install_local_archive', 'read_local_install_readiness',
     ].sort());
     assert.equal(list.tools.some(tool => tool.name === 'install_download'), false);
+    const localInstallTool = list.tools.find(tool => tool.name === 'install_local_archive');
+    assert.equal(localInstallTool.inputSchema.additionalProperties, false);
+    assert.equal(localInstallTool.annotations.readOnlyHint, false);
+    assert.equal(localInstallTool.annotations.destructiveHint, true);
+    assert.equal(list.tools.find(tool => tool.name === 'read_local_install_readiness').annotations.readOnlyHint, true);
+    const missingPins = await call('tools/call', {name: 'install_local_archive', arguments: {archivePath: 'own.zip'}});
+    assert.equal(missingPins.isError, true, 'Installation cannot omit context and package pins');
     const nativeTool = list.tools.find(tool => tool.name === 'read_native_preflight');
     assert.equal(nativeTool.inputSchema.additionalProperties, false);
     assert.equal(nativeTool.annotations.readOnlyHint, true);

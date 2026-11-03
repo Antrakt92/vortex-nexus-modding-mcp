@@ -4,10 +4,11 @@ Source-release history for [Vortex Nexus Modding MCP](https://github.com/Antrakt
 Dates are the original GitHub publication dates, in UTC. Each section describes
 the code and verification available at that version; historical limitations are
 not a statement about the latest release. The suite version is separate from the
-embedded Vortex adapter's 1.0.4 label.
+embedded Vortex adapter's compatibility label.
 
 | Version | Published | Main changes |
 | --- | --- | --- |
+| [0.6.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.6.0) | 2026-11-03 | New own-local ZIP installation through official Vortex, source readiness and recovery checks |
 | [0.5.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.5.0) | 2026-10-31 | Process-check benchmarks, experimental Rust CLI and native install contracts |
 | [0.4.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.4.0) | 2026-10-30 | Interrupted-plan status, local helper binding, file proofs and API-cache checks |
 | [0.3.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.3.0) | 2026-10-29 | Tracked Nexus batch helpers, inventory repair, payload checks and setup guides |
@@ -15,7 +16,58 @@ embedded Vortex adapter's 1.0.4 label.
 | [0.1.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.1.0) | 2026-10-29 | Combined inspection, collection download reuse and coordinated plans |
 | [Recovery sources](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/recovery-sources-20261025) | 2026-10-25 | Pinned upstream Git bundles for source recovery |
 
-## Unreleased
+## 0.6.0 — 2026-11-03
+
+Install new own-local Cyberpunk ZIPs through the running official Vortex 2.9.1
+without generating a temporary extension for each mod. Installation leaves the
+mod disabled; enablement and deployment remain separate reviewed operations.
+Changes since [0.5.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/compare/v0.5.0...v0.6.0).
+
+### Local installation
+
+- Add `read_local_install_readiness` to check the actual official application
+  package and loaded extensions against reviewed source pins before installation.
+- Add `install_local_archive` for new own-local, noninteractive Cyberpunk ZIPs.
+  Check ZIP CRCs, bounded paths/sizes and exact archive hashes; import once,
+  install disabled, verify staged payload hashes and preserve existing mods
+  and profile flags. Refuse existing owners/downloads, metadata matches and
+  native replacement attempts. See [scope and usage](docs/STOCK-LOCAL-INSTALL.md).
+- Retain one durable operation intent across import and installation. A timeout
+  or uncertain result blocks further writes and cannot be retried automatically.
+  Reconciliation reports matching downloads and the expected installed record.
+- Cache source hashes only while physical file generations remain unchanged.
+  Host or extension changes require renewed source review.
+- Share the existing ZIP validator between resident installation and offline
+  helper preparation instead of maintaining a second parser.
+
+### Verification and limits
+
+- The bundled MCP tool passed an isolated official-Vortex install, enable,
+  deploy, disable and restore cycle with byte, owner and hardlink checks.
+  A nonempty fixture preserved its existing mod and profile flags; a duplicate
+  archive was refused before effects. The ordinary Vortex session stayed unchanged.
+- Regression tests cover source/input drift, metadata arriving after admission,
+  context changes, collision aliases, native failures and lost callbacks.
+- This is not a general Nexus/update/FOMOD installer. The legacy
+  `install_download` remains disabled. No Vortex application patch or custom
+  Vortex build is installed by this feature.
+- Direct runtime/build dependencies are unchanged from 0.5.0. The resident
+  adapter keeps its 1.1.0 compatibility label; bundle hashes identify its code.
+
+### Other changes since 0.5.0
+
+- Add resident native version, updater, deployment-target and staging-tag
+  observations; report missing staging initialization explicitly.
+- Detect missing native helper inputs before preparation and preserve exact
+  request IDs and journal identities across retries/readback.
+- Retain the internal extraction, persistence and application-source experiments
+  below as development sources. They are not required by the stock installer,
+  are not an installed Vortex update, and are not its public installation API.
+
+### Inactive application-source development
+
+The following entries describe the separate experimental path. References here
+to unavailable installation apply to that path, not `install_local_archive`.
 
 - Keep failed startup cleanup from discarding an incomplete mod record. The
   prepared Vortex patch preserves synchronous startup ordering, stops later

@@ -14,10 +14,13 @@ const ingress = require('./http-ingress.cjs');
 const { VERIFICATION } = require('./receipts.cjs');
 const credential = require('./credential.cjs');
 const { publicErrorCode } = require('./serialization.cjs');
+const { localInstallAdmission } = require('./local-install-binding.cjs');
 function register(server, api, options = {}) {
   const credentials = options.credentials || [];
   const catalog = catalogFromDisk(util);
-  const operations = createOperations(api, actions, selectors, { credentials, catalog });
+  const admitLocalInstallHost = localInstallAdmission(api, util, options.localInstallHostBinding);
+  const operations = createOperations(api, actions, selectors, { credentials, catalog,
+    admitLocalInstallHost: admitLocalInstallHost });
   const id = z.string().min(1).max(200);
   const read = { gameId: id.optional(), limit: z.number().int().min(1).max(500).default(100) };
   const write = { gameId: id, profileId: id, requestId: z.string().regex(/^[a-zA-Z0-9_-]{8,80}$/),
@@ -25,12 +28,13 @@ function register(server, api, options = {}) {
     filesystemIds: z.strictObject({ gamePath: id, stagingPath: id, downloadPath: id }) };
   const pins = { size: z.number().int().positive(), sha256: z.string().regex(/^[a-f0-9]{64}$/) };
   const status = z.strictObject({ protocol: z.literal('vortex-agent/1'), requestId: id,
-    operation: z.enum(['install_download', 'set_mods_enabled', 'deploy_mods', 'download_nexus']),
+    operation: z.enum(['install_download', 'install_local_archive', 'set_mods_enabled', 'deploy_mods', 'download_nexus']),
     operationCompleted: z.literal(true), diskDeploymentVerified: z.literal(false), verificationRequired: z.literal(VERIFICATION),
     modId: id.optional(), installedRecordVerified: z.boolean().optional(), enabled: z.boolean().optional(),
     modIds: z.array(id).optional(), enabledFlagsVerified: z.boolean().optional(), deploymentPromiseResolved: z.boolean().optional(),
     downloadId: id.optional(), reused: z.boolean().optional(), archiveSha256Verified: z.boolean().optional(),
     size: z.number().int().positive().optional(), autoInstall: z.literal(false).optional(), archiveCRCVerified: z.literal(false).optional(),
+    payloadFilesVerified: z.number().int().positive().optional(),
   });
   const add = (name, fields, fn, writes = false, description) => server.registerTool(name, {
     description: description ?? (writes ? 'Guarded active-context mutation; unique requestId and live path pins required. Result is NOT disk deployment proof.' : 'Curated read-only Vortex inspection.'),
@@ -49,6 +53,12 @@ function register(server, api, options = {}) {
     finally { release(); }
   });
   add('health', {}, operations.health);
+  add('read_local_install_readiness', {}, async () => {
+    const proof = await admitLocalInstallHost();
+    return { localArchiveInstallSupported: true, sourceAdmissionVerified: true, hostVersion: '2.9.1',
+      reviewedDynamicExtensions: proof.dynamicExtensions, nativeEffects: false,
+      scope: 'New own-local noninteractive Cyberpunk ZIP only; no replacement, Nexus updates or automatic deploy.' };
+  }, false, 'Check the actual official Vortex package and loaded extension source pins for install_local_archive, without installation or account changes. Unknown source/version refuses. This does not validate a package or authorize a write.');
   add('read_native_preflight', {}, () => readNativePreflight(api, selectors, util,
     options.nativePreflightWindow === undefined ? {} : {getWindow: options.nativePreflightWindow}), false,
     'Read native deployment targets, app version, updater status and fixed staging-tag metadata. A missing tag requires native initialization; a present tag does not prove readiness. No installation, source admission, shutdown permission or native effects.');
@@ -72,6 +82,8 @@ function register(server, api, options = {}) {
   add('list_dialogs', {}, () => dialogs(api));
   add('list_external_changes', {}, () => externalChanges(api));
   add('install_download', { ...write, ...pins, downloadId: id }, operations.install_download, true);
+  add('install_local_archive', { ...write, ...pins, archivePath: z.string().min(1).max(4096) }, operations.install_local_archive, true,
+    'Install one NEW own-local noninteractive Cyberpunk ZIP, disabled and without deploy. Requires reviewed official-host/loaded-extension source admission, exact archive size/SHA256 and active context pins. Refuses metadata matches, existing names/downloads and replacements. Supports ordinary files under archive/pc/mod, r6/scripts, r6/tweaks, red4ext/plugins and CET mods. Unknown outcome blocks later writes; reconcile original request, never retry with a new ID. Not a Nexus update or FOMOD installer.');
   add('set_mods_enabled', { ...write, modIds: z.array(id).min(1).max(100), enabled: z.boolean() }, operations.set_mods_enabled, true);
   add('deploy_mods', write, operations.deploy_mods, true);
   add('download_nexus', { ...write, ...pins, nexusModId: z.number().int().positive(), nexusFileId: z.number().int().positive(), reuseOnly: z.boolean().default(false) }, operations.download_nexus, true);
@@ -102,7 +114,8 @@ function start(api, port = 3701, options = {}) {
       clearTimeout(timer); // This bounds ingress, not the lifetime of Vortex work.
       if (abort.signal.aborted) return;
       server = new McpServer({ name: 'vortex-agent', version: '1.1.0' });
-      register(server, api, { credentials: [token], nativePreflightWindow: options.nativePreflightWindow });
+      register(server, api, { credentials: [token], nativePreflightWindow: options.nativePreflightWindow,
+        localInstallHostBinding: options.localInstallHostBinding });
       const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       res.once('close', () => { void server.close().catch(() => {}); });
       await server.connect(transport); await transport.handleRequest(req, res, parsed);

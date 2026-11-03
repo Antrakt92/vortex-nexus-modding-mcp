@@ -1,0 +1,1312 @@
+{
+  "schema": "stock-vortex-source-admission/1",
+  "vortexVersion": "2.9.1",
+  "appAsarSha256": "ec3a29d58ea65a1ca84e456742c894a19efe96920a6710063d221d451a26d59a",
+  "provenance": {
+    "sourceArtifact": "STATIC-ADMISSION.json",
+    "historicalAdmissionSha256": "36dcedea0a3fb53f0e0d0562262a2a8e3cd08ebe62dbebd70485ae210aba3b77",
+    "reviewObservedAtUTC": "2026-10-29T16:20:35.213072+00:00",
+    "rendererMapSha256": "cd12995176a15b988716689fb595ff54106e716a849c789b94888713f73a6356",
+    "scope": "Reuses the previously reviewed source ledger for the official host and known extension sources; current hashes must still match before installation.",
+    "limitations": "Executable source inventory excludes node_modules and .git. Admission requires the reviewed source closure and actual loaded identities; hashes alone do not approve unknown code.",
+    "excludedOwnAdapter": "vortex-agent is admitted separately using verified installation provenance.",
+    "externalExtractorReview": [
+      {
+        "folder": "game-pillarsofeternity2",
+        "entrypoint": "index.cjs",
+        "registration": "priority 100, factory U(api)",
+        "quickCyberpunkBehavior": "Returns an empty object when modPath is undefined or active game is not pillarsofeternity2; no fileId output."
+      },
+      {
+        "folder": "game-stardewvalley",
+        "entrypoint": "index.cjs",
+        "registration": "priority 25, factory We(context)",
+        "quickCyberpunkBehavior": "Returns an empty object when active game is not stardewvalley or modPath is undefined; no fileId output."
+      }
+    ]
+  },
+  "extensions": [
+    {
+      "kind": "bundled",
+      "folder": "changelog-dashlet",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "131d1b14a570a6fc7c1cb61345266fe254e799145c934257606e7677b8a8b679"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "common-interpreters",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "c3964cc0f3602799e44bdc96b4ad6cb71024b167a8b70ba88e165a852fb516aa"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "documentation",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "0f8134730d1ec24137837bade6b39ad4f63092bac765210a64cc0124052d6e86"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "extension-dashlet",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "c19627d9db105a3988565a32e1767ce5b22b3d192a720cb1f8e917a13f7469b6"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "feedback",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "c062c723f3ed7861e26aa79596cd3c6a0e1c389d8d645fa31630c28833af11e0"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "fnis-integration",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "ed511b5bc980b676d1b3fb939c84e046c062073bada2bb9227821c59051eb1a5"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-7daystodie",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "0c2b6aa2ad8d0c27f3b34556ca98fcc90db56028247b8f7d73a2960ca67962aa"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-ahatintime",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "850ecde398e1fd1bac92bcfcf63c052f2d64d55d426e9a66a96d41469564873d"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-baldursgate3",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "b7cb91a08ca8848351141fed3291b2018a5faacae856052fd0842e2a17505fdc"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-battletech",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "45a25fe49eb6699e1811d6df47e8ad1b8d6e065f535a2772986ae45f58f078a7"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-bladeandsorcery",
+      "files": [
+        {
+          "path": "common.js",
+          "sha256": "643fafcbf49fe2ece8160ab250043cc20582131745400ec745f20ef1c375270c"
+        },
+        {
+          "path": "index.js",
+          "sha256": "2a504eda0e82ddf38ac1a8e713368bfbe380249dc4e7c30a1604d956f20921c4"
+        },
+        {
+          "path": "installers.js",
+          "sha256": "18ad06ef1741b6ce94c946b805b5896c33395c2a12b98bfe337fa4e336631ded"
+        },
+        {
+          "path": "migrations.js",
+          "sha256": "d078462b43bec15dbba27cc932380a8d93879a71ef8c645dbe5781d214260bf6"
+        },
+        {
+          "path": "util.js",
+          "sha256": "ea38a3665d998e317051545084a247772008fd030ebde32a04e70c9b52264292"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-bloodstainedritualofthenight",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "c53c4ea522eb1fefd25a4572dd45a3d1d78d22f6708e8e8ac0b7440a0881f370"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-breakingwheel",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "c9c91ca5f66a4a592769bd7c41f0c2ae05412fb9de2e45df71953b011c17e360"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-codevein",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "5801b30c0a3f11e65c4490a8c29e654d4a9ef50a890f0cbeab1b8b3b7e63ab66"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-conanexiles",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "2264a277f195986811c9d23ddbb9e860d8443232a092c54cf0992d1ac6dc6fd1"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-cyberpunk2077",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "4fce2e32dd7f1d502793a56e4f82edca9b9743fc58f52df252b42e62d897d4f1"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-daggerfallunity",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "ff46c886b78ef202bbb467dc68104f931120dd6fef2ef4deaf063e7abc9e07bb"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-darkestdungeon",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "ab2514d6bc3a55583ee5a22ac20a2ecf4b8d087b05d5f5b4ec1d5735ea80d6ab"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-darksouls",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "9cefef672241cc8fcd47a73163c88a765109e9b9b5562ea6f415a5974158679d"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-darksouls2",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "576d83882400eb30461c0f07fba60b5f3246e8796ed6fcca49dd490b1ecedddb"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-dawnofman",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "b2688659df95f73923c17885394a037d6d848d137363828e912f3d96e4ac3dc0"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-divinityoriginalsin2",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "a1bf2a141a8d99b30f1bb25a52739972d77eff6d434ad0dda35afd7ff7f8bea5"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-dmc5",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "8be63988133eea66060f6c11f0bec0467c30cc6b4f83edf6048270c608037604"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-dragonage",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "f275f19f2482c22ae1a3ad5731140b08493d04bb12b1adb495b22c84ae7b1b63"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-dragonage2",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "8dcb72a6295ef8f74d87320ce6e08048ddf44c41255dfcf738d007691d442fe1"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-dragons-dogma",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "255bb336f21f00db899d8ac0c5a4e5cf3d6e47fc0ce6bd0b257f00002f5c8938"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-elex",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "94c7ef6a61c488361c79fc3e62d0bcdafa5a04c246f460a945ddcb921d626a29"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-enderal",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "9ce148d2da10b8b527be3292fe80f2508b327fa47bf6269fec9188f78fdb4522"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-factorio",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "db972d9e65431a4530c8b813665114c26eda63aea1a91bc6bf3061e369faaa73"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-fallout3",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "f8526f804fe6dc79cf0a613ff9f08822304b25cd197af3f1a07c97953b752a7e"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-fallout4",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "af1cc521c131bc65f990f339fd8c4b4585a828dfbecb8193fa1f8718b1050a34"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-fallout4vr",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "9ecd962921da782d46fe23b0b1335d580837ae23ebc487c900051607c69074d0"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-falloutnv",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "b318292632eb52c5746d941f967da5396f12652511f092fe7e2bc772ebec80e8"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-galciv3",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "4b802d366900636cdea43f29655ec7249c4526c4b5df65696cd3776642bf7fb1"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-gardenpaws",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "b22e011269b2a8ac29f30952d17d2618e82b968fe3ca8d9689f7cf66554ba5a1"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-greedfall",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "da7ffe8ea686d7924a1473b0bde80df7f33a94072255df32d9414b679e21e1fd"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-grimdawn",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "f2f2f955e064b5f40fbad187955dcb3ff68da67256879faa5d7c6dc5c820aeed"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-grimrock",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "1ad32e2784a2b038fec581673517fa00dd8993b09e227c75ceeae407acb8683f"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-kenshi",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "88917afd932b37c3d4ee1d91cf11cf124a3ee65e044672bb894607f28a52562f"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-kerbalspaceprogram",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "719b68ef8d1a019555033e46dbc922265bf10de27a5b5f68004b10a8be28b1dd"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-kingdomcome-deliverance",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "184e8d2fb0d8064ab03486ae68ae69fa3d183f60285d7a6ccc92ddb8b613d969"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-masterchiefcollection",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "af4915c30faf9e35c42ed24993d0e5b710a9dbcd0c6ab8d34a120068e69814e7"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-microsoftflightsimulator",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "2b33538886262ce4b866929f9e2708cdcdda129a5b3da71cfed13450e34c2e66"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-monster-hunter-world",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "664daad50423f68edeb920d766d1eae03c76899eefca5d6ab7cdb01e83e4d448"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-morrowind",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "354777a70a6267ec40509b249b971428cbf8fad1fa69980ec5813a6afd989d14"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-mount-and-blade",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "542927ad87d7b84207c31f0cb698d8d6747bc8b4796c0e7b6c7b39c5f5bb7f38"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-mount-and-blade2",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "361ccd5fd8f6f684c1400c5816f4efb5a31c5b6b86483e71bbf1d23c21fe2979"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-nehrim",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "1e6bb81104a944200a51448460462e78633c267edab8c69a3a92f701290e3148"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-neverwinter-nights",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "2764de7655dd68637ddd30f63c8b79a5df37596c1d6b2d88dbc1008580f933c7"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-neverwinter-nights2",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "b9d95d20bf8fa62a633b6a3b9749277b34727f056442d8a55c76d605d1f8413f"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-nomanssky",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "683c256437fcc4ef4130e9d7d9c527c3cd66f64b8c06dcf8282d22c3f4c9244f"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-oblivion",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "8ae97c2e9d8cab943b4fead52a451a0f6b90cca0d176ee1ac4b3c8556a1b93dd"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-oni",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "af055b621e178915f3bb2b85a587e6106c29987068dee1f560b613092ac19f69"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-palworld",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "aa7e2bf7621a25d05e598ec6f59a54a6a595a4be32927b50623f6a91b2af8082"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-pathfinderkingmaker",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "30f13daeb448f73d373a9786dc285cd13fa975ab3013cd20334861cf2bfc1bbb"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-pathfinderwrathoftherighteous",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "e71687a37ac284d484f9f920399c9530a262c5f5f13a6340a472f98d82e8382d"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-pillarsofeternity2",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "31f1dc3543946e44b19f90189f0fdbab38803647ec43cafb5e45099a7cdce232"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-prisonarchitect",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "48741b9ca8689b66ff7fc354a8baf133a56cacf42e1ecfce400205b1975a7243"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-re2remake",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "6ce1fb280adf02c59b4e4086c7622d3542c7a97e48e118ab42817991f1f80d02"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-re3remake",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "b363490175fe1ed2cb804338e38c69aff1f521b45fc71480af26fd311aae6636"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-rimworld",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "7877ce7ae2322c16b1f4d3962d57134768d68c8a0368d1cdabc72b0ef901cdaa"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-sekiro",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "86bfd2c2243a6398ff15e9cd2f03e81bfe5bcf26ffab8e6d292da2c47abb2321"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-shadowrunreturns",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "4112465513a76585198703a6276f79586632552b0c2be4320d17f63c3df73d63"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-sims3",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "25857c54ea77b64f652db422e3876f392b43ced969ed9f35e23370bf837a0e3e"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-sims4",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "759f9d8245dd4afc628d73afda73b1aeff7636416072c5c888d208540d884b2c"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-skyrim",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "4ee49f354bab7dd40207b575276fe38461a8aaba44c19dd072ba8aa457e22426"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-skyrimse",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "f9ba2e7d15e16d8562b1716dc13a119ebbcf45927498cb6635b038e1a302069d"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-skyrimvr",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "d4fb2a9025039ccb823c7aed51e9e09a8aecb6c3a70866e3d8f2b0d6cd96a173"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-spyroreignitedtrilogy",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "4c5b240fce78d91c3b30186403627e6eb248794eff1da824365ad65cb9c307e2"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-starbound",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "77df91e7297616b24ba37dc04e149103c830977d363f8157da6ef43685f495ba"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-stardewvalley",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "b268cabe940b28b4229d5792ab35d116bd734ac110faa512ff63605cfb67e793"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-starfield",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "f9c9a760b212ae9f5f8f9aacff23aae7845248ec5c83b40256abe12cbf6ff669"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-stateofdecay",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "168fac23da39cf67508c2fcae389f6bfcd4bfc5376ca3fb204d483110ba4720f"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-subnautica",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "168f3c65ad4673aa490660041b45a74a3091518726acae5a7385bdeeb776a0c9"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-subnauticabelowzero",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "e3654cfb6134665a2724f7ad439d1761e412aacc30791a370290bda8d1a0dcea"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-survivingmars",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "8fd1a2208b788eec54b1b57f4dd9dcf7c2182d2e4144a6a24571419ddc803320"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-sw-kotor",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "c385030c2064e98b476b29cfe42ebfa023b6b59d67079c8312ae201ff62636dc"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-teamfortress2",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "805e83ff5e497623a9698210a36daf4be2755a55c56b032087af38af1d13a6e1"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-teso",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "2f006bdcb76b00e95d98a51a07efd00ffffbf741b1582949af8b84ea36ce2174"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-torchlight2",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "56692785b400dd9277483cbe31c3bfba261eadfaa938cf75931b578abbb9585a"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-totalwarthreekingdoms",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "85eadf746f7e051820147cfd9cbff3d88182e636e9d0f8aee9011b1b4c311357"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-untitledgoose",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "06f36a9478be856e177034751579653d7dc125723d98a203ed16e9c6e0c1a487"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-vtmbloodlines",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "64b1b413d26cac94daaa6ddec4468fc2d624ee97438c0dd396df328b79e9b64a"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-warthunder",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "06c91dda6bfbf89b75aae7138cea2ee8a6c9efa623dd67dd612256400c334a1f"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-witcher",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "e9f644bffc9acc9d60070414a4245ec1c801fc31df5e8fa60cc721be393b0707"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-witcher2",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "d6fbdaa90fc8002f2a8343acfef3a16b06f6327522a2afe54ff0a570fe23281d"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-witcher3",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "60beb9b9f0387fa7a8936baa47fd6f47f38c8a9d5937b810a38c6e3f8939842b"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-wolcen",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "1b96fa1397a1550e1fa1f04a52e3b93c126f17cd46f60471d5d64fdbb10349b0"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-worldoftanks",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "4059fd2256263a847cefebf4b644529027a32e15a86b2ed1ffdd68d815019043"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-x4foundations",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "a32c6a4820aea493281390bd59b3db7ac87a97f66946dced24dbe6ddd4014013"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-xcom2",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "680792f6fd115d2ff284ff2237f250633c5be35c99ca314c62df5f492beeb169"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "game-xrebirth",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "ab8f34027e25c53eb657901f46f47c3be5bef499d23fda7ec3a00c4d572464b6"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "gamebryo-archive-invalidation",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "44b00d29f6ab254b3bf1b71b51e3bab69595201834c38975bbdbb2de666285b0"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "gamebryo-archive-support",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "67c8d46dad2b0bf74c0361a8fbe069edbb092aafb7ba1e60793da4399a3530ff"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "gamebryo-savegame-management",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "4bf7999635e9b878eabfd596dade8aaf3ec01db05a1761bd2b7390201faf1bb1"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "gamebryo-test-settings",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "7d50ec5183176f1ba088bfc9a331f6d0b95b3f38f17559682a61b069e156e8a6"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "issue-tracker",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "da7ae6530d4f30a868c1758be682e3e6006fc7de3e8c456e6288b5fe99b760a7"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "local-gamesettings",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "61a83de49826c82fbf1c16b0673719f92ba56570610b4b0abc2174fb75efe66b"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "meta-editor",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "f8f931467a2724720bfef86e46924b3d1ab53a7398d059eaf776d75e21e23e6e"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "mo-import",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "8c253673bb4f66caacdc72c6bf14aafaa1b0a5f974adcce42a603865b7f9841f"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "mod-content",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "7841da399878d9e2751af971b2c15d06be5d0669fb1e62d83bf81eaa24c6d0a8"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "mod-dependency-manager",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "fa71fea5f2655e8fde2da19b64f958dcf0fe4e2e3193ba7fe3b68b253ef63da4"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "mod-highlight",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "a513267e1278fba6e834660b09b67b80884167da9fa21fe3e32d9b2c88fb1edd"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "mod-report",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "5a9cf65b21d3c4c2df12f8f48e7edbabeaf17152e932ec3274310b0537dfabc9"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "modtype-bepinex",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "70c785fb89020ed031a000451a884658573ef276788929ad580e87ee808ed4a7"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "modtype-dazip",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "141575367607bc432d96cd105665103f65f5f34f3241f1405f6f8c9a8de4e21f"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "modtype-dinput",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "1ba73ff6390993bfd71946dbc723cb59b7594db898278df0e43659466938ab97"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "modtype-enb",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "9edba459428525103e94d448abd43b7ea434884984e923af8ad3a294432fa8b5"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "modtype-gedosato",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "572d6be60936444cfd6b68ce73e71a0ac99eb89dfd12a9d86c7558d30a46d1ea"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "modtype-umm",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "d0278fcd3c8cc652a0be232613616dd068758a2b515feff8cb8d283400d9d5db"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "morrowind-plugin-management",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "4bcec102c75abb94c0d50312e17052d0bba34e93f09ddc83e6eafede4c71d32b"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "mtframework-arc-support",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "5490fa8297fa08f2ade455e695cd0c93cc43e19acb299f712f0299276d017cc9"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "new-file-monitor",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "24bbcc7d821b5a6cc1ace13dbeefad8336e07b4e6c9ebe3d63cf1320914d91ab"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "nmm-import-tool",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "7495c6351b86821dfb2fb7913f15bbf078fa239376abe80b587db591dced3094"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "open-directory",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "0aa16e6871397b9b875003dd889a91ec263fad678c1fffe4d6beb4f350a9161e"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "quickbms-support",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "2f1361a94621868783638841e50112032b4ba26478b19a59c148daa914bd8f9b"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "script-extender-error-check",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "2270bdc4cb5a6f81cfd826f48c2d72b9f48945987bb4b48451353d3f77ee0742"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "script-extender-installer",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "b3449589e177d2b1a51f1aef74981c35bbde5aff9dea9e66dc7b04478581618b"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "test-gameversion",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "e325720995de7c2f215c181c2e06ca182438ea03c99ed12631b910d670dcb1b1"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "test-setup",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "ec29361b054ecda82d48d6decf0d81e29d56a634695a8b66b76338993a47e955"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "theme-switcher",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "23f7061cf72d29af5c82e0ea0a611515a66c90f62adecf5165c0af641f29c035"
+        }
+      ]
+    },
+    {
+      "kind": "bundled",
+      "folder": "titlebar-launcher",
+      "files": [
+        {
+          "path": "index.cjs",
+          "sha256": "0d45a9ac9c3185787a95bd7f9d2de3d2a2747118cd2fb8ce6f2c0976dfc3fc09"
+        }
+      ]
+    },
+    {
+      "kind": "user",
+      "folder": "Cyberpunk 2077 Support for Vortex 196 0.13.1 2026-10-06T13-12Z Xq1SheQuX",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "59d7d12179f30b2e77cab28bb5d417479e5f39269e9ce71e49ea5fac5782269a"
+        }
+      ]
+    },
+    {
+      "kind": "user",
+      "folder": "assassinscreedunity",
+      "files": [
+        {
+          "path": "downloader.js",
+          "sha256": "f99d075936ffcbbff89093bd5549a6a1913ab4dca9912c884cd50f39012cfd95"
+        },
+        {
+          "path": "index.js",
+          "sha256": "b56dd1aff625408be43b09b2553439aa3c3889c392daaaec704571cf3fa2c07d"
+        }
+      ]
+    },
+    {
+      "kind": "user",
+      "folder": "farcry6",
+      "files": [
+        {
+          "path": "base_browser.js",
+          "sha256": "7a2c7d1c99a829e2bc421dbcc1f54917009e8cb0529775b20cb3a5757d830eb7"
+        },
+        {
+          "path": "fcmodding_browser.js",
+          "sha256": "c3bf2888cfc23979c40e29c09c1fb93cd5cfbdd92aa78bb35e36adb7b7b85066"
+        },
+        {
+          "path": "fcmodding_downloader.js",
+          "sha256": "28fff91b8fa4577d1ebbae5b27bbe466d3686559c4392f729879248484be818c"
+        },
+        {
+          "path": "index.js",
+          "sha256": "16af0f94ae2a57ee7fe0cd3eef13278fbfd5b2d13a9c40b8c4b0f37dedf6dd09"
+        }
+      ]
+    }
+  ]
+}

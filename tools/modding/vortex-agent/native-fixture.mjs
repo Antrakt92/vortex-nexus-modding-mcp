@@ -71,6 +71,30 @@ async function main() {
   const payload = Buffer.from('OWN SYNTHETIC VORTEX AGENT PAYLOAD\n'), sentinel = Buffer.from('ORIGINAL SYNTHETIC SENTINEL\n');
   const archive = zip(input.payloadPath, payload);
   fs.writeFileSync(input.archive, archive, { flag: 'wx' });
+  input.installRoute = process.argv.includes('--mcp-local-archive') ? 'mcp-local-archive'
+    : process.argv.includes('--local-archive') ? 'local-archive' : 'tracked-download';
+  input.withExistingMod = process.argv.includes('--with-existing-mod');
+  must(!input.withExistingMod || input.installRoute === 'mcp-local-archive', 'EXISTING_MOD_REQUIRES_CURATED_ROUTE');
+  if (input.withExistingMod) {
+    const payloadPath = 'archive/pc/mod/native_agent_existing.archive';
+    const bytes = Buffer.from('EXISTING SYNTHETIC MOD MUST REMAIN UNCHANGED\n');
+    const archive = zip(payloadPath, bytes), archivePath = path.join(path.dirname(input.archive), 'native-agent-existing.zip');
+    fs.writeFileSync(archivePath, archive, { flag: 'wx' });
+    input.existingMod = { archivePath, payloadPath, archiveSize: archive.length,
+      archiveSha256: sha(archive), payloadSha256: sha(bytes) };
+  }
+  if (input.installRoute === 'mcp-local-archive') {
+    const a = process.argv.indexOf('--source-admission'), h = process.argv.indexOf('--source-admission-sha256');
+    must(a > 0 && h > 0, 'PINNED_SOURCE_ADMISSION_REQUIRED');
+    const bytes = fs.readFileSync(process.argv[a + 1]);
+    must(sha(bytes) === process.argv[h + 1], 'SOURCE_ADMISSION_PIN_MISMATCH');
+    const proof = JSON.parse(bytes);
+    must(proof.newChangedSourceReviewComplete === true && proof.freshHashAndSourceSetRevalidated === true
+      && proof.asarSHA256 === 'ec3a29d58ea65a1ca84e456742c894a19efe96920a6710063d221d451a26d59a', 'SOURCE_ADMISSION_UNREVIEWED');
+    input.dynamicSources = proof.allDiskExtensions.map(e => ({ path: e.folder,
+      files: e.sources.map(f => ({ path: path.relative(e.folder, f.path).replace(/\\/g, '/'), sha256: f.sha256 })) }));
+    input.sourceAdmissionSHA256 = sha(bytes);
+  }
   input.archiveSha256 = sha(archive); input.archiveSize = archive.length; input.payloadSha256 = sha(payload); input.sentinelSha256 = sha(sentinel); input.zipCRC32 = crc32(payload).toString(16);
   const target = path.join(input.game, input.payloadPath); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, sentinel, { flag: 'wx' });
   const exe = path.join(input.game, 'bin/x64/Cyberpunk2077.exe'); fs.mkdirSync(path.dirname(exe), { recursive: true }); fs.writeFileSync(exe, 'Synthetic non-executable placeholder. Never launch.\n', { flag: 'wx' });
