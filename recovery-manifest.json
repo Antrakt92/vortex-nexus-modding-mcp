@@ -808,11 +808,11 @@
     },
     {
       "path": "tools/modding/vortex-agent/collection-dialog-controller.cjs",
-      "sha256_lf": "49a4b4f37ed0a0ae84fe26c49ac58c087157aa321bc72823b37295481d675b3f"
+      "sha256_lf": "cfb73566641e4a64d7b2d5933c7a72718ee1a978a31133ed3042665ac310466c"
     },
     {
       "path": "tools/modding/vortex-agent/collection-dialog-controller.test.cjs",
-      "sha256_lf": "e9e2f52fc15979443bb3fcd1a70f9e8fa113198c6970a2ca78ee16e70995e6f1"
+      "sha256_lf": "68570a6bf23a16de46cc3041ab1657956674bf78946a868646615ad59a7865f6"
     },
     {
       "path": "tools/modding/vortex-agent/collection-dialog-policy.cjs",

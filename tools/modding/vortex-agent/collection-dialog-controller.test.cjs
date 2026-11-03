@@ -68,7 +68,7 @@ test('transition accepts appended new questions and ordinary member completion w
   assert.equal(f.calls.length,1);assert.equal(result.installationCompleted,false);
 });
 for(const [name,change]of[
-  ['queue fingerprint drift',f=>f.state.session.notifications.dialogs.push(dialog('new','Unrelated'))],
+  ['original queue prefix changed',f=>f.state.session.notifications.dialogs[0].id='different-current'],
   ['download metadata drift',f=>f.state.persistent.downloads.files.dl.localPath='changed.7z'],
   ['rule record drift',f=>f.state.session.collections.activeSession.mods.rule.rule.extra={changed:true}],
   ['old mod record drift',f=>f.state.persistent.mods.cyberpunk2077.old.attributes.version='2.0'],
@@ -76,9 +76,37 @@ for(const [name,change]of[
   ['source drift',f=>{f.source=false;}],
   ['binding invalidation',f=>{f.binding.invalidated=true;}],
   ['source close function drift',f=>{f.api.closeDialog=()=>assert.fail('changed native method called');}],
-])test(name+' before respond refuses without native call and stays held',async()=>{
+])test(name+' before respond refuses without native call; no-effect preparation does not consume the slot',async()=>{
   const f=fixture();await f.observe();await f.c.prepare(f.args);change(f);assert.throws(()=>f.c.respond(f.args));assert.equal(f.calls.length,0);
-  await assert.rejects(f.c.prepare({...f.args,requestId:'other_request'}),/ACTION_ALREADY_PENDING/);
+  await assert.rejects(f.c.prepare(f.args),/REQUEST_ALREADY_USED/);
+  try{await f.c.prepare({...f.args,requestId:'other_request'});}catch(e){assert.doesNotMatch(e.message,/ACTION_ALREADY_PENDING/);}
+  assert.equal(f.calls.length,0);
+});
+test('append before guard intent permits one answer and both verifiers while retaining every original pending dialog',async()=>{
+  const f=fixture();await f.observe();f.state.session.notifications.dialogs.push(dialog('prior-tail','Prior legitimate question'));
+  await f.c.prepare(f.args);f.state.session.notifications.dialogs.push(dialog('appended-before-effect','New legitimate question'));
+  assert.equal(f.c.validate(f.args),true);f.c.respond(f.args);
+  const result=await f.c.waitForTransition(f.args);assert.equal(f.c.verifyTransition(f.args,result),true);
+  f.state.session.notifications.dialogs.push(dialog('appended-after-effect','Later legitimate question'));
+  assert.equal(f.c.verifyTransition(f.args,result),true);assert.equal(f.calls.length,1);
+  assert.deepEqual(f.state.session.notifications.dialogs.map(d=>d.id),['prior-tail','appended-before-effect','appended-after-effect']);
+});
+test('an appended question observed before respond cannot disappear during native response without detection',async()=>{
+  const f=fixture();await f.observe();await f.c.prepare(f.args);f.state.session.notifications.dialogs.push(dialog('tail','New legitimate question'));
+  f.close=()=>{f.state.session.notifications.dialogs=[];};f.c.respond(f.args);
+  await assert.rejects(f.c.waitForTransition(f.args),/OTHER_DIALOG_ANSWERED/);assert.equal(f.calls.length,1);
+});
+test('source admission failure before native answer can recover with a fresh ID after cause is fixed',async()=>{
+  const f=fixture();await f.observe();f.source=false;await assert.rejects(f.c.prepare(f.args));assert.equal(f.calls.length,0);
+  f.source=true;await assert.rejects(f.c.prepare(f.args),/REQUEST_ALREADY_USED/);
+  const fresh={...f.args,requestId:'new_request_after_fixed_source'};await f.c.prepare(fresh);f.c.respond(fresh);
+  const result=await f.c.waitForTransition(fresh);assert.equal(f.c.verifyTransition(fresh,result),true);assert.equal(f.calls.length,1);
+});
+test('source lifecycle uncertainty is never cleared as a no-effect preparation failure',async()=>{
+  const f=fixture();await f.observe();await f.observe();
+  await assert.rejects(f.c.prepare(f.args),/LIFECYCLE_HELD/);
+  await assert.rejects(f.c.prepare({...f.args,requestId:'new_id_cannot_clear_lifecycle'}),/ACTION_ALREADY_PENDING/);
+  assert.equal((await f.c.readiness()).status,'held');assert.equal(f.calls.length,0);
 });
 test('duplicate respond never closes the next dialog',async()=>{
   const f=fixture();await f.observe();await f.c.prepare(f.args);f.c.respond(f.args);assert.throws(()=>f.c.respond(f.args));assert.equal(f.calls.length,1);
@@ -87,6 +115,8 @@ test('close throws null: preserve exact primary; never return transition metadat
   const f=fixture();await f.observe();await f.c.prepare(f.args);f.close=()=>{throw null;};
   let seen=false;try{f.c.respond(f.args);}catch(e){seen=true;assert.equal(e,null);}assert.equal(seen,true);
   await assert.rejects(f.c.waitForTransition(f.args),/TRANSITION_UNAVAILABLE/);assert.equal(f.calls.length,1);
+  assert.equal((await f.c.readiness()).status,'held');
+  await assert.rejects(f.c.prepare({...f.args,requestId:'new_id_cannot_release_uncertain'}),/ACTION_ALREADY_PENDING/);
 });
 test('source reads while prepared use a separate issuer and cannot revoke writer proof',async()=>{
   const f=fixture();await f.observe();await f.c.prepare(f.args);await Promise.all([f.c.readiness(),f.c.readiness()]);
