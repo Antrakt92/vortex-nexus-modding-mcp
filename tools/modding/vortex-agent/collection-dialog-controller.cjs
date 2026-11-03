@@ -66,7 +66,7 @@ function createCollectionDialogController(api,{selectors,util,getBinding,admit,a
   need(typeof writeAdmission==='function'&&typeof writeAdmission.revalidate==='function'
     &&typeof readAdmission==='function'&&typeof readAdmission.revalidate==='function','ADMISSION_UNAVAILABLE');
   let prepared=null,reading=Promise.resolve(),lifecycleHeld=false;
-  const attempts=new Map();
+  const attempts=new Map(),noEffectRequests=new Set();
   function methods(){need(api.getState===getState&&api.closeDialog===closeDialog&&util.renderModName===render,'API_CHANGED');}
   function binding(){const b=copy(getBinding());need(b&&b.epochReady===true&&b.invalidated===false&&typeof b.sessionId==='string','BINDING_UNAVAILABLE');return b;}
   // Installed stock InstallManager awaits this event BEFORE previous-version
@@ -135,19 +135,32 @@ function createCollectionDialogController(api,{selectors,util,getBinding,admit,a
     }
     const attempt=attempts.get(target.downloadId);need(attempt&&attempt.binding,'INSTALL_NOT_OBSERVED');
     need(pendingDialogs.filter(d=>d.title===pendingDialogs[0].title).length===1,'DIALOG_ORIGIN_AMBIGUOUS');
-    const pins={queue:pendingDialogs,owner:rawOwner,member:field(rawMembers,target.memberKey),download:field(rawDownloads,target.downloadId),
+    const pins={owner:rawOwner,member:field(rawMembers,target.memberKey),download:field(rawDownloads,target.downloadId),
       oldMods:target.oldModIds.map(id=>({id,record:field(rawMods,id)}))};
     const stamp=fingerprint(pins);methods();need(fingerprint(binding())===fingerprint(b),'BINDING_CHANGED');
     return {input,target,stamp,queue:pendingDialogs,binding:b,attempt};
   }
   function expectedFrom(args){return copy({...pick(args,IDENTITY),dialogId:field(args,'dialogId'),action:field(args,'action')});}
-  function hold(record,error){if(record&&prepared===record&&record.phase!=='completed')record.phase='held';throw error;}
+  function hold(record,error){
+    if(record&&prepared===record&&record.phase!=='completed'){
+      // No answer has been attempted in these phases. Retire ONLY this failed
+      // preparation, retaining a bounded local ID tombstone as well as the shared
+      // guard's failed receipt. Consumed/uncertain and lifecycle holds never reset.
+      if(['checking','prepared'].includes(record.phase)&&!record.reentered&&!lifecycleHeld&&noEffectRequests.size<4096){
+        noEffectRequests.add(record.requestId);record.phase='rejected';prepared=null;
+      }else record.phase='held';
+    }
+    throw error;
+  }
   function validate(args){const r=prepared;
+    if(r?.checking){r.reentered=true;r.phase='held';fail('REENTRY');}
     try{need(r&&r.phase==='prepared'&&!r.checking,'PREPARATION_REQUIRED');r.checking=true;
       need(r.requestId===field(args,'requestId')&&fingerprint(expectedFrom(args))===r.expectedKey,'REQUEST_CHANGED');
       writeAdmission.revalidate(r.proof);const now=project(r.expected);
-      need(now.stamp===r.stamp&&now.attempt===r.attempt,'PREPARATION_CHANGED');writeAdmission.revalidate(r.proof);
-      methods();need(prepared===r&&r.phase==='prepared','PREPARATION_CHANGED');r.checking=false;return true;
+      need(now.stamp===r.stamp&&now.attempt===r.attempt,'PREPARATION_CHANGED');
+      need(now.queue.length>=r.queue.length&&fingerprint(now.queue.slice(0,r.queue.length))===fingerprint(r.queue),'PREPARATION_CHANGED');
+      writeAdmission.revalidate(r.proof);
+      methods();need(prepared===r&&r.phase==='prepared','PREPARATION_CHANGED');r.latestQueue=now.queue;r.checking=false;return true;
     }catch(error){if(r)r.checking=false;return hold(r,error);}
   }
   function checkTransition(r){
@@ -172,6 +185,7 @@ function createCollectionDialogController(api,{selectors,util,getBinding,admit,a
       const out={schema:'collection-dialog-readiness/1',status:'held',reason:'COLLECTION_DIALOG_UNAVAILABLE',sourceAdmitted:false,
         callbackOriginVerified:false,targetArchiveIdentityVerified:false,nativeTransitionVerified:false};
       try{const proof=await readAdmission();readAdmission.revalidate(proof);out.sourceAdmitted=true;
+        need(!prepared||prepared.phase==='completed','ACTION_ALREADY_PENDING');
         const b=binding(),s=getState.call(api),dialogs=field(field(field(s,'session'),'notifications'),'dialogs');
         need(Array.isArray(dialogs)&&dialogs.length>0,'DIALOGS_UNAVAILABLE');
         const expected={...pick(b,IDENTITY),dialogId:field(dialogs[0],'id'),action:'update_current_profile'};
@@ -182,13 +196,14 @@ function createCollectionDialogController(api,{selectors,util,getBinding,admit,a
     });reading=work.catch(()=>{});return work;},
     async prepare(args){need(!prepared||prepared.phase==='completed','ACTION_ALREADY_PENDING');
       const expected=expectedFrom(args),requestId=field(args,'requestId');need(typeof requestId==='string'&&/^[a-zA-Z0-9_-]{8,80}$/.test(requestId),'REQUEST_INVALID');
+      need(!noEffectRequests.has(requestId),'REQUEST_ALREADY_USED');
       const r={phase:'checking',requestId,expected,expectedKey:fingerprint(expected)};prepared=r;
       try{r.proof=await writeAdmission();need(prepared===r&&r.phase==='checking','REENTRY');
         const p=project(expected);Object.assign(r,p,{phase:'prepared',checking:false});validate(args);
       }catch(e){hold(r,e);}
     },
     validate,
-    respond(args){validate(args);const r=prepared;r.phase='waiting';
+    respond(args){validate(args);const r=prepared;r.queue=r.latestQueue;r.phase='waiting';
       try{closeDialog.call(api,r.target.dialogId,'Update current profile',{remember:false});}
       catch(e){hold(r,e);}
     },
