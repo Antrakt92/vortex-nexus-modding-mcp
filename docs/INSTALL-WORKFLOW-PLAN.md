@@ -22,7 +22,7 @@ collection work remains deferred. This plan does not authorize new live effects.
   installer choices, file lists and patches that determine an installed variant.
   Source excerpts remain external context, not vendored application code.
 
-## 1. Observe bounded work and explain waits — implemented
+## 1. Observe bounded work and explain waits â€” implemented
 
 Add bounded phase durations and optional diagnostics to the own-local installer.
 Expose live observations and retained final observations through reconciliation;
@@ -54,7 +54,7 @@ diagnostics, original attempt binding, five durable completions, collision refus
 deployment/restore bytes and hardlinks, and ordinary-session preservation.
 This is isolated native acceptance, separate from ordinary-host activation.
 
-## 2. Measure before optimizing checks — implemented
+## 2. Measure before optimizing checks â€” implemented
 
 Use the phase evidence to rank costs. Initial candidates include the observed
 14 PowerShell process/check invocations, repeated source ancestor walks and
@@ -118,7 +118,7 @@ complete native process/generation checks, the full six-sample comparison was
 started separately. The failed pilot was not removed or counted as a fast install.
 Native acceptance here is separate from ordinary-host activation.
 
-## 3. Assess candidates before adding a general installer — installed slice implemented
+## 3. Assess candidates before adding a general installer â€” installed slice implemented
 
 First add a bounded read-only assessment for exact target profile, collection
 revision, old installed IDs, new provider identities and installation specs.
@@ -158,7 +158,7 @@ passed. An earlier setup race was retained and diagnosed; the final fixture join
 the exact profile-setup activity/load-order completion before testing read purity.
 Native acceptance is separate from ordinary-host activation.
 
-## 4. Add one supported effect class at a time
+## 4. Add one supported effect class at a time — own-local plan implemented
 
 Selected first class: add new own-local ZIP installation steps to the existing
 serial `run_mod_plan`, followed by explicit activation steps and at most one final
@@ -176,6 +176,25 @@ An interrupted batch with completed A, uncertain B and unscheduled C stops at B.
 Inspect original receipts and current state. Do not replay A/B, deploy a partial
 batch or use fresh IDs to evade uncertainty. A later remaining-work plan needs
 resolved original attempts and fresh assessment; historical journals do not resume.
+
+On 2026-11-03 the actual client executor passed an isolated official Vortex 2.9.1
+run: two new own ZIPs installed disabled, explicit batched enablement and one final
+deployment, followed by separate disable/restore. Eleven strict native completions
+and the original plan journal were verified. Independent post-shutdown checks
+confirmed payload/archive hashes, manifest owners, deployed hardlinks, restoration
+of sentinel files and preservation of an existing staged mod and its second-profile
+usage. Ordinary host context, inventory, manifest and process generations remained
+unchanged. One earlier stopped fixture is retained: its assertion required an
+explicit false flag, although stock Vortex correctly omitted the disabled entry.
+The repaired fixture accepts only absence or explicit false and records that evidence.
+
+The ordinary adapter was also verified against the compiled bundle containing
+steps 1–3: actual host 2.9.1, supported local-install readiness, candidate tool
+presence and unchanged prior context/profile/mod inventory/deployment manifest.
+Client plan changes are loaded by fresh bridge/session processes; existing MCP
+sessions must refresh their bridge. No additional host restart is needed for the
+client-only plan change. This proves the selected new-own-ZIP class, not general
+Nexus update/replacement or real-collection deployment/gameplay acceptance.
 
 ## Acceptance matrix
 
