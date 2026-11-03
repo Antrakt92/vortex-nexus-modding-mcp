@@ -1,6 +1,6 @@
 # Background collection wizard
 
-Resident implementation is locally built and model-tested. Live acceptance of
+Resident implementation is locally built, installed and model-tested. Live acceptance of
 Install Now/Done remains pending; an idle DOM read does not establish that gate.
 
 The official Vortex 2.9.1 collection extension exposes session inspection, but
@@ -22,8 +22,9 @@ Implementation checklist:
 - [x] Expose read readiness and one guarded transition through MCP.
 - [x] Use the shared mutation lock, durable intent and uncertain-outcome interlock.
 - [x] Verify integrated source/model behavior and malformed/concurrent scenarios.
-- [ ] Package/install the resident integration and verify normal tool discovery.
-- [ ] Retire reconciled task-only probes, preserving their final evidence.
+- [x] Package/install the resident integration and verify normal tool discovery.
+- [x] Retire reconciled task-only probes, preserving their final evidence.
+- [ ] Accept Install Now/Done against a real authorized collection flow.
 
 Initial scope: Cyberpunk 2077, reviewed Vortex 2.9.1 sources, a newly observed
 collection owner, and unambiguous Install Now/Done branches in that same flow.
