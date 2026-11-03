@@ -59,10 +59,13 @@ function processNames() {
     return snapshot.names.map(name => name.toLowerCase());
   } catch { throw new Error('PROCESS_LIST_UNVERIFIABLE'); }
 }
-function stopped(state, gameId) {
+function noRunningTools(state, gameId) {
   insist(process.platform === 'win32', 'WINDOWS_PROCESS_CHECK_REQUIRED');
   insist(processes[gameId], 'UNSUPPORTED_GAME_PROCESS_GUARD');
   insist(Object.keys(state.session?.base?.toolsRunning || {}).length === 0, 'GAME_OR_TOOL_RUNNING');
+}
+function stopped(state, gameId) {
+  noRunningTools(state, gameId);
   const names = processNames();
   insist(!processes[gameId].some(name => names.includes(name.toLowerCase())), 'GAME_RUNNING');
 }
@@ -200,6 +203,10 @@ function createOperations(api, actions, selectors, options = {}) {
       catch (error) { if (error.code !== 'ENOENT') throw error; }
       const diagnostics = name === 'install_local_archive' ? createInstallDiagnostics(options.installDiagnosticsOptions) : null;
       const measuredCheck = () => diagnostics ? diagnostics.measureSync('context_checks', () => check(args)) : check(args);
+      // Read-only preparation keeps live context/tools/path checks. Process absence
+      // is never cached: dispatch, late native permission and completion rescan.
+      const measuredContextCheck = () => diagnostics.measureSync('context_checks',
+        () => assertContext(api, selectors, args, noRunningTools));
       measuredCheck();
       insist(/^[a-zA-Z0-9_-]{8,80}$/.test(args.requestId || ''), 'INVALID_REQUEST_ID');
       const attempt = path.join(dir, args.requestId + '.attempt.json');
@@ -224,8 +231,8 @@ function createOperations(api, actions, selectors, options = {}) {
       try {
         diagnostics?.assertWork();
         let verifyCompletion;
-        const result = await run(effect, verify => { verifyCompletion = verify; }, diagnostics, measuredCheck);
-        measuredCheck();
+        const result = await run(effect, verify => { verifyCompletion = verify; }, diagnostics, measuredCheck, measuredContextCheck);
+        if (diagnostics) measuredContextCheck(); else measuredCheck();
         if (verifyCompletion) verifyCompletion();
         const status = { protocol: PROTOCOL, requestId: args.requestId, operation: name,
           operationCompleted: true, diskDeploymentVerified: false,
@@ -236,7 +243,7 @@ function createOperations(api, actions, selectors, options = {}) {
         diagnostics?.finalizing();
         const commit = async () => {
           await commitCompletion(path.join(dir, args.requestId + '.completion.json'), completion,
-            verifyCompletion ? () => { measuredCheck(); verifyCompletion(); } : undefined,
+            verifyCompletion || diagnostics ? () => { measuredCheck(); verifyCompletion?.(); } : undefined,
             () => { completionPublished = true; });
           if (armed) await fs.unlink(path.join(dir, 'unresolved.json'));
         };
@@ -303,8 +310,8 @@ function createOperations(api, actions, selectors, options = {}) {
       // (including an empty inventory) instead of claiming preflight guarantees.
       insist(false, 'INSTALL_DISABLED_NONREPLACEMENT_NOT_PROVABLE');
     }),
-    install_local_archive: args => mutate('install_local_archive', args, async (effect, _beforeCompletion, diagnostics, measuredCheck) =>
-      installLocalArchive(api, args, { check: measuredCheck, effect, admitHost: options.admitLocalInstallHost, diagnostics })),
+    install_local_archive: args => mutate('install_local_archive', args, async (effect, _beforeCompletion, diagnostics, measuredCheck, measuredContextCheck) =>
+      installLocalArchive(api, args, { check: measuredCheck, checkContext: measuredContextCheck, effect, admitHost: options.admitLocalInstallHost, diagnostics })),
     set_mods_enabled: args => mutate('set_mods_enabled', args, async effect => {
       const before = flags(args);
       const identities = args.modIds.map(id => modIdentity(api.getState(), args.gameId, id));

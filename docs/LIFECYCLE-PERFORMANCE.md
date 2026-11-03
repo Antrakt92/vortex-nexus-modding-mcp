@@ -1,9 +1,41 @@
 # Faster mod lifecycle work
 
-The slow part of the current install workflow is preparation and repeated
-verification around native helpers. Enable/disable and a single deployment
-already use the running adapter. Installing or removing a package still needs a
-separately reviewed native route; neither operation is added by this work.
+Enable/disable and a single deployment use the running adapter. New own-local
+Cyberpunk ZIPs also use the [resident stock installer](STOCK-LOCAL-INSTALL.md);
+they no longer require a temporary helper. General Nexus updates, replacement
+and removal still need their separately reviewed native routes.
+
+## Own-local installation checks — 3 November 2026
+
+The installer separates live context/path/tools checks from process enumeration
+during read-only preparation. Six fresh process probes remain at entry, both
+native dispatches, the final post-await installation hook, post-install proof and
+post-fsync completion publication. Process absence is never cached. Other writes
+retain their existing policy. Diagnostics count all context checks, so
+`context_checks.calls` is not a PowerShell invocation count.
+
+Six serial isolated official Vortex 2.9.1 fixtures used identical 219-byte ZIPs,
+an existing disabled mod and one-second progress observation cadence, in
+baseline/candidate/candidate/baseline/baseline/candidate order:
+
+| Variant | Install request samples (ms) | Median (ms) |
+| --- | --- | --- |
+| Baseline, 14 full process probes | 6,233; 6,304; 6,085 | 6,233 |
+| Candidate, 6 full process probes | 3,719; 3,755; 3,786 | 3,755 |
+
+The median request was about 40% shorter in this small fixture. Each run included
+receipt finalization and its actual progress observations (six baseline/four
+candidate). Nested metrics overlap and cannot be summed. All six independent
+checks passed installed bytes, existing-mod/profile preservation, collision
+refusal, deployment ownership/hardlinks, restoration and ordinary-session
+preservation. Three samples per variant do not establish collection throughput,
+cold-disk behavior or a latency guarantee.
+
+A prior pilot had two successful runs and a WMI inventory failure before fixture
+creation. Its failed attempt remains in the evidence. The formal comparison used
+the same repaired fixture reader for both variants: complete Toolhelp/.NET
+inventory and process generations rather than WMI or command lines. PID reuse
+cannot pass the before/after process-preservation check.
 
 ## Check the intended mods before preparing a helper
 

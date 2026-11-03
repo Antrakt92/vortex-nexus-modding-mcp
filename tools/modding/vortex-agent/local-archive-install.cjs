@@ -64,6 +64,7 @@ function boundaryHooks(api) {
     active.hookSeen = true;
     noNexus(info);
     await active.check();
+    active.permit();
     active.diagnostics.assertWork();
     need(!active.uncertain && !active.violation, 'LOCAL_ARCHIVE_NATIVE_OPERATION_HELD');
     // The stock manager assigns a later lookup match to this hook payload before
@@ -99,7 +100,7 @@ function native(api, event, args, timeoutMs, active) {
     throw error;
   });
 }
-async function installLocalArchive(api, args, { check, effect, admitHost, timeoutMs = 120000, diagnostics = createInstallDiagnostics() }) {
+async function installLocalArchive(api, args, { check, checkContext = check, effect, admitHost, timeoutMs = 120000, diagnostics = createInstallDiagnostics() }) {
   diagnostics.assertWork();
   need(args.gameId === 'cyberpunk2077', 'LOCAL_ARCHIVE_GAME_UNSUPPORTED');
   need(typeof admitHost === 'function', 'LOCAL_ARCHIVE_SOURCE_ADMISSION_REQUIRED');
@@ -124,17 +125,20 @@ async function installLocalArchive(api, args, { check, effect, admitHost, timeou
   async function admission() {
     diagnostics.assertWork();
     need(!active.uncertain && !active.violation, 'LOCAL_ARCHIVE_NATIVE_OPERATION_HELD');
-    check(); verifyArchives();
+    checkContext(); verifyArchives();
     await diagnostics.wait('host_admission', admitHost, 30000);
-    diagnostics.assertWork(); check(); verifyArchives();
+    diagnostics.assertWork(); checkContext(); verifyArchives();
     const metadata = await diagnostics.wait('metadata', () => api.lookupModMeta({ fileMD5: pkg.md5, fileSize: pkg.bytes, gameId: args.gameId }), 30000);
     diagnostics.assertWork();
-    check(); verifyArchives();
+    checkContext(); verifyArchives();
     assertLocalArchiveAdmission({ archiveName: name, mods: api.getState().persistent.mods?.[args.gameId] || {},
       existingDirectories: fs.readdirSync(args.stagingPath), metadata, autoEnable: false, autoDeploy: false });
     need(!active.uncertain && !active.violation, 'LOCAL_ARCHIVE_NATIVE_OPERATION_HELD');
   }
   active.check = admission;
+  // The awaited admission returns through another microtask. Rescan immediately
+  // at the final synchronous hook permission rather than reusing earlier absence.
+  active.permit = () => { diagnostics.assertWork(); check(); verifyArchives(); };
   holder.active = active;
   try {
     diagnostics.assertWork(); diagnostics.phase('preflight');
@@ -159,7 +163,7 @@ async function installLocalArchive(api, args, { check, effect, admitHost, timeou
     diagnostics.phase('import_settle');
     await diagnostics.wait('import_settle', async () => {
       while (api.getState().persistent.downloads?.files?.[active.downloadId]?.state !== 'finished') {
-        diagnostics.assertWork(); check();
+        diagnostics.assertWork(); checkContext();
         await new Promise(resolve => setTimeout(resolve, 100));
         diagnostics.assertWork();
       }

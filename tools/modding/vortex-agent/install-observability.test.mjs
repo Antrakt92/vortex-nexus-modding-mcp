@@ -63,21 +63,22 @@ function fixture(t, options = {}, implementation = guard) {
   const state = { session: { activeProfileId: P }, settings: { gameMode: { discovered: { [G]: { path: dirs.gamePath } } } },
     persistent: { mods: { [G]: {} }, profiles: { [P]: { id: P, gameId: G, modState: {} } }, downloads: { files: {} } } };
   const hooks = new Map(), events = new EventEmitter(), calls = [], callbacks = {}, timer = clock();
-  let metadataCalls = 0, stagedWrites = 0, hookError;
+  let metadataCalls = 0, hostCalls = 0, stagedWrites = 0, processChecks = 0, gameRunning = false, hookError;
   const api = { getState: () => state, onAsync: (event, fn) => hooks.set(event, fn),
-    lookupModMeta: () => options.metadata?.(++metadataCalls) ?? Promise.resolve([]),
+    lookupModMeta: () => { metadataCalls++; return options.metadata?.(metadataCalls) ?? Promise.resolve([]); },
     events: { prependListener: (...args) => events.prependListener(...args), removeListener: (...args) => events.removeListener(...args),
       emit(event, ...args) {
         events.emit(event, ...args); calls.push(event);
         if (event === 'import-downloads') {
           const [[archive], callback] = args; callbacks.import = callback;
           fs.copyFileSync(archive, path.join(dirs.downloadPath, path.basename(archive)));
-          state.persistent.downloads.files.imported = { state: 'finished', game: [G], localPath: path.basename(archive) };
+          state.persistent.downloads.files.imported = { state: options.pendingImport ? 'init' : 'finished', game: [G], localPath: path.basename(archive) };
           queueMicrotask(() => callback(['imported']));
         } else if (event === 'start-install-download') {
           const [downloadId, , callback] = args; callbacks.install = callback;
           if (options.suspendNative) return true;
           void (async () => {
+            await options.beforeHook?.();
             await hooks.get('will-install-mod')(G, downloadId, ID, {});
             const target = path.join(dirs.stagingPath, ID, payloadPath);
             fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, payload); stagedWrites++;
@@ -91,13 +92,18 @@ function fixture(t, options = {}, implementation = guard) {
   const args = { gameId: G, profileId: P, requestId: crypto.randomUUID(), ...dirs, archivePath,
     size: bytes.length, sha256: crypto.createHash('sha256').update(bytes).digest('hex'),
     filesystemIds: Object.fromEntries(Object.entries(dirs).map(([key, dir]) => [key, guard.identity(dir)])) };
-  const selectors = { activeGameId: () => G, activeProfileId: () => P,
+  const selectors = { activeGameId: () => G, activeProfileId: () => state.session.activeProfileId,
     installPathForGame: () => dirs.stagingPath, downloadPathForGame: () => dirs.downloadPath };
   const receiptDir = path.join(root, 'receipts');
   const operations = () => implementation.createOperations(api, {}, selectors, { receipts: receiptDir,
-    stopped: () => {}, admitLocalInstallHost: async () => {}, installDiagnosticsOptions: timer.options });
+    stopped: () => {
+      processChecks++; options.onFullCheck?.(processChecks, state);
+      if (Object.keys(state.session?.base?.toolsRunning || {}).length) throw Error('GAME_OR_TOOL_RUNNING');
+      if (gameRunning) throw Error('GAME_RUNNING');
+    }, admitLocalInstallHost: async () => { hostCalls++; await options.host?.(hostCalls); }, installDiagnosticsOptions: timer.options });
   const ops = operations();
-  return { root, args, api, ops, operations, calls, callbacks, timer, receiptDir, hooks,
+  return { root, args, api, state, selectors, ops, operations, calls, callbacks, timer, receiptDir, hooks,
+    processChecks: () => processChecks, hostCalls: () => hostCalls, startGame: () => { gameRunning = true; },
     metadataCalls: () => metadataCalls, stagedWrites: () => stagedWrites, hookError: () => hookError,
     file: suffix => path.join(receiptDir, args.requestId + suffix) };
 }
@@ -234,4 +240,119 @@ test('completed diagnostic observation cannot substitute for missing authoritati
   assert.equal(readback.localInstall.installed, true);
   assert.equal(readback.terminalOperationVerified, false);
   assert.equal(readback.interlockCleared, false);
+});
+
+test('local install uses six fresh full probes while retaining inexpensive context validation', async t => {
+  const f = fixture(t), result = await f.ops.install_local_archive(f.args);
+  assert.equal(result.operationCompleted, true);
+  assert.equal(f.processChecks(), 6);
+  assert.ok(result.installDiagnostics.metrics.context_checks.calls >= 14);
+});
+
+for (const kind of ['host', 'metadata']) for (const stage of [1, 2, 3]) {
+  for (const drift of ['profile', 'tools']) test(`${drift} drift after ${kind} await ${stage} refuses next native permission`, async t => {
+    const wait = deferred(), f = fixture(t, { [kind]: count => count === stage ? wait.promise : Promise.resolve([]) });
+    const outcome = observe(f.ops.install_local_archive(f.args));
+    await until(() => (kind === 'host' ? f.hostCalls() : f.metadataCalls()) === stage);
+    const probesBeforeDrift = f.processChecks();
+    if (drift === 'profile') f.state.session.activeProfileId = 'different';
+    else f.state.session.base = { toolsRunning: { synthetic: {} } };
+    wait.resolve([]);
+    const { error } = await outcome;
+    assert.ok(error);
+    assert.equal(f.processChecks(), probesBeforeDrift, 'Cheap guard must refuse before another process probe');
+    if (kind === 'host') assert.equal(f.metadataCalls(), stage - 1);
+    assert.equal(fs.existsSync(f.file('.completion.json')), false);
+    assert.equal(f.stagedWrites(), 0);
+    assert.deepEqual(f.calls, stage === 1 ? [] : stage === 2 ? ['import-downloads'] : ['import-downloads', 'start-install-download']);
+    if (stage > 1) assert.equal(fs.existsSync(path.join(f.receiptDir, 'unresolved.json')), true);
+  });
+}
+
+for (const stage of [1, 2, 3]) test(`fresh process scan rejects game launched during metadata await ${stage}`, async t => {
+  const wait = deferred(), f = fixture(t, { metadata: count => count === stage ? wait.promise : Promise.resolve([]) });
+  const outcome = observe(f.ops.install_local_archive(f.args));
+  await until(() => f.metadataCalls() === stage);
+  f.startGame(); wait.resolve([]);
+  const { error } = await outcome;
+  assert.ok(error);
+  assert.equal(f.processChecks(), stage + 1, 'Each native permission requires a newly sampled process guard');
+  if (stage === 3) assert.equal(f.hookError()?.message, 'GAME_RUNNING');
+  assert.equal(fs.existsSync(f.file('.completion.json')), false);
+  assert.equal(f.stagedWrites(), 0);
+  assert.deepEqual(f.calls, stage === 1 ? [] : stage === 2 ? ['import-downloads'] : ['import-downloads', 'start-install-download']);
+});
+
+function withPendingSync(onSync) {
+  const filename = fileURLToPath(new URL('./guard.cjs', import.meta.url));
+  const compiled = new Module(filename); compiled.filename = filename;
+  compiled.paths = Module._nodeModulePaths(path.dirname(filename));
+  compiled.require = name => name === 'node:fs/promises' ? new Proxy(fsp, { get(target, key) {
+    if (key !== 'open') return target[key];
+    return async (...args) => {
+      const handle = await target.open(...args);
+      if (!String(args[0]).includes('.completion.json.pending-')) return handle;
+      return new Proxy(handle, { get(file, member) {
+        if (member === 'sync') return async () => { await file.sync(); await onSync(); };
+        const value = file[member]; return typeof value === 'function' ? value.bind(file) : value;
+      } });
+    };
+  } }) : require(name);
+  compiled._compile(fs.readFileSync(filename, 'utf8'), filename);
+  return compiled.exports;
+}
+
+test('game launched during completion fsync prevents publication and keeps the original interlock', async t => {
+  let f;
+  f = fixture(t, {}, withPendingSync(() => f.startGame()));
+  const { error } = await observe(f.ops.install_local_archive(f.args));
+  assert.equal(error?.message, 'GAME_RUNNING');
+  assert.equal(f.stagedWrites(), 1);
+  assert.equal(fs.existsSync(f.file('.completion.json')), false);
+  assert.equal(fs.existsSync(path.join(f.receiptDir, 'unresolved.json')), true);
+  const failed = JSON.parse(fs.readFileSync(f.file('.failed.json'), 'utf8'));
+  assert.equal(failed.effectsMayHaveOccurred, true);
+  assert.equal(failed.errorCode, 'GAME_RUNNING');
+});
+
+test('post-fsync full probe does not turn noncancelable finalization back into work-budget admission', async t => {
+  let f;
+  f = fixture(t, {}, withPendingSync(() => f.timer.advance(501)));
+  const result = await f.ops.install_local_archive(f.args);
+  assert.equal(result.operationCompleted, true);
+  assert.equal(result.installDiagnostics.state, 'completed');
+  assert.equal(result.installDiagnostics.remainingMs, 0);
+  assert.equal(f.processChecks(), 6);
+});
+
+for (const operation of ['set_mods_enabled', 'deploy_mods']) test(`${operation} retains its existing full-check route`, async t => {
+  const f = fixture(t);
+  const { archivePath, size, sha256, ...context } = f.args;
+  f.state.persistent.mods[G].existing = { id: 'existing', state: 'installed', installationPath: 'existing' };
+  f.api.ext = { awaitModsDeployment: async () => {} };
+  const result = operation === 'set_mods_enabled'
+    ? await f.ops.set_mods_enabled({ ...context, modIds: ['existing'], enabled: false })
+    : await f.ops.deploy_mods(context);
+  assert.equal(result.operationCompleted, true);
+  assert.equal(f.processChecks(), operation === 'set_mods_enabled' ? 3 : 4);
+  assert.equal(result.installDiagnostics, undefined);
+  assert.equal(fs.existsSync(f.file('.diagnostics.json')), false);
+  assert.deepEqual(f.calls, []);
+});
+
+for (const drift of ['profile', 'tools']) test(`pending import polls retain cheap ${drift} guards without repeated process scans`, async t => {
+  const f = fixture(t, { pendingImport: true });
+  const outcome = observe(f.ops.install_local_archive(f.args));
+  await until(() => f.calls.length === 1 && f.processChecks() === 2);
+  const live = await f.ops.reconcile_operation({ requestId: f.args.requestId });
+  assert.equal(live.installDiagnostics.waitReason, 'download_finished');
+  if (drift === 'profile') f.state.session.activeProfileId = 'different';
+  else f.state.session.base = { toolsRunning: { synthetic: {} } };
+  const { error } = await outcome;
+  assert.ok(error);
+  assert.equal(f.processChecks(), 2);
+  assert.deepEqual(f.calls, ['import-downloads']);
+  assert.equal(f.stagedWrites(), 0);
+  assert.equal(fs.existsSync(f.file('.completion.json')), false);
+  assert.equal(fs.existsSync(path.join(f.receiptDir, 'unresolved.json')), true);
 });

@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import paths from './paths.cjs';
 import receipts from './receipts.cjs';
 import { validInstallDiagnostics } from './install-diagnostics.cjs';
-import { assertOrdinaryModSnapshot } from './native-fixture-snapshot.mjs';
+import { assertOrdinaryModSnapshot, ordinaryProcessesPreserved } from './native-fixture-snapshot.mjs';
 const base = path.join(paths.workspace, 'local-state/vortex-agent-native-fixture');
 const root = path.resolve(process.argv[2] || '');
 const rel = path.relative(base, root);
@@ -129,6 +129,7 @@ const before = read('ordinary-before.json'), after = read('ordinary-after.json')
 assertOrdinaryModSnapshot(before.mods); assertOrdinaryModSnapshot(after.mods);
 assert.deepEqual(before.health, after.health); assert.deepEqual(before.profiles, after.profiles); assert.deepEqual(before.mods, after.mods);
 assert.equal(before.manifestSha256, after.manifestSha256);
+assert.equal(ordinaryProcessesPreserved(before.processes, after.processes), true, 'Ordinary process generations changed or unavailable');
 const log = fs.readFileSync(path.join(root, 'userdata/vortex.log'), 'utf8');
 assert.match(log, /clean application end/);
 const proof = { passed: true, root, checks: ['native import/install', 'authenticated compiled agent enable/deploy/disable/restore', 'manifest ownership', 'deployed hardlink identity', 'original hash and filesystem identity restored', 'post-shutdown game/staging hashes', 'ZIP size/SHA-256/CRC',

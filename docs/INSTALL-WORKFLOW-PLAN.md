@@ -54,7 +54,7 @@ diagnostics, original attempt binding, five durable completions, collision refus
 deployment/restore bytes and hardlinks, and ordinary-session preservation.
 This is isolated native acceptance, separate from ordinary-host activation.
 
-## 2. Measure before optimizing checks
+## 2. Measure before optimizing checks — implemented
 
 Use the phase evidence to rank costs. Initial candidates include the observed
 14 PowerShell process/check invocations, repeated source ancestor walks and
@@ -94,6 +94,29 @@ isolated experiment. Stop and revise the design if that API needs a Core patch,
 cannot preserve the required profiles, or has an unobservable completion boundary.
 Do not build surrounding machinery to compensate for an unproved prerequisite.
 Keep each later slice independently reviewable and useful with the existing tool.
+
+The own-local route now performs six fresh process probes: entry, import dispatch,
+install dispatch, final native-hook permission, post-install proof and completion
+publication after receipt fsync. Preparation/poll checkpoints retain live profile,
+path, physical-directory and tools-running checks; archive verification retains
+its original boundaries. They do not cache process absence. A game launch during read-only preparation is refused
+at the next native permission; an already dispatched operation is not canceled.
+Other operations retain their original full-check policy.
+
+On 2026-11-03, six serial isolated Vortex 2.9.1 fixtures in A/B/B/A/A/B order passed
+independent installation, preservation, deployment and restore checks. The same
+219-byte ZIP took 6,233/6,304/6,085 ms on the baseline and 3,719/3,755/3,786 ms
+on the candidate. Medians were 6,233 and 3,755 ms (about 40% shorter in this
+fixture). Live observation cadence stayed one second; faster requests produced
+four observations instead of six. Receipt finalization and observer work remain
+included; overlapping metrics are not summed. These are three samples per variant,
+not a collection benchmark, cold-disk comparison or general latency guarantee.
+
+An earlier pilot retained two successful fixtures and a failed WMI inventory
+before fixture creation. After replacing only the fixture's WMI reader with
+complete native process/generation checks, the full six-sample comparison was
+started separately. The failed pilot was not removed or counted as a fast install.
+Native acceptance here is separate from ordinary-host activation.
 
 ## 3. Assess candidates before adding a general installer
 
