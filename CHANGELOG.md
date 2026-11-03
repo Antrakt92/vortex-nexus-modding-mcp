@@ -8,6 +8,7 @@ embedded Vortex adapter's compatibility label.
 
 | Version | Published | Main changes |
 | --- | --- | --- |
+| [0.7.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.7.0) | 2026-11-03 | Own-ZIP installation plans, installed-candidate assessment and bounded install diagnostics |
 | [0.6.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.6.0) | 2026-11-03 | New own-local ZIP installation through official Vortex, source readiness and recovery checks |
 | [0.5.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.5.0) | 2026-10-31 | Process-check benchmarks, experimental Rust CLI and native install contracts |
 | [0.4.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.4.0) | 2026-10-30 | Interrupted-plan status, local helper binding, file proofs and API-cache checks |
@@ -15,6 +16,55 @@ embedded Vortex adapter's compatibility label.
 | [0.2.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.2.0) | 2026-10-29 | Offline helper preparation, installation diagnostics and development dependencies |
 | [0.1.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.1.0) | 2026-10-29 | Combined inspection, collection download reuse and coordinated plans |
 | [Recovery sources](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/recovery-sources-20261025) | 2026-10-25 | Pinned upstream Git bundles for source recovery |
+
+## 0.7.0 — 2026-11-03
+
+Install several new own-local Cyberpunk ZIPs in one reviewed plan, then explicitly
+enable them and deploy once. Changes since
+[0.6.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/compare/v0.6.0...v0.7.0).
+
+### Added
+
+- Add `install_local_archive` steps to `run_mod_plan` and the session CLI. Check
+  readiness before any plan effect, install disabled before activation, and
+  verify each acknowledgement against its original durable receipt. A lost
+  response stops later steps and deployment without replaying completed work.
+  Reject request IDs that alias by case in plans containing installation.
+- Add `assess_installed_candidates` for exact installed old/candidate pairs and
+  collection requirements. Compare native file identity and installation choices,
+  account for other profiles and ignored rules, and retain explicit conflict or
+  insufficient-evidence results. This read does not authorize migration or prove
+  staged payload compatibility. See [candidate assessment](docs/INSTALLED-CANDIDATES.md).
+- Report installation phases, elapsed checks and waiting reasons through live
+  reconciliation and retained diagnostics. Bound host, metadata and callback waits
+  by the shared work budget; a timeout does not cancel native work or permit retry.
+  Durable receipt finalization remains observed through completion.
+
+### Improved
+
+- Reduce fresh process probes in own-local installation from fourteen to six,
+  keeping probes at native-effect and completion boundaries. Intermediate checks
+  still verify context, paths, physical identities and running tools; process
+  absence is not cached. Other operations retain their existing check policy.
+- In six alternating isolated-host runs with the same 219-byte ZIP, median request
+  time changed from 6,233 to 3,755 ms. This includes observation and receipt work;
+  it is a small fixture result, not a collection-throughput guarantee.
+- Replace the native fixture's intermittent WMI inventory with bounded native
+  process and generation checks. Wait for specific profile-setup completions
+  instead of allowing background setup to overlap the test baseline.
+
+### Upgrading and verification
+
+- Rebuild and upgrade the installed adapter for diagnostics and candidate reads;
+  refresh the MCP bridge for the new client plan schema. The embedded adapter
+  keeps its 1.1.0 compatibility label; use bundle hashes to identify its code.
+- The two-ZIP plan passed isolated official Vortex 2.9.1 acceptance, including
+  disabled-install checkpoints, eleven durable completions, deployment owners
+  and hardlinks, restoration and preservation of a second profile's existing mod.
+  The ordinary adapter was activated and its context/inventory/manifest preserved.
+- Scope remains new own-local noninteractive Cyberpunk ZIPs, up to 64 MiB each.
+  General Nexus installation, replacement, FOMOD and automatic provider migration
+  remain unsupported. No custom Vortex build is required. Dependencies are unchanged.
 
 ## 0.6.0 — 2026-11-03
 
