@@ -87,6 +87,8 @@ async function run(api) {
   }
   let listener;
   try {
+    must(['tracked-download', 'local-archive', 'mcp-local-archive'].includes(input.installRoute || 'tracked-download'), 'INSTALL_ROUTE_INVALID');
+    must(!input.withExistingMod || input.installRoute === 'mcp-local-archive', 'EXISTING_MOD_REQUIRES_CURATED_ROUTE');
     boundary(false); save();
     await wait(() => util.getGames().filter(g => g.id === G).length === 1 && typeof api.ext.awaitModsDeployment === 'function', 'PROVIDER_TIMEOUT');
     must(Object.keys(api.getState().persistent.profiles || {}).length === 0, 'NONEMPTY_FIXTURE_PROFILES');
@@ -102,31 +104,138 @@ async function run(api) {
     boundary();
     const bundle = require('./runtime.cjs');
     const token = crypto.randomBytes(32).toString('hex');
-    listener = bundle.start(api, 3702, { tokenProvider: async () => token });
+    note('native-source-inventory', { loaded: api.getLoadedExtensions().map(e => ({ name: e.name, path: e.path, dynamic: e.dynamic })) });
+    const sourceBinding = { packagePath: path.join(path.dirname(process.execPath), 'resources/app.asar'), expected: {
+      appAsarSha256: 'ec3a29d58ea65a1ca84e456742c894a19efe96920a6710063d221d451a26d59a',
+      dynamic: [
+        ...(input.dynamicSources || []).filter(e => ![__dirname, path.join(input.userData, 'plugins/fixture-cyberpunk-support')].includes(e.path)),
+        { path: __dirname, files: [{ path: 'index.js', sha256: sha(__filename) }, { path: 'runtime.cjs', sha256: input.runtimeSourceSha256 }] },
+        { path: path.join(input.userData, 'plugins/fixture-cyberpunk-support'), files: [{ path: 'index.js', sha256: '59d7d12179f30b2e77cab28bb5d417479e5f39269e9ce71e49ea5fac5782269a' }] },
+      ],
+    } };
+    listener = bundle.start(api, 3702, { tokenProvider: async () => token, localInstallHostBinding: sourceBinding });
     await bounded(new Promise((resolve, reject) => { if (listener.listening) resolve(); else { listener.once('listening', resolve); listener.once('error', () => reject(Error('FIXTURE_BIND_FAILED'))); } }), 'BIND_TIMEOUT', 10000);
     const health = await rpc(token, 'health');
     must(health.extensionVersion === input.runtimeVersion, 'FIXTURE_RUNTIME_VERSION_MISMATCH');
     note('authenticated-native-health', { health, listenerPort: 3702 });
     const target = contained(path.join(input.game, input.payloadPath));
     must(sha(target) === input.sentinelSha256, 'SENTINEL_BASELINE_MISMATCH');
-    const ids = await native(api, 'import-downloads', cb => [[input.archive], values => cb(null, values), true]);
-    boundary(); must(Array.isArray(ids) && ids.length === 1, 'IMPORT_COUNT_MISMATCH');
+    let existingBaseline;
+    function existingSnapshot(excludeId) {
+      const s = api.getState(), id = existingBaseline.modId;
+      const profileFlags = Object.fromEntries(Object.entries(s.persistent.profiles || {}).map(([profileId, profile]) =>
+        [profileId, Object.fromEntries(Object.entries(profile.modState || {}).filter(([modId]) => modId !== excludeId)
+          .map(([modId, flags]) => [modId, flags.enabled === true]))]));
+      return { modId: id, mod: structuredClone(s.persistent.mods[G][id]), profileFlags,
+        staged: diskProof(existingBaseline.staged.path) };
+    }
+    function verifyExisting(excludeId) {
+      if (!existingBaseline) return;
+      const after = existingSnapshot(excludeId);
+      const beforeJSON = JSON.stringify(existingBaseline), afterJSON = JSON.stringify(after);
+      if (beforeJSON !== afterJSON) {
+        const bounded = (value, text) => text.length <= 32768 ? value : {
+          snapshotBytes: Buffer.byteLength(text), sha256: crypto.createHash('sha256').update(text).digest('hex') };
+        note('existing-mod-preservation-mismatch', {
+          before: bounded(existingBaseline, beforeJSON), after: bounded(after, afterJSON) });
+        throw Error('EXISTING_MOD_OR_FLAGS_CHANGED');
+      }
+      must(!fs.existsSync(contained(path.join(input.game, input.existingMod.payloadPath))), 'EXISTING_MOD_AUTO_DEPLOYED');
+      return after;
+    }
+    if (input.withExistingMod) {
+      const archive = contained(input.existingMod.archivePath);
+      must(sha(archive) === input.existingMod.archiveSha256 && fs.statSync(archive).size === input.existingMod.archiveSize,
+        'EXISTING_ARCHIVE_MISMATCH');
+      let didInstall = false;
+      const installed = (gameId, archiveId, modId) => {
+        if (gameId === G && archiveId === null && modId === 'native-agent-existing') didInstall = true;
+      };
+      api.events.on('did-install-mod', installed);
+      try {
+        const id = await native(api, 'start-install', cb => [archive, cb]);
+        boundary();
+        const mod = api.getState().persistent.mods[G][id];
+        must(typeof id === 'string' && id === 'native-agent-existing' && mod?.state === 'installed'
+          && mod.installationPath === id, 'EXISTING_MOD_INSTALL_UNVERIFIED');
+        const staged = contained(path.join(input.stage, id, input.existingMod.payloadPath));
+        must(sha(staged) === input.existingMod.payloadSha256, 'EXISTING_MOD_BYTES_MISMATCH');
+        must(typeof actions.setModEnabled === 'function', 'EXISTING_MOD_DISABLE_ACTION_UNAVAILABLE');
+        api.store.dispatch(actions.setModEnabled(P, id, false));
+        // Stock InstallManager starts setModSize without awaiting it before the
+        // install callback. Capture only after its exact one-file size settles.
+        const expectedSize = fs.statSync(staged).size;
+        await wait(() => didInstall && api.getState().persistent.mods[G][id]?.attributes?.modSize === expectedSize,
+          'EXISTING_MOD_POST_INSTALL_PENDING');
+        boundary();
+        must(api.getState().persistent.profiles[P].modState[id]?.enabled === false, 'EXISTING_MOD_DISABLE_UNVERIFIED');
+        existingBaseline = { modId: id, staged: { path: staged } };
+        existingBaseline = existingSnapshot();
+        note('existing-mod-baseline-settled', { modId: id, didInstall, modSize: expectedSize, enabled: false });
+      } finally { api.events.removeListener('did-install-mod', installed); }
+      must(Object.values(existingBaseline.profileFlags).every(flags => flags[existingBaseline.modId] !== true), 'EXISTING_MOD_AUTO_ENABLED');
+      verifyExisting();
+      note('existing-mod-baseline', existingBaseline);
+    }
+    const direct = input.installRoute === 'local-archive';
+    // Doodlebot localMod.ts (3b78fdf): same stock event, without its UI responders.
+    let modId;
+    if (input.installRoute === 'mcp-local-archive') {
+      const pins = Object.fromEntries(['gameId', 'profileId', 'gamePath', 'stagingPath', 'downloadPath', 'filesystemIds'].map(k => [k, health[k]]));
+      note('mcp-local-install-intent');
+      const result = await rpc(token, 'install_local_archive', { ...pins, requestId: input.runId + '_install',
+        archivePath: input.archive, size: input.archiveSize, sha256: input.archiveSha256 });
+      note('mcp-local-install-completed', { result });
+      modId = result.modId;
+    }
+    const curated = input.installRoute === 'mcp-local-archive';
+    if (direct) {
+      note('native-local-install-intent', { archive: diskProof(input.archive) });
+      modId = await native(api, 'start-install', cb => [input.archive, cb]);
+      boundary();
+    }
+    const ids = direct ? [] : curated ? [api.getState().persistent.mods[G][modId].archiveId]
+      : await native(api, 'import-downloads', cb => [[input.archive], values => cb(null, values), true]);
+    boundary(); must(Array.isArray(ids) && ids.length === (direct ? 0 : 1), 'IMPORT_COUNT_MISMATCH');
     const downloadId = ids[0];
-    await wait(() => api.getState().persistent.downloads.files[downloadId]?.state === 'finished', 'DOWNLOAD_FINISHED_TIMEOUT');
-    const record = api.getState().persistent.downloads.files[downloadId];
-    must(record.game?.length === 1 && record.game[0] === G, 'IMPORTED_GAME_MISMATCH');
-    const archive = contained(path.join(input.downloads, record.localPath));
-    must(path.dirname(norm(archive)) === norm(input.downloads) && sha(archive) === input.archiveSha256 && fs.statSync(archive).size === input.archiveSize, 'IMPORTED_ARCHIVE_MISMATCH');
-    note('native-import-finished', { downloadId, archive: diskProof(archive), trackedDownloadCount: Object.keys(api.getState().persistent.downloads.files).length });
-    boundary(); must(Object.keys(api.getState().persistent.mods?.[G] || {}).length === 0, 'INSTALL_COLLISION');
-    const modId = await native(api, 'start-install-download', cb => [downloadId, { allowAutoEnable: false, profileId: P }, cb]);
+    if (!direct) await wait(() => api.getState().persistent.downloads.files[downloadId]?.state === 'finished', 'DOWNLOAD_FINISHED_TIMEOUT');
+    const record = direct ? null : api.getState().persistent.downloads.files[downloadId];
+    if (!direct) must(record.game?.length === 1 && record.game[0] === G, 'IMPORTED_GAME_MISMATCH');
+    const archive = direct ? input.archive : contained(path.join(input.downloads, record.localPath));
+    must((direct || path.dirname(norm(archive)) === norm(input.downloads)) && sha(archive) === input.archiveSha256 && fs.statSync(archive).size === input.archiveSize, 'IMPORTED_ARCHIVE_MISMATCH');
+    note(direct ? 'native-local-archive-finished' : 'native-import-finished', { downloadId, archive: diskProof(archive), trackedDownloadCount: Object.keys(api.getState().persistent.downloads.files).length });
+    boundary(); must(Object.keys(api.getState().persistent.mods?.[G] || {}).length
+      === (input.withExistingMod ? 1 : 0) + (direct || curated ? 1 : 0), 'INSTALL_COLLISION');
+    if (!direct && !curated) modId = await native(api, 'start-install-download', cb => [downloadId, { allowAutoEnable: false, profileId: P }, cb]);
     boundary();
+    must(typeof modId === 'string' && modId.length > 0, 'INSTALL_MOD_ID_INVALID');
     const mod = api.getState().persistent.mods[G][modId];
-    must(mod?.state === 'installed' && mod.archiveId === downloadId, 'INSTALLED_RECORD_MISMATCH');
+    must(mod?.state === 'installed' && (direct || mod.archiveId === downloadId), 'INSTALLED_RECORD_MISMATCH');
     must(api.getState().persistent.profiles[P].modState[modId]?.enabled !== true, 'INSTALL_AUTO_ENABLED');
     const staged = contained(path.join(input.stage, mod.installationPath, input.payloadPath));
     must(sha(staged) === input.payloadSha256 && sha(target) === input.sentinelSha256, 'INSTALL_ONLY_BYTES_MISMATCH');
     note('native-install-only', { modId, installationPath: mod.installationPath, downloadId, staged: diskProof(staged), original: diskProof(target) });
+    if (existingBaseline) {
+      note('existing-mod-preserved-after-install', verifyExisting(modId));
+      const modsBefore = JSON.stringify(api.getState().persistent.mods), profilesBefore = JSON.stringify(api.getState().persistent.profiles);
+      const downloadsBefore = JSON.stringify(api.getState().persistent.downloads.files);
+      const pins = Object.fromEntries(['gameId', 'profileId', 'gamePath', 'stagingPath', 'downloadPath', 'filesystemIds'].map(k => [k, health[k]]));
+      let refusal;
+      try {
+        await rpc(token, 'install_local_archive', { ...pins, requestId: input.runId + '_collision',
+          archivePath: input.archive, size: input.archiveSize, sha256: input.archiveSha256 });
+      } catch (error) { refusal = String(error.message); }
+      must(refusal?.includes('LOCAL_ARCHIVE_MOD_COLLISION'), 'SECOND_INSTALL_NOT_REFUSED');
+      const failed = JSON.parse(fs.readFileSync(path.join(input.adapterReceipts, input.runId + '_collision.failed.json')));
+      must(failed.effectsMayHaveOccurred === false && failed.inspectBeforeRetry === false
+        && failed.errorCode === 'LOCAL_ARCHIVE_MOD_COLLISION', 'COLLISION_REFUSAL_HAS_EFFECTS');
+      must(!fs.existsSync(path.join(input.adapterReceipts, 'unresolved.json')), 'COLLISION_LEFT_UNRESOLVED');
+      must(JSON.stringify(api.getState().persistent.mods) === modsBefore
+        && JSON.stringify(api.getState().persistent.profiles) === profilesBefore
+        && JSON.stringify(api.getState().persistent.downloads.files) === downloadsBefore, 'COLLISION_CHANGED_STATE');
+      note('same-archive-collision-refused', { failed, installedMods: Object.keys(api.getState().persistent.mods[G]).length,
+        unresolved: false, existing: verifyExisting(modId) });
+    }
     async function operation(name, suffix, extra = {}) {
       boundary(); const h = await rpc(token, 'health');
       for (const [key, expected] of Object.entries({ gameId: G, profileId: P, gamePath: input.game, stagingPath: input.stage, downloadPath: input.downloads })) must(key.endsWith('Path') ? norm(h[key]) === norm(expected) : h[key] === expected, 'HTTP_HEALTH_PIN_DRIFT');
@@ -151,8 +260,11 @@ async function run(api) {
     // Native activationStore removes the deployment manifest when no files remain.
     const restored = fs.existsSync(manifestPath) ? JSON.parse(fs.readFileSync(manifestPath, 'utf8')) : { files: [], manifestAbsent: true };
     must(restored.files.length === 0 && sha(staged) === input.payloadSha256, 'RESTORED_MANIFEST_MISMATCH');
-    must(Object.keys(api.getState().persistent.downloads.files).length === 1 && Object.keys(api.getState().persistent.mods[G]).length === 1, 'DUPLICATE_RECORDS');
-    note('independent-rollback-proof', { original: diskProof(target), staging: diskProof(staged), manifest: restored, enabled: api.getState().persistent.profiles[P].modState[modId].enabled, trackedDownloads: 1, installedMods: 1 });
+    const trackedDownloads = Object.keys(api.getState().persistent.downloads.files).length;
+    const installedMods = input.withExistingMod ? 2 : 1;
+    must(trackedDownloads === (direct ? 0 : 1) && Object.keys(api.getState().persistent.mods[G]).length === installedMods, 'DUPLICATE_RECORDS');
+    note('independent-rollback-proof', { original: diskProof(target), staging: diskProof(staged), manifest: restored, enabled: api.getState().persistent.profiles[P].modState[modId].enabled, trackedDownloads, installedMods });
+    if (existingBaseline) note('existing-mod-preserved-after-rollback', verifyExisting(modId));
     receipt.status = 'passed';
   } catch (err) {
     receipt.status = 'failed'; receipt.error = String(err.message).slice(0, 1000);

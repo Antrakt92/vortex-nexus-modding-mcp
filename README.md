@@ -22,7 +22,8 @@ Mods metadata searches and uploads.
 
 **Build from source on Windows.** Follow the [setup guide](docs/GETTING-STARTED.md)
 to install the Vortex extension. Inspection, downloads, enabling mods and deployment
-use the running Vortex process. Installing mod archives requires a separate script.
+use the running Vortex process. New own-local Cyberpunk ZIPs can also be installed
+disabled through MCP on the reviewed official Vortex 2.9.1 host.
 
 ## What you can do
 
@@ -32,6 +33,7 @@ use the running Vortex process. Installing mod archives requires a separate scri
 | Inspect mod usage | Read all-profile usage, incoming requirements and archive references for exact installed IDs | [Lifecycle preflight](docs/LIFECYCLE-PERFORMANCE.md) |
 | Prepare a collection | Match exact Nexus mod/file IDs to existing tracked downloads | [Download reuse](docs/COLLECTION-DOWNLOADS.md) |
 | Change enabled mods and deploy | Check a plan before running it, apply changes one at a time and deploy once at the end | [Plan format](docs/NO-RESTART-WORKFLOW.md#run-the-reviewed-plan-through-mcp) |
+| Install a new own-local ZIP | Verify a reviewed host and archive, import once and install disabled without a temporary plugin | [Local ZIP installation](docs/STOCK-LOCAL-INSTALL.md) |
 | Check an interrupted plan | Read its saved intents and reconcile the exact operation receipts without replay | [Plan status](docs/NO-RESTART-WORKFLOW.md#inspect-a-plan-after-a-disconnect) |
 | Research Nexus Mods | Search public metadata and requirements through the community CLI | [Nexus CLI](tools/modding/nexus-cli/README.md) |
 | Publish your own mod | Check an archive locally and upload an update through the official Nexus uploader | [Publication runner](tools/modding/nexus-publish/README.md) |
@@ -72,16 +74,17 @@ set the matching `NEXUS_WORKSPACE`; see [configuration](docs/CONFIGURATION.md).
   recorded in [the live verification report](docs/AUDIT-20261029.md#subsequent-live-upgrade-and-acceptance--2026-10-29).
   The setup guide lists other games with process checks; those games have not
   all been tested through a full install and deploy cycle.
-- **The MCP does not install mod archives.** Separate tools prepare installation
-  scripts for specific templates. Each script needs its own source, package and
-  current-state checks. See [native helpers](docs/NATIVE-HELPER-PREPARATION.md)
-  and [tracked Nexus batches](docs/TRACKED-NEXUS-HELPER-REVIEW.md).
+- **Local installation has a narrow scope.** `install_local_archive` handles new,
+  noninteractive own Cyberpunk ZIPs with no metadata match or existing owner.
+  Nexus updates, replacements and other archive types retain their separately
+  reviewed [native helper](docs/NATIVE-HELPER-PREPARATION.md) and
+  [tracked Nexus batch](docs/TRACKED-NEXUS-HELPER-REVIEW.md) workflows.
 - **Credentials stay local.** No account sessions, Vortex database, mod archives
   or game files are included. There is no generic dispatch, game-launch or
   profile-switching API. Receipts do not replace independent deployed-file checks.
 
 The suite version in [VERSION](VERSION) is separate from the embedded adapter's
-1.0.4 label. Source releases do not update an already installed extension.
+1.1.0 label. Source releases do not update an already installed extension.
 
 ## Help and development
 

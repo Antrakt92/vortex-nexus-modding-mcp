@@ -1,6 +1,6 @@
 'use strict';
 const path = require('node:path');
-const OPERATIONS = new Set(['install_download', 'set_mods_enabled', 'deploy_mods', 'download_nexus']);
+const OPERATIONS = new Set(['install_download', 'install_local_archive', 'set_mods_enabled', 'deploy_mods', 'download_nexus']);
 const URI = /\b(?:[a-z][a-z0-9+.-]*:\/\/|[a-z][a-z0-9+.-]+:|[a-z]:(?![\\/]))[^\s"'<>]+/gi;
 const PATH_FIELD = /^(?:game|staging|download)Path$/;
 function insist(ok, code) { if (!ok) throw new Error(code); }
@@ -47,6 +47,7 @@ function operational(kind, trail) {
     if (trail.length === 2 && trail[0] === 'filesystemIds' && PATH_FIELD.test(trail[1])) return 'filesystemId';
   }
   if (kind === 'parameters') {
+    if (trail.length === 1 && trail[0] === 'archivePath') return 'absolutePath';
     if (trail.length === 1 && ['gameId', 'profileId', 'requestId', 'downloadId', 'sha256'].includes(trail[0])) return trail[0];
     if (trail.length === 1 && PATH_FIELD.test(trail[0])) return 'absolutePath';
     if (trail.length === 2 && trail[0] === 'modIds' && /^\d+$/.test(trail[1])) return 'modId';
@@ -58,6 +59,7 @@ function operational(kind, trail) {
     if (trail.length === 2 && trail[0] === 'modIds' && /^\d+$/.test(trail[1])) return 'modId';
   }
   if (kind === 'reconcile_operation') {
+    if (trail.length === 2 && trail[0] === 'localInstall' && ['modId', 'downloadId'].includes(trail[1])) return trail[1];
     if (trail.length === 1 && trail[0] === 'protocol') return 'protocol';
     if (['attempt', 'completion', 'failure', 'interlock'].includes(trail[0])) return operational('receipt', trail.slice(1));
     if (trail.length === 3 && /^\d+$/.test(trail[1])) {

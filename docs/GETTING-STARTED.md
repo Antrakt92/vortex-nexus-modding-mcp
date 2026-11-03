@@ -101,7 +101,7 @@ charges depend on that service.
 | Old tools or schemas after an update | Refresh the MCP connection for bridge changes. Native extension changes additionally need the documented upgrade and Vortex restart. |
 | Inspection is partial or a list reaches its limit | Inspect the errors and narrow the requested scope. A capped list is not complete proof. |
 | An uncertain operation blocks writes | Inspect the original request's receipts and use reconciliation. Do not delete interlocks or invent a new request ID to retry. |
-| You want to install a mod archive | The resident adapter refuses installation. Reviewed native helper kits are expert preparation tools for specific templates, not a generic installer. |
+| You want to install a mod archive | New own-local Cyberpunk ZIPs use [the scoped installer](STOCK-LOCAL-INSTALL.md). Replacements, Nexus updates and interactive archives retain their separate reviewed native workflows. |
 
 For plan examples, see [the running-session guide](NO-RESTART-WORKFLOW.md).
 For help, use [the support guide](../SUPPORT.md).

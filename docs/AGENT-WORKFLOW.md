@@ -21,6 +21,7 @@ missing capabilities rather than inventing another implementation.
 | Prepare an installed mod update or cleanup | `vortex-nexus-api-audit` | [Lifecycle preflight](LIFECYCLE-PERFORMANCE.md): one bounded `read_mod_lifecycle` snapshot for exact installed IDs, all-profile usage, native requires matches and global archive references; metadata only |
 | Find tracked archives for collection members | `vortex-nexus-api-audit`, then `vortex-mod-lifecycle` for effects | [Batch download lookup](COLLECTION-DOWNLOADS.md); exact Nexus pairs, compact candidates, no archive-integrity claim |
 | Authorized download-only, enable or deploy | `vortex-mod-lifecycle` | Guarded adapter, stable request IDs, [reviewed plans](NO-RESTART-WORKFLOW.md) |
+| Install a new own-local Cyberpunk ZIP | `vortex-mod-lifecycle` | [Stock local installation](STOCK-LOCAL-INSTALL.md): readiness, then `install_local_archive`; disabled install with exact pins, no replacement or automatic deploy |
 | Coordinate downloads or installed-mod activation | `vortex-mod-lifecycle` | `run_mod_plan` MCP / session CLI; batch exact installed IDs, one final deploy, reconcile before recovery; native installation remains a separate stage |
 | Inspect an interrupted reviewed plan | `vortex-mod-lifecycle` | `inspect_mod_plan` / `session.mjs plan-status` with the original full `planId`; historical receipts only, no replay, resume or interlock clearing |
 | Prepare a task-owned native install helper | `vortex-mod-lifecycle` | [Maintained code kit](NATIVE-HELPER-PREPARATION.md); offline preparation and code-contract verification before fresh binding/activation; completed helpers stay frozen |
@@ -54,9 +55,10 @@ to query metadata never authorizes restricted implementation sources.
   task limits, acceptance gates and artifact pins still control.
 - Supported resident reads and managed operations reuse running Vortex. Do not
   restart the host, add a one-shot or manipulate its window for ordinary reads.
-- Native package installation is deliberately absent from the public adapter.
-  Do not add unrestricted dispatch or treat a different archive name as proof
-  that Vortex cannot silently replace an existing mod.
+- General package installation remains unavailable. The scoped own-local route
+  requires source admission, metadata/collision guards and staged payload proof.
+  Do not add unrestricted dispatch or treat a different archive name alone as
+  proof that Vortex cannot silently replace an existing mod.
 - Start managed effects with fresh health/context/filesystem pins. A version
   label alone does not identify a loaded bundle. Host version, package SHA,
   client loading and model availability are separate observations.
