@@ -111,6 +111,12 @@ context/cap/error handling and makes no managed changes. See the
 [collection-download guide](../../../docs/COLLECTION-DOWNLOADS.md) for the schema,
 partial-result rules and the separate archive-verification gate.
 
+For an already installed update candidate, use `assess_installed_candidates`
+with the exact active profile, installed collection and old/candidate IDs. It
+checks native identity and recorded installation specifications, incoming rules,
+profile usage and review gates. It never authorizes a migration or checks disk
+payloads. See the [candidate guide](../../../docs/INSTALLED-CANDIDATES.md).
+
 Supported writes are deliberately separate:
 
 | Operation | Contract |

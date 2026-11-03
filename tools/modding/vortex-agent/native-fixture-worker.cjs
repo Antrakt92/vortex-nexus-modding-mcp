@@ -116,6 +116,8 @@ async function run(api) {
   try {
     must(['tracked-download', 'local-archive', 'mcp-local-archive'].includes(input.installRoute || 'tracked-download'), 'INSTALL_ROUTE_INVALID');
     must(!input.withExistingMod || input.installRoute === 'mcp-local-archive', 'EXISTING_MOD_REQUIRES_CURATED_ROUTE');
+    must(!input.candidateAssessment || input.installRoute === 'mcp-local-archive' && input.withExistingMod,
+      'CANDIDATE_ASSESSMENT_REQUIRES_EXISTING_CURATED_FIXTURE');
     boundary(false); save();
     await wait(() => util.getGames().filter(g => g.id === G).length === 1 && typeof api.ext.awaitModsDeployment === 'function', 'PROVIDER_TIMEOUT');
     must(Object.keys(api.getState().persistent.profiles || {}).length === 0, 'NONEMPTY_FIXTURE_PROFILES');
@@ -332,6 +334,201 @@ async function run(api) {
     must(trackedDownloads === (direct ? 0 : 1) && Object.keys(api.getState().persistent.mods[G]).length === installedMods, 'DUPLICATE_RECORDS');
     note('independent-rollback-proof', { original: diskProof(target), staging: diskProof(staged), manifest: restored, enabled: api.getState().persistent.profiles[P].modState[modId].enabled, trackedDownloads, installedMods });
     if (existingBaseline) note('existing-mod-preserved-after-rollback', verifyExisting(modId));
+    if (input.candidateAssessment) {
+      must(typeof actions.addMod === 'function' && typeof actions.setProfile === 'function'
+        && ['testModReference', 'modRuleId', 'ruleInstallSpec', 'findModByRef'].every(key => typeof util[key] === 'function'),
+      'ASSESSMENT_NATIVE_API_UNAVAILABLE');
+      must(sha(__filename) === input.fixtureWorkerSha256, 'ASSESSMENT_DRIVER_SOURCE_MISMATCH');
+      const digest = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
+      const collectionId = 'native-assessment-collection', secondProfileId = 'native-assessment-second';
+      const id = suffix => 'native-assessment-' + suffix;
+      const md5 = text => crypto.createHash('md5').update('fixture metadata only:' + text).digest('hex');
+      const choices = selected => ({ type: 'fomod', options: [{ name: 'fixture-step',
+        groups: [{ name: 'fixture-group', choices: [{ name: selected, idx: selected === 'old' ? 0 : 1 }] }] }] });
+      const record = (suffix, hash, extra = {}) => ({ id: id(suffix), state: 'installed', type: '',
+        installationPath: id(suffix), archiveId: 'assessment_' + suffix.replace(/-/g, '_'),
+        attributes: { fileMD5: hash, version: '1.0.0', game: [G], ...extra } });
+      // These are deliberate Redux test records, NOT native installations or payload proof.
+      // Exact version avoids fuzzy-version semantics suppressing the bare MD5 marker.
+      const rule = (hash, extra = {}) => ({ type: 'requires',
+        reference: { fileMD5: hash, versionMatch: '1.0.0' }, ...extra });
+      const records = [record('old-vanilla', md5('vanilla')), record('candidate-vanilla', md5('vanilla')),
+        record('candidate-conflict', md5('different')), record('old-choices', md5('choices'), { installerChoices: choices('old') }),
+        record('candidate-choices', md5('choices'), { installerChoices: choices('new') }),
+        record('old-ignored', md5('ignored')), record('candidate-ignored', md5('ignored')),
+        { id: collectionId, state: 'installed', type: 'collection', installationPath: collectionId,
+          attributes: { collectionId: 900001, collectionSlug: 'private-fixture-metadata',
+            revisionId: 900002, revisionNumber: 1, downloadGame: G },
+          rules: [rule(md5('vanilla')), rule(md5('choices'), { installerChoices: choices('old') }), rule(md5('ignored'), { ignored: true })] }];
+      for (const value of records) {
+        must(!api.getState().persistent.mods[G][value.id] && !fs.existsSync(contained(path.join(input.stage, value.id))), 'ASSESSMENT_SETUP_COLLISION');
+        api.store.dispatch(actions.addMod(G, value));
+      }
+      const second = { id: secondProfileId, gameId: G, name: 'PRIVATE Metadata Assessment Fixture',
+        modState: { [id('old-vanilla')]: { enabled: true }, [id('candidate-vanilla')]: { enabled: false } },
+        lastActivated: 0, features: {}, pendingRemove: false };
+      must(!api.getState().persistent.profiles[secondProfileId], 'ASSESSMENT_PROFILE_COLLISION');
+      let lateSetupDispatches = 0;
+      async function settleProfileSetup(profile, enabling, phase) {
+        // Reviewed official v2.9.1: profile_management/index.ts (4b4cddc0)
+        // emits mod-enabled for ANY profile. InstallManager (6f847f3f) tracks
+        // dependencies+recommendations via util/activity.ts (250cf30f).
+        // file_based_loadorder/index.ts (8f3044cc) ends its profile refresh by
+        // SET_FB_LOAD_ORDER({profileId,loadOrder}), action blob b8f88de1.
+        // Join these exact setup effects; never sleep for a generic quiet period.
+        const dispatch = api.store.dispatch;
+        let starts = 0, stops = 0, loadOrderCompleted = false, released = false, complete;
+        const settled = new Promise(resolve => { complete = resolve; });
+        const required = enabling ? 2 : 0;
+        function observeDispatch(...args) {
+          if (released) {
+            lateSetupDispatches++;
+            // withActivityTracking may retain this function. Forward to the current
+            // read-window observer so late callbacks cannot evade its zero count.
+            return api.store.dispatch.apply(api.store, args);
+          }
+          const action = args[0], result = dispatch.apply(this, args);
+          if (action?.payload?.group === 'installing_dependencies'
+            && action.payload.activityId === id('old-vanilla')) {
+            if (action.type === 'START_ACTIVITY') starts++;
+            if (action.type === 'STOP_ACTIVITY') stops++;
+          }
+          if (action?.type === 'SET_FB_LOAD_ORDER' && action.payload?.profileId === P
+            && Array.isArray(action.payload.loadOrder) && action.payload.loadOrder.length === 0) loadOrderCompleted = true;
+          // Independent observers may finish in either order: join all their
+          // exact completions, without assuming activity precedes load order.
+          if (loadOrderCompleted && starts === required && stops === required
+            && (api.getState().session.base.activity?.installing_dependencies ?? []).length === 0
+            && Array.isArray(api.getState().persistent.loadOrder?.[P])
+            && api.getState().persistent.loadOrder[P].length === 0) complete();
+          return result;
+        }
+        api.store.dispatch = observeDispatch;
+        try {
+          api.store.dispatch(actions.setProfile(profile));
+          await bounded(settled, 'ASSESSMENT_SETUP_PROFILE_REFRESH_UNOBSERVED', 15000);
+          must(lateSetupDispatches === 0, 'ASSESSMENT_LATE_SETUP_DISPATCH');
+          note(phase, { profileId: secondProfileId, activeProfileId: P, starts, stops,
+            loadOrderCompletionObserved: true, emptyLoadOrderObserved: true, loadOrderHash: digest([]),
+            sourceBlobs: { profiles: '4b4cddc08c29f5fa2d78b0e7f59ebea8dc3380c1',
+              installManager: '6f847f3f878a0f8a8082b827d8b2bc4ebbcbe221', activity: '250cf30f897938ed1705cfec654b3b6b4f79d598',
+              loadOrder: '8f3044cc73c8d97629da3f4f304382eb7fe71149', loadOrderAction: 'b8f88de149399ed01d346ae8e6b4788438078f30' } });
+        } finally { api.store.dispatch = dispatch; released = true; }
+      }
+      await settleProfileSetup(second, true, 'candidate-assessment-setup-profile-settled');
+      const stateProjection = () => {
+        const state = api.getState();
+        return { mods: state.persistent.mods, profiles: state.persistent.profiles,
+          downloads: state.persistent.downloads, settings: state.settings,
+          activeGameId: selectors.activeGameId(state), activeProfileId: selectors.activeProfileId(state) };
+      };
+      // Log field paths only. Unrecognized/dynamic keys are masked; no values,
+      // account identifiers, settings contents or action payloads are persisted.
+      const diagnosticFields = new Set(['mods', 'profiles', 'downloads', 'settings', 'activeGameId', 'activeProfileId',
+        'gameMode', 'discovered', 'tools', 'toolsRunning', 'interface', 'automation', 'collections', 'nexus', 'window',
+        'deployment', 'needToDeploy', 'modState', 'enabled', 'enabledTime', 'disabledTime', 'pendingRemove',
+        'lastActivated', 'features', 'id', 'gameId', 'state', 'type', 'archiveId', 'installationPath', 'attributes',
+        'rules', 'reference', 'version', 'fileMD5', 'fileList', 'installerChoices', 'patches', 'modSize', 'source',
+        'referenceTag', 'referenceTags', 'installPath', 'downloadPath', 'stagingPath', 'path', 'autoDeployment',
+        'autoInstall', 'autoEnable', 'autoStart', 'files', 'modInfo', 'localPath', 'downloadGame', G, P,
+        secondProfileId, modId, existingBaseline.modId, ...records.map(value => value.id)]);
+      function changedPaths(before, after) {
+        const paths = []; let visited = 0, truncated = false;
+        function walk(a, b, prefix = '', depth = 0) {
+          if (isDeepStrictEqual(a, b)) return;
+          if (paths.length >= 32 || ++visited > 50000) { truncated = true; return; }
+          if (depth >= 12 || !a || !b || typeof a !== 'object' || typeof b !== 'object'
+            || Array.isArray(a) !== Array.isArray(b)) { paths.push(prefix || '<root>'); return; }
+          for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
+            const label = Array.isArray(a) ? '[]' : diagnosticFields.has(key) ? key : '<field>';
+            walk(a[key], b[key], prefix ? prefix + '.' + label : label, depth + 1);
+            if (truncated) break;
+          }
+        }
+        walk(before, after); return { paths, truncated };
+      }
+      const preserved = { nativeMod: structuredClone(api.getState().persistent.mods[G][modId]),
+        existingMod: structuredClone(api.getState().persistent.mods[G][existingBaseline.modId]),
+        targetProfile: structuredClone(api.getState().persistent.profiles[P]),
+        original: diskProof(target), staging: diskProof(staged), existingStaging: diskProof(existingBaseline.staged.path) };
+      note('candidate-assessment-fixture-setup', { metadataRecordsOnly: true, payloadVerified: false,
+        collectionModId: collectionId, secondProfileId, records, secondProfile: second, preserved,
+        fixtureWorkerSha256: input.fixtureWorkerSha256, candidateAssessmentSourceSha256: input.candidateAssessmentSourceSha256 });
+      async function assessmentCase(name, oldSuffix, candidateSuffix, expected) {
+        boundary();
+        must(lateSetupDispatches === 0, 'ASSESSMENT_LATE_SETUP_DISPATCH');
+        const args = { gameId: G, profileId: P, collectionModId: collectionId, expectedRevisionId: 900002,
+          comparisons: [{ oldModId: id(oldSuffix), candidateModId: id(candidateSuffix) }] };
+        const beforeState = structuredClone(stateProjection()), before = digest(beforeState), dispatch = api.store.dispatch;
+        const actionTypes = []; let actionTypesTruncated = false;
+        let dispatches = 0, nativeEffects = 0, result;
+        const effects = ['import-downloads', 'start-install', 'start-install-download', 'remove-mod', 'remove-mods', 'deploy-mods'];
+        const countEffect = () => { nativeEffects++; };
+        let wrapped = false;
+        try {
+          api.store.dispatch = function(...args) {
+            dispatches++;
+            const type = args[0]?.type;
+            if (actionTypes.length < 32) actionTypes.push(typeof type === 'string'
+              && /^[A-Z][A-Z0-9_ :()./-]{0,159}$/.test(type) ? type : 'UNRECOGNIZED_ACTION_TYPE');
+            else actionTypesTruncated = true;
+            return dispatch.apply(this, args);
+          }; wrapped = true;
+          for (const name of effects) api.events.on(name, countEffect);
+          result = await rpc(token, 'assess_installed_candidates', args);
+        } finally {
+          if (wrapped) api.store.dispatch = dispatch;
+          for (const name of effects) api.events.removeListener(name, countEffect);
+        }
+        const afterState = structuredClone(stateProjection()), after = digest(afterState);
+        if (before !== after || dispatches !== 0 || nativeEffects !== 0 || lateSetupDispatches !== 0) {
+          const changed = changedPaths(beforeState, afterState);
+          note('candidate-assessment-state-mismatch', { case: name, dispatches, nativeEffects,
+            actionTypes, actionTypesTruncated, lateSetupDispatches, changedPaths: changed.paths, changedPathsTruncated: changed.truncated,
+            before, after, originalRecordsUnchanged: isDeepStrictEqual(beforeState.mods[G][modId], afterState.mods[G][modId])
+              && isDeepStrictEqual(beforeState.mods[G][existingBaseline.modId], afterState.mods[G][existingBaseline.modId]),
+            originalProfileUnchanged: isDeepStrictEqual(beforeState.profiles[P], afterState.profiles[P]) });
+        }
+        must(before === after && dispatches === 0 && nativeEffects === 0 && lateSetupDispatches === 0, 'ASSESSMENT_RPC_CHANGED_STATE');
+        must(result.schema === 'installed-candidate-assessment/1' && result.gameId === G && result.profileId === P
+          && result.collection?.modId === collectionId && result.collection.revisionId === 900002
+          && result.metadataOnly === true && result.effectsAllowed === false && result.migrationReady === false
+          && result.diskDeploymentVerified === false && result.comparisons?.length === 1, 'ASSESSMENT_RESPONSE_INVALID');
+        const row = result.comparisons[0];
+        must(row.oldModId === args.comparisons[0].oldModId && row.candidateModId === args.comparisons[0].candidateModId
+          && expected.includes(row.status) && /^[a-f0-9]{64}$/.test(row.selectedRule?.ruleIdHash || '')
+          && /^[a-f0-9]{64}$/.test(row.selectedRule?.fingerprint || '') && /^[a-f0-9]{64}$/.test(row.fingerprint || ''),
+        'ASSESSMENT_OUTCOME_MISMATCH');
+        must(!JSON.stringify(result).includes('"ruleId":'), 'ASSESSMENT_RAW_RULE_ID_EXPOSED');
+        note('candidate-assessment-' + name, { args, result, before, after, dispatches, nativeEffects });
+        return row;
+      }
+      const vanilla = await assessmentCase('vanilla', 'old-vanilla', 'candidate-vanilla', ['compatible_installed_variant']);
+      must(vanilla.reasons.length === 0 && vanilla.profiles.old.some(p => p.id === secondProfileId && p.enabled === true)
+        && vanilla.archiveReferences.old.some(r => r.gameId === G && r.modId === id('old-vanilla'))
+        && vanilla.archiveReferences.candidate.some(r => r.gameId === G && r.modId === id('candidate-vanilla')), 'ASSESSMENT_CLOSURE_UNPROVEN');
+      const exact = await assessmentCase('exact-conflict', 'old-vanilla', 'candidate-conflict', ['conflict']);
+      must(exact.reasons.includes('CANDIDATE_IDENTITY_CONFLICT'), 'ASSESSMENT_EXACT_CONFLICT_UNPROVEN');
+      const customized = await assessmentCase('choices', 'old-choices', 'candidate-choices', ['conflict', 'insufficient_evidence']);
+      must(customized.reasons.includes('CUSTOMIZATIONS_REVIEW_REQUIRED')
+        && customized.incomingRequires.some(r => r.oldInstallSpecMatches === true && r.installSpecMatches === false), 'ASSESSMENT_CHOICES_MISMATCH_UNPROVEN');
+      const ignored = await assessmentCase('ignored', 'old-ignored', 'candidate-ignored', ['insufficient_evidence']);
+      must(ignored.reasons.includes('IGNORED_REQUIREMENT_REVIEW_REQUIRED'), 'ASSESSMENT_IGNORED_REVIEW_UNPROVEN');
+      await settleProfileSetup({ ...second, pendingRemove: true }, false, 'candidate-assessment-pending-profile-settled');
+      const pending = await assessmentCase('pending-profile', 'old-vanilla', 'candidate-vanilla', ['insufficient_evidence']);
+      must(pending.reasons.includes('PROFILE_PENDING_REMOVE')
+        && pending.profiles.old.some(p => p.id === secondProfileId && p.pendingRemove === true), 'ASSESSMENT_PENDING_PROFILE_UNPROVEN');
+      const state = api.getState();
+      must(isDeepStrictEqual(state.persistent.mods[G][modId], preserved.nativeMod)
+        && isDeepStrictEqual(state.persistent.mods[G][existingBaseline.modId], preserved.existingMod)
+        && isDeepStrictEqual(state.persistent.profiles[P], preserved.targetProfile)
+        && isDeepStrictEqual(diskProof(target), preserved.original) && isDeepStrictEqual(diskProof(staged), preserved.staging)
+        && isDeepStrictEqual(diskProof(existingBaseline.staged.path), preserved.existingStaging)
+        && !fs.existsSync(target + '.vortex_backup'), 'ASSESSMENT_ORIGINAL_PROOF_CHANGED');
+      note('candidate-assessment-fixture-finished', { metadataRecordsOnly: true, noAdditionalDeployment: true,
+        records: records.map(value => structuredClone(state.persistent.mods[G][value.id])),
+        secondProfile: structuredClone(state.persistent.profiles[secondProfileId]), preserved });
+    }
     receipt.status = 'passed';
   } catch (err) {
     receipt.status = 'failed'; receipt.error = String(err.message).slice(0, 1000);

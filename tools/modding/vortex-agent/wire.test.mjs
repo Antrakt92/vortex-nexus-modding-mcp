@@ -66,7 +66,7 @@ test('built extension wire: allowlist, SDK2 HTTP, legacy bridge, schemas and bro
     const list = await call('tools/list', {});
     assert.deepEqual(list.tools.map(tool => tool.name).sort(), [
       'health', 'read_native_preflight', 'reconcile_operation', 'list_profiles', 'list_mods', 'list_downloads',
-      'list_mod_rules', 'find_mod_dependents', 'read_mod_lifecycle', 'list_file_conflicts', 'list_known_mod_conflicts',
+      'list_mod_rules', 'find_mod_dependents', 'read_mod_lifecycle', 'assess_installed_candidates', 'list_file_conflicts', 'list_known_mod_conflicts',
       'list_unsolved_conflicts', 'read_collection_health', 'list_dialogs', 'list_external_changes',
       'set_mods_enabled', 'deploy_mods', 'download_nexus', 'install_local_archive', 'read_local_install_readiness',
     ].sort());
@@ -157,6 +157,32 @@ test('built extension wire: allowlist, SDK2 HTTP, legacy bridge, schemas and bro
     assert.equal(lifecycle.mods[0].profiles.find(p => p.id === 'other').pendingRemove, true);
     const invalidLifecycle = await call('tools/call', {name: 'read_mod_lifecycle', arguments: {modIds: ['inactive'], remove: true}});
     assert.equal(invalidLifecycle.isError, true);
+    vortex.util.modRuleId = rule => rule.type + '_' + rule.reference.tag;
+    vortex.util.ruleInstallSpec = () => ({});
+    vortex.util.findModByRef = (reference, mods, source) => {
+      assert.equal(source,undefined);
+      return Object.values(mods).find(mod => vortex.util.testModReference(mod,reference));
+    };
+    state.persistent.mods.cyberpunk2077.collection.attributes = {collectionId:10,revisionId:20,revisionNumber:1};
+    state.persistent.mods.cyberpunk2077.collection.rules[0].reference.tag = 'own-wire-member';
+    state.persistent.mods.cyberpunk2077.candidate = {id:'candidate',state:'installed',type:'',
+      attributes:{fileId:42,version:'1.0'}};
+    state.persistent.profiles.other.pendingRemove = false;
+    const assessmentArgs = {gameId:'cyberpunk2077',profileId:'p',collectionModId:'collection',expectedRevisionId:20,
+      comparisons:[{oldModId:'inactive',candidateModId:'candidate'}]};
+    const stateBeforeAssessment = JSON.stringify(state);
+    const assessmentResult = await call('tools/call', {name:'assess_installed_candidates',arguments:assessmentArgs});
+    assert.notEqual(assessmentResult.isError,true,JSON.stringify(assessmentResult));
+    const assessment = JSON.parse(assessmentResult.content[0].text);
+    assert.equal(assessment.schema,'installed-candidate-assessment/1');
+    assert.equal(assessment.effectsAllowed,false); assert.equal(assessment.migrationReady,false);
+    assert.equal(assessment.comparisons[0].status,'compatible_installed_variant');
+    assert.equal(assessment.comparisons[0].incomingRequires[0].identityMatches,true);
+    assert.equal(assessment.comparisons[0].incomingRequires[0].installSpecMatches,true);
+    assert.equal(JSON.stringify(state),stateBeforeAssessment);
+    assert.equal(list.tools.find(tool => tool.name === 'assess_installed_candidates').annotations.readOnlyHint,true);
+    const invalidAssessment = await call('tools/call', {name:'assess_installed_candidates',arguments:{...assessmentArgs,apply:true}});
+    assert.equal(invalidAssessment.isError,true);
     state.persistent.downloads.files.d = { state: 'finished', localPath: 'synthetic.zip', size: 12, modInfo: { nexus: { ids: { gameId: 'cyberpunk2077', modId: 42, fileId: 43 } } } };
     const downloads = await call('tools/call', { name: 'list_downloads', arguments: {} });
     const projected = JSON.parse(downloads.content[0].text)[0]; assert.equal(projected.nexusModId, 42); assert.equal(projected.identityVerified, true);

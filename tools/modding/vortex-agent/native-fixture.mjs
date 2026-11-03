@@ -88,6 +88,8 @@ async function snapshot() {
 }
 async function main() {
   must(process.platform === 'win32' && process.argv[2] === '--run', 'USAGE_native-fixture.mjs_--run_--support-extension_PATH_--support-index-sha256_SHA');
+  must(!process.argv.includes('--candidate-assessment') || process.argv.includes('--mcp-local-archive')
+    && process.argv.includes('--with-existing-mod'), 'CANDIDATE_ASSESSMENT_REQUIRES_EXISTING_CURATED_FIXTURE');
   const supportIndex = process.argv.indexOf('--support-extension');
   const hashIndex = process.argv.indexOf('--support-index-sha256');
   must(supportIndex > 2 && hashIndex > 2 && process.argv[supportIndex + 1]
@@ -113,6 +115,7 @@ async function main() {
   input.installRoute = process.argv.includes('--mcp-local-archive') ? 'mcp-local-archive'
     : process.argv.includes('--local-archive') ? 'local-archive' : 'tracked-download';
   input.withExistingMod = process.argv.includes('--with-existing-mod');
+  input.candidateAssessment = process.argv.includes('--candidate-assessment');
   must(!input.withExistingMod || input.installRoute === 'mcp-local-archive', 'EXISTING_MOD_REQUIRES_CURATED_ROUTE');
   if (input.withExistingMod) {
     const payloadPath = 'archive/pc/mod/native_agent_existing.archive';
@@ -147,6 +150,13 @@ async function main() {
   const runtime = original;
   fs.writeFileSync(path.join(driver, 'runtime.cjs'), runtime, { flag: 'wx' });
   fs.copyFileSync(path.join(here, 'native-fixture-worker.cjs'), path.join(driver, 'index.js'), fs.constants.COPYFILE_EXCL);
+  if (input.candidateAssessment) {
+    input.fixtureWorkerSha256 = sha(fs.readFileSync(path.join(driver, 'index.js')));
+    input.candidateAssessmentSourceSha256 = provenance.sources['installed-candidate-assessment.cjs'];
+    must(/^[a-f0-9]{64}$/.test(input.candidateAssessmentSourceSha256 || '')
+      && input.candidateAssessmentSourceSha256 === sha(fs.readFileSync(path.join(here, 'installed-candidate-assessment.cjs'))),
+    'ASSESSMENT_SOURCE_PROVENANCE_MISMATCH');
+  }
   write(path.join(driver, 'input.json'), input);
   write(path.join(driver, 'info.json'), { name: 'Private Native Agent Fixture', author: 'Local fixture', version: '1.0.0', description: 'Synthetic native lifecycle; never load in ordinary Vortex.' });
   const supportDest = path.join(plugins, 'fixture-cyberpunk-support'); fs.mkdirSync(supportDest);
