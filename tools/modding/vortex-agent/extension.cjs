@@ -8,6 +8,7 @@ const control = require('./vortexControl');
 const { createOperations, safe } = require('./guard.cjs');
 const { dialogs, conflicts, externalChanges, listDownloads, collectionHealth, unresolvedConflicts } = require('./inspection.cjs');
 const { readModLifecycle } = require('./lifecycle-inspection.cjs');
+const { assessInstalledCandidates, LIMITS: ASSESSMENT_LIMITS } = require('./installed-candidate-assessment.cjs');
 const { readNativePreflight } = require('./native-preflight.cjs');
 const { catalogFromDisk } = require('./download-identity.cjs');
 const ingress = require('./http-ingress.cjs');
@@ -86,6 +87,12 @@ function register(server, api, options = {}) {
   add('read_mod_lifecycle', { gameId: id.optional(), modIds: z.array(id).min(1).max(20) },
     a => readModLifecycle(api, selectors, util, a), false,
     'Before preparing installation, update or removal helpers, inspect 1–20 exact installed mod IDs in one bounded state read: usage in every game profile including pending removal, native requires matches including collection file references, and archive references across games. No filesystem scan or mutation. Missing native matcher or exceeded limits fails closed. Metadata only; never authorizes installation/removal or proves deployed bytes.');
+  add('assess_installed_candidates', {gameId:id,profileId:id,collectionModId:id,
+    expectedRevisionId:z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+    comparisons:z.array(z.strictObject({oldModId:id,candidateModId:id,
+      ruleId:z.string().min(1).max(4096).regex(/^[^\x00-\x1f\x7f]+$/).optional()})).min(1).max(ASSESSMENT_LIMITS.comparisons)},
+    a => assessInstalledCandidates(api,selectors,util,a), false,
+    'Assess up to 20 exact installed old/candidate pairs against an installed collection and incoming requires rules using native identity AND recorded installation-spec matching. Reports conflicts, uncertainty, all-profile usage and opaque fingerprints. No raw rules, filesystem scan, download or mutation. A compatible recorded variant is NOT migration readiness, payload/deployment proof or permission to switch/replace/remove; effectsAllowed and migrationReady remain false.');
   add('list_file_conflicts', { ...read, nameFilter: id.optional() }, a => conflicts(api, selectors, a));
   add('list_known_mod_conflicts', { gameId: id.optional() }, a => control.listKnownModConflicts(api, a.gameId));
   add('list_unsolved_conflicts', {}, () => unresolvedConflicts(api, selectors, util));

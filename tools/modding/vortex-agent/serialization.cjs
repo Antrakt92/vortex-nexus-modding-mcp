@@ -1,6 +1,7 @@
 'use strict';
 const path = require('node:path');
 const { PHASES, STATES, REASONS, WAITS } = require('./install-diagnostics.cjs');
+const { SCHEMA: ASSESSMENT_SCHEMA, STATUSES: ASSESSMENT_STATUSES, REASONS: ASSESSMENT_REASONS } = require('./installed-candidate-assessment.cjs');
 const OPERATIONS = new Set(['install_download', 'install_local_archive', 'set_mods_enabled', 'deploy_mods', 'download_nexus']);
 const URI = /\b(?:[a-z][a-z0-9+.-]*:\/\/|[a-z][a-z0-9+.-]+:|[a-z]:(?![\\/]))[^\s"'<>]+/gi;
 const PATH_FIELD = /^(?:game|staging|download)Path$/;
@@ -9,6 +10,30 @@ function insist(ok, code) { if (!ok) throw new Error(code); }
 // Policies apply to exact positions in outputs of named curated producers. They
 // are NOT a global exemption for arbitrary objects having a key named gameId/id.
 function operational(kind, trail) {
+  if (kind === 'assess_installed_candidates') {
+    if (trail.length === 1 && ['protocol','gameId','profileId'].includes(trail[0])) return trail[0];
+    if (trail.length === 1 && trail[0] === 'schema') return 'assessmentSchema';
+    if (trail.length === 1 && trail[0] === 'status') return 'assessmentReadStatus';
+    if (trail.length === 2 && trail[0] === 'collection' && trail[1] === 'modId') return 'modId';
+    if (trail[0] === 'comparisons' && /^\d+$/.test(trail[1])) {
+      const part = trail.slice(2);
+      if (part.length === 1 && ['oldModId','candidateModId'].includes(part[0])) return 'modId';
+      if (part.length === 1 && part[0] === 'status') return 'assessmentStatus';
+      if (part.length === 1 && part[0] === 'fingerprint') return 'sha256';
+      if (part.length === 2 && part[0] === 'reasons' && /^\d+$/.test(part[1])) return 'assessmentReason';
+      if (part.length === 2 && part[0] === 'selectedRule' && ['ruleIdHash','fingerprint'].includes(part[1])) return 'sha256';
+      if (part.length === 3 && part[0] === 'incomingRequires' && /^\d+$/.test(part[1])) {
+        if (part[2] === 'ownerId') return 'modId';
+        if (['ruleIdHash','fingerprint'].includes(part[2])) return 'sha256';
+      }
+      if (part.length === 4 && part[0] === 'profiles' && ['old','candidate'].includes(part[1])
+        && /^\d+$/.test(part[2]) && part[3] === 'id') return 'profileId';
+      if (part.length === 4 && part[0] === 'archiveReferences' && ['old','candidate'].includes(part[1]) && /^\d+$/.test(part[2])) {
+        if (part[3] === 'modId') return 'modId';
+        if (part[3] === 'gameId') return 'gameId';
+      }
+    }
+  }
   if (kind === 'install_diagnostics') {
     if (trail[0] === 'diagnostics') return operational('install_diagnostics', trail.slice(1));
     if (trail.length === 1 && trail[0] === 'schema') return 'installDiagnosticSchema';
@@ -94,6 +119,10 @@ function operational(kind, trail) {
   return null;
 }
 function validOperational(type, value) {
+  if (type === 'assessmentSchema') return value === ASSESSMENT_SCHEMA;
+  if (type === 'assessmentReadStatus') return ['ok','partial'].includes(value);
+  if (type === 'assessmentStatus') return ASSESSMENT_STATUSES.includes(value);
+  if (type === 'assessmentReason') return ASSESSMENT_REASONS.includes(value);
   if (type === 'installDiagnosticSchema') return ['install-diagnostics/1','install-diagnostic-record/1'].includes(value);
   if (type === 'installDiagnostic_phase') return PHASES.includes(value);
   if (type === 'installDiagnostic_state') return STATES.includes(value);

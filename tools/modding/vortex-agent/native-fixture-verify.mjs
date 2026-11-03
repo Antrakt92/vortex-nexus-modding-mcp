@@ -125,6 +125,79 @@ if (input.withExistingMod) {
   assert.equal(failed.errorCode, 'LOCAL_ARCHIVE_MOD_COLLISION');
   assert.equal(fs.existsSync(path.join(input.adapterReceipts, input.runId + '_collision.completion.json')), false);
 }
+if (input.candidateAssessment) {
+  assert.equal(input.installRoute, 'mcp-local-archive'); assert.equal(input.withExistingMod, true);
+  const setup = event('candidate-assessment-fixture-setup'), finished = event('candidate-assessment-fixture-finished');
+  assert.equal(setup.metadataRecordsOnly, true); assert.equal(setup.payloadVerified, false);
+  assert.equal(finished.metadataRecordsOnly, true); assert.equal(finished.noAdditionalDeployment, true);
+  assert.equal(setup.fixtureWorkerSha256, input.fixtureWorkerSha256);
+  assert.equal(setup.candidateAssessmentSourceSha256, input.candidateAssessmentSourceSha256);
+  assert.equal(hash(path.join(root, 'userdata/plugins/native-agent-fixture/index.js')), input.fixtureWorkerSha256);
+  assert.equal(hash(new URL('./installed-candidate-assessment.cjs', import.meta.url)), input.candidateAssessmentSourceSha256);
+  const provenance = JSON.parse(fs.readFileSync(path.join(paths.build, 'plugin/vortex-agent/provenance.json')));
+  assert.equal(provenance.sources['installed-candidate-assessment.cjs'], input.candidateAssessmentSourceSha256);
+  assert.equal(provenance.pluginSha256, input.runtimeSourceSha256);
+  assert.equal(hash(path.join(root, 'userdata/plugins/native-agent-fixture/runtime.cjs')), input.runtimeSourceSha256);
+  assert.equal(setup.records.length, 8); assert.deepEqual(finished.records, setup.records);
+  assert.deepEqual(finished.preserved, setup.preserved);
+  assert.deepEqual(finished.secondProfile, { ...setup.secondProfile, pendingRemove: true });
+  assert.equal(setup.secondProfile.modState['native-assessment-old-vanilla'].enabled, true);
+  assert.equal(setup.secondProfile.pendingRemove, false);
+  for (const [phase, expected] of [['candidate-assessment-setup-profile-settled', 2], ['candidate-assessment-pending-profile-settled', 0]]) {
+    const barrier = event(phase);
+    assert.equal(barrier.profileId, setup.secondProfileId); assert.equal(barrier.activeProfileId, 'native-agent-fixture');
+    assert.equal(barrier.starts, expected); assert.equal(barrier.stops, expected);
+    assert.equal(barrier.loadOrderCompletionObserved, true); assert.equal(barrier.emptyLoadOrderObserved, true);
+    assert.equal(barrier.loadOrderHash, crypto.createHash('sha256').update('[]').digest('hex'));
+    assert.deepEqual(barrier.sourceBlobs, { profiles: '4b4cddc08c29f5fa2d78b0e7f59ebea8dc3380c1',
+      installManager: '6f847f3f878a0f8a8082b827d8b2bc4ebbcbe221', activity: '250cf30f897938ed1705cfec654b3b6b4f79d598',
+      loadOrder: '8f3044cc73c8d97629da3f4f304382eb7fe71149', loadOrderAction: 'b8f88de149399ed01d346ae8e6b4788438078f30' });
+  }
+  assert.equal(setup.preserved.nativeMod.id, install.modId);
+  assert.equal(setup.preserved.existingMod.id, 'native-agent-existing');
+  assert.equal(setup.preserved.targetProfile.modState[install.modId].enabled, false);
+  assert.equal(setup.preserved.targetProfile.modState['native-agent-existing'].enabled, false);
+  assert.deepEqual(setup.preserved.original, rollback.original); assert.deepEqual(setup.preserved.staging, rollback.staging);
+  const baselineExisting = event('existing-mod-preserved-after-rollback');
+  assert.deepEqual(setup.preserved.existingMod, baselineExisting.mod);
+  assert.deepEqual(setup.preserved.existingStaging, baselineExisting.staged);
+  for (const record of setup.records) assert.equal(fs.existsSync(path.join(input.stage, record.installationPath)), false,
+    'Metadata fixture must not masquerade as installed disk payload');
+  const rows = {};
+  for (const name of ['vanilla', 'exact-conflict', 'choices', 'ignored', 'pending-profile']) {
+    const observed = event('candidate-assessment-' + name), value = observed.result;
+    assert.equal(observed.before, observed.after); assert.match(observed.before, /^[a-f0-9]{64}$/);
+    assert.equal(observed.dispatches, 0); assert.equal(observed.nativeEffects, 0);
+    assert.equal(observed.args.gameId, 'cyberpunk2077'); assert.equal(observed.args.profileId, 'native-agent-fixture');
+    assert.equal(observed.args.collectionModId, setup.collectionModId); assert.equal(observed.args.expectedRevisionId, 900002);
+    assert.equal(value.schema, 'installed-candidate-assessment/1'); assert.equal(value.protocol, 'vortex-agent/1');
+    assert.equal(value.gameId, observed.args.gameId); assert.equal(value.profileId, observed.args.profileId);
+    assert.equal(value.collection.modId, setup.collectionModId); assert.equal(value.collection.revisionId, 900002);
+    assert.equal(value.metadataOnly, true); assert.equal(value.effectsAllowed, false);
+    assert.equal(value.migrationReady, false); assert.equal(value.diskDeploymentVerified, false);
+    assert.ok(value.counts.matcherChecks > 0); assert.equal(value.comparisons.length, 1);
+    const row = rows[name] = value.comparisons[0];
+    assert.equal(row.oldModId, observed.args.comparisons[0].oldModId);
+    assert.equal(row.candidateModId, observed.args.comparisons[0].candidateModId);
+    assert.match(row.fingerprint, /^[a-f0-9]{64}$/); assert.match(row.selectedRule.ruleIdHash, /^[a-f0-9]{64}$/);
+    assert.match(row.selectedRule.fingerprint, /^[a-f0-9]{64}$/);
+    assert.equal(JSON.stringify(value).includes('"ruleId":'), false);
+  }
+  assert.equal(rows.vanilla.status, 'compatible_installed_variant'); assert.deepEqual(rows.vanilla.reasons, []);
+  assert.ok(rows.vanilla.profiles.old.some(p => p.id === setup.secondProfileId && p.enabled && !p.pendingRemove));
+  assert.ok(rows.vanilla.archiveReferences.old.some(r => r.modId === 'native-assessment-old-vanilla'));
+  assert.ok(rows.vanilla.archiveReferences.candidate.some(r => r.modId === 'native-assessment-candidate-vanilla'));
+  assert.equal(rows['exact-conflict'].status, 'conflict'); assert.ok(rows['exact-conflict'].reasons.includes('CANDIDATE_IDENTITY_CONFLICT'));
+  assert.ok(['conflict', 'insufficient_evidence'].includes(rows.choices.status));
+  assert.ok(rows.choices.reasons.includes('CUSTOMIZATIONS_REVIEW_REQUIRED'));
+  assert.ok(rows.choices.incomingRequires.some(r => r.oldInstallSpecMatches === true && r.installSpecMatches === false));
+  assert.equal(rows.ignored.status, 'insufficient_evidence'); assert.ok(rows.ignored.reasons.includes('IGNORED_REQUIREMENT_REVIEW_REQUIRED'));
+  assert.equal(rows['pending-profile'].status, 'insufficient_evidence'); assert.ok(rows['pending-profile'].reasons.includes('PROFILE_PENDING_REMOVE'));
+  assert.ok(rows['pending-profile'].profiles.old.some(p => p.id === setup.secondProfileId && p.pendingRemove));
+  const setupIndex = receipt.events.indexOf(setup);
+  assert.ok(setupIndex > receipt.events.indexOf(event('existing-mod-preserved-after-rollback')));
+  assert.equal(receipt.events.slice(setupIndex).some(e => e.phase.startsWith('deploy_mods_')), false);
+}
 const before = read('ordinary-before.json'), after = read('ordinary-after.json');
 assertOrdinaryModSnapshot(before.mods); assertOrdinaryModSnapshot(after.mods);
 assert.deepEqual(before.health, after.health); assert.deepEqual(before.profiles, after.profiles); assert.deepEqual(before.mods, after.mods);
@@ -136,6 +209,7 @@ const proof = { passed: true, root, checks: ['native import/install', 'authentic
   completionSuffixes.length === 5 ? 'five durable completions without unresolved marker' : 'four durable completions without unresolved marker',
   ...(input.withExistingMod ? ['existing mod/flags/staged identity preserved', 'same-archive collision refused before effects'] : []),
   ...(input.installRoute === 'mcp-local-archive' ? ['live bounded install diagnostics and retained sidecar bound to original attempt'] : []),
+  ...(input.candidateAssessment ? ['built native candidate assessment: compatible/conflict/choices/ignored/pending-profile, immutable state and no payload authority'] : []),
   'ordinary health/profile/mod inventory/manifest/process preservation', 'clean native shutdown'], nexusReuse: receipt.nexusReuse, at: new Date().toISOString() };
 fs.writeFileSync(path.join(root, 'independent-verification.json'), JSON.stringify(proof, null, 2), { flag: 'wx' });
 console.log(JSON.stringify(proof));

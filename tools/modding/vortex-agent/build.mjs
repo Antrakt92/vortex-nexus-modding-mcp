@@ -9,7 +9,7 @@ const CACHE = paths.cache;
 const BUILD = paths.build;
 const source = path.dirname(fileURLToPath(import.meta.url));
 const vendor = path.join(source, '../../../dependencies/vortex-mcp');
-const modules = ['paths.cjs', 'paths-core.cjs', 'guard.cjs', 'extension.cjs', 'credential.cjs', 'inspection.cjs', 'lifecycle-inspection.cjs', 'native-preflight.cjs', 'serialization.cjs', 'download-identity.cjs', 'receipts.cjs', 'http-ingress.cjs', 'own-zip.cjs', 'local-archive-policy.cjs', 'local-archive-install.cjs', 'local-install-host.cjs', 'local-install-binding.cjs', 'stock-vortex-2.9.1-admission.json', 'install-diagnostics.cjs'];
+const modules = ['paths.cjs', 'paths-core.cjs', 'guard.cjs', 'extension.cjs', 'credential.cjs', 'inspection.cjs', 'lifecycle-inspection.cjs', 'native-preflight.cjs', 'serialization.cjs', 'download-identity.cjs', 'receipts.cjs', 'http-ingress.cjs', 'own-zip.cjs', 'local-archive-policy.cjs', 'local-archive-install.cjs', 'local-install-host.cjs', 'local-install-binding.cjs', 'stock-vortex-2.9.1-admission.json', 'install-diagnostics.cjs', 'installed-candidate-assessment.cjs'];
 const sha = async file => crypto.createHash('sha256').update(await fs.readFile(file)).digest('hex');
 
 async function noReparsePaths(...files) {

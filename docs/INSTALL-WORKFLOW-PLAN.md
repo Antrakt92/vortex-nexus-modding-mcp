@@ -118,7 +118,7 @@ complete native process/generation checks, the full six-sample comparison was
 started separately. The failed pilot was not removed or counted as a fast install.
 Native acceptance here is separate from ordinary-host activation.
 
-## 3. Assess candidates before adding a general installer
+## 3. Assess candidates before adding a general installer — installed slice implemented
 
 First add a bounded read-only assessment for exact target profile, collection
 revision, old installed IDs, new provider identities and installation specs.
@@ -141,7 +141,30 @@ and archive inputs. Recheck them before effects; relevant drift requires a fresh
 assessment. Historical completed receipts do not establish current readiness.
 No whole-host atomic transaction or automatic replacement is promised.
 
+The first bounded native reader is
+[`assess_installed_candidates`](INSTALLED-CANDIDATES.md). It assesses exact
+installed pairs against a selected installed collection/revision and incoming
+requirements, preserving explicit conflict and unknown outcomes. Downloaded-only
+variants remain unknown; archive discovery stays a separate existing tool.
+This reader grants no migration/effects permission or disk proof.
+
+On 2026-11-03 the compiled RPC and actual stock matching APIs passed five private
+metadata-fixture cases: compatible vanilla records, identity conflict, recorded
+FOMOD-choice mismatch, ignored requirements and a pending second profile. Each
+read made zero Redux dispatches/native effects and preserved its before/after
+state. Synthetic metadata records deliberately did not represent verified staged
+payloads. Original native install/deploy/restore and ordinary-session proofs also
+passed. An earlier setup race was retained and diagnosed; the final fixture joins
+the exact profile-setup activity/load-order completion before testing read purity.
+Native acceptance is separate from ordinary-host activation.
+
 ## 4. Add one supported effect class at a time
+
+Selected first class: add new own-local ZIP installation steps to the existing
+serial `run_mod_plan`, followed by explicit activation steps and at most one final
+deploy. Reuse the reviewed installer and original receipts/journals. This does
+not infer provider migration from a metadata assessment or add replacement,
+tracked-archive installation, FOMOD or general Nexus installation.
 
 Only after assessment gates pass, consider noninteractive tracked packages with
 explicit scope and exact pins. Keep interactive installers, replacement, removal
