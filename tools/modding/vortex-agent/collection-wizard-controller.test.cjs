@@ -15,7 +15,8 @@ function fixture(){
  else if(mode==='finish'){const c=s.session.collections;c.sessionHistory[c.activeSession.sessionId]=c.activeSession;c.lastActiveSessionId=c.activeSession.sessionId;c.activeSession=undefined;mode='idle';}}};
  const modal={};
  const admit=async()=>{assert.equal(source,true);return {sourceAdmitted:true};};admit.revalidate=()=>{assert.equal(source,true);};
- const options={selectors:{activeGameId:()=>gameId,activeProfileId:()=>profileId,discoveryByGame:()=>({path:'game'})},
+ const admitRead=async()=>({});admitRead.revalidate=()=>true;
+ const options={admitRead,selectors:{activeGameId:()=>gameId,activeProfileId:()=>profileId,discoveryByGame:()=>({path:'game'})},
  util:{renderModName:m=>m.attributes.customFileName,getGame:()=>({getInstalledVersion:async()=>{changeDuringFetch();return version;}})},admit,pollMs:1,transitionTimeoutMs:5,
  inspectDOM:()=>mode==='idle'?{status:'idle',candidate:null}:mode==='working'?{status:'idle',candidate:null}:
  {status:'observed',phase:mode==='start'?'start':'finish',name:'Our Collection',revisionLabel:'Revision 13',selectedProfileLabel:mode==='start'?'DEV (Current)':null,
@@ -27,7 +28,7 @@ function fixture(){
 }
 test('observed new owner starts and finishes via exact native session, one click each',async()=>{
  const f=fixture();await f.c.initialized;assert.equal((await f.c.readiness()).status,'idle');f.install();
- const observed=await f.c.readiness();assert.equal(observed.status,'held');assert.equal(observed.modId,'owner');assert.equal(observed.reason,'COLLECTION_WIZARD_SOURCE_NOT_ADMITTED');await f.c.prepare(f.args);f.c.validate(f.args);f.c.click(f.args);
+ const observed=await f.c.readiness();assert.equal(observed.status,'ready');assert.equal(observed.modId,'owner');assert.equal(observed.sourceAdmitted,true);await f.c.prepare(f.args);f.c.validate(f.args);f.c.click(f.args);
  const result=await f.c.waitForTransition(f.args);assert.equal(result.transition,'started');f.c.verifyTransition(f.args,result);assert.equal(f.clicks,1);
  const done={...f.args,requestId:'wizard_request_2',action:'done'};f.mode='finish';await f.c.prepare(done);f.c.click(done);
  const finished=await f.c.waitForTransition(done);assert.equal(finished.transition,'finished');f.c.verifyTransition(done,finished);assert.equal(f.clicks,2);
@@ -69,10 +70,25 @@ test('a committed Done arms the next new collection without restarting Vortex',a
  f.mode='start';f.api.events.emit('did-install-mod','cyberpunk2077','archive','next-owner');
  const ready=await f.c.readiness();assert.equal(ready.modId,'next-owner');assert.equal(ready.status,'ready');
 });
-test('readiness during a prepared action cannot refresh or invalidate its source proof',async()=>{
- const f=fixture();let admissions=0;const proof={};
- f.options.admit=async()=>{admissions++;return proof;};f.options.admit.revalidate=p=>assert.equal(p,proof);
+test('readiness verifies sources with a separate issuer and cannot invalidate a prepared action',async()=>{
+ const f=fixture();let admissions=0,readAdmissions=0,proof,readProof;
+ f.options.admit=async()=>{admissions++;proof={};return proof;};f.options.admit.revalidate=p=>assert.equal(p,proof);
+ f.options.admitRead=async()=>{readAdmissions++;readProof={};return readProof;};f.options.admitRead.revalidate=p=>assert.equal(p,readProof);
  const c=createCollectionWizardController(f.api,f.options);await c.initialized;f.install();
- await c.readiness();assert.equal(admissions,0);await c.prepare(f.args);await c.readiness();await c.readiness();
- assert.equal(admissions,1);c.click(f.args);assert.equal(f.clicks,1);
+ await c.readiness();assert.equal(admissions,0);await c.prepare(f.args);await Promise.all([c.readiness(),c.readiness()]);
+ assert.equal(admissions,1);assert.equal(readAdmissions,3);c.click(f.args);assert.equal(f.clicks,1);
+});
+test('idle source admission failure holds before any collection action can start',async()=>{
+ const f=fixture();f.options.admitRead=async()=>{throw Error('COLLECTION_WIZARD_UNREVIEWED_EXTENSION');};f.options.admitRead.revalidate=()=>{throw Error('must not run');};
+ const c=createCollectionWizardController(f.api,f.options);await c.initialized;
+ const result=await c.readiness();assert.equal(result.status,'held');assert.equal(result.sourceAdmitted,false);assert.equal(result.reason,'COLLECTION_WIZARD_UNREVIEWED_EXTENSION');assert.equal(f.clicks,0);
+});
+test('source reads during the game-version await preserve the prepared writer proof',async()=>{
+ const f=fixture();let writeProof,readProof,entered,release;
+ const inVersion=new Promise(resolve=>{entered=resolve;});
+ f.options.admit=async()=>{writeProof={};return writeProof;};f.options.admit.revalidate=p=>assert.equal(p,writeProof);
+ f.options.admitRead=async()=>{readProof={};return readProof;};f.options.admitRead.revalidate=p=>assert.equal(p,readProof);
+ f.options.util.getGame=()=>({getInstalledVersion:()=>{entered();return new Promise(resolve=>{release=resolve;});}});
+ const c=createCollectionWizardController(f.api,f.options);await c.initialized;f.install();
+ const preparing=c.prepare(f.args);await inVersion;await Promise.all([c.readiness(),c.readiness()]);release('2.31');await preparing;c.click(f.args);assert.equal(f.clicks,1);
 });

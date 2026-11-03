@@ -40,10 +40,9 @@ restarting Vortex; uncertain operations keep the shared interlock.
 Call `read_collection_wizard` with no arguments. It returns only curated identity,
 phase and hold reasons. `status: ready` means the observed binding passes the
 local policy; `writesAvailable: false` records that asynchronous preflight has
-not yet approved an action. The read performs no action or network lookup and
-never refreshes a source proof that a concurrent action may be using. On the
-first observed owner it reports `COLLECTION_WIZARD_SOURCE_NOT_ADMITTED` with the
-exact identity; `advance_collection_wizard` performs that admission in preparation.
+not yet approved an action. The read performs no action or network lookup. It
+verifies sources even while idle, before starting a collection, through a separate
+admission cache. Concurrent reads cannot replace a prepared action's source proof.
 
 Call `advance_collection_wizard` with the normal live game/profile/path and
 filesystem pins, a unique request ID, exact `modId`, `archiveId`, positive numeric
@@ -75,6 +74,15 @@ closures and record their relative files and SHA-256 pins in
 `<runtime>/local-state/vortex-agent-build/collection-wizard-reviewed-helpers.json`
 using schema `collection-wizard-reviewed-helpers/1`, `reviewed: true`, the exact
 reviewed `appAsarSha256`, and `helpers: [{folder, files: [{path, sha256}]}]`.
+`files` are plugin-relative paths. A helper that imports code or immutable
+configuration outside that folder must also declare its complete reviewed
+`externalSources: [{path, sha256}]` closure using exact absolute local paths.
+Include the immutable configuration/source graph and its transitive imports;
+pinning only six launcher files does not close external code. Unknown fields,
+relative external paths, UNC paths, conflicting pins and changed generations
+refuse. External sources use the same chunked raw-filesystem hashing/cache and
+immediate generation checks as installed sources; they are never executed by
+source admission. Mutable request/result files are not executable source inputs.
 This private file is not an MCP parameter. Observed hashes alone are not a code
 review. Do not add credentials, runtime state or this local manifest to Git.
 

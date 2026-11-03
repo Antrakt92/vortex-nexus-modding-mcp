@@ -1,21 +1,24 @@
 'use strict';
 const fs=(()=>{try{return require('original-fs');}catch(_){return require('node:fs');}})();
 const path=require('node:path'),crypto=require('node:crypto');
-const {createLocalInstallHostAdmission}=require('./local-install-host.cjs');
+const {createLocalInstallHostAdmission,normalizeAdditionalSources}=require('./local-install-host.cjs');
 const stock=require('./stock-vortex-2.9.1-admission.json');
 const {receipts}=require('./paths.cjs');
 const OFFICIAL_HOST='ec3a29d58ea65a1ca84e456742c894a19efe96920a6710063d221d451a26d59a';
 const need=(v,c)=>{if(!v)throw Error(c);};
-const norm=p=>path.resolve(p).toLowerCase();
+const drive=p=>typeof p==='string'&&/^[a-z]:[\\/]/i.test(p);
+const norm=p=>(drive(p)?path.win32.normalize(p):path.resolve(p)).replace(/\\/g,'/').toLowerCase();
+const parent=p=>drive(p)?path.win32.dirname(p):path.dirname(p);
+const fields=(v,allowed)=>v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).every(k=>allowed.includes(k));
 const generation=s=>[s.dev,s.ino,s.size,s.mtimeNs,s.ctimeNs].join(':');
 const hash=b=>crypto.createHash('sha256').update(b).digest('hex');
 const isHash=v=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v);
 function inspect(file,disk){
- need(typeof file==='string'&&path.isAbsolute(file),'COLLECTION_WIZARD_ADMISSION_PATH');
- for(let p=file;;p=path.dirname(p)){
+ need(typeof file==='string'&&(path.isAbsolute(file)||drive(file)),'COLLECTION_WIZARD_ADMISSION_PATH');
+ for(let p=file;;p=parent(p)){
   const stat=disk.lstatSync(p,{bigint:true});need(!stat.isSymbolicLink(),'COLLECTION_WIZARD_ADMISSION_REPARSE');
   if(p===file)need(stat.isFile(),'COLLECTION_WIZARD_ADMISSION_NOT_FILE');
-  if(path.dirname(p)===p)break;
+  if(parent(p)===p)break;
  }
  return generation(disk.lstatSync(file,{bigint:true}));
 }
@@ -25,13 +28,14 @@ function readMetadata(file,disk){
  return {value:JSON.parse(bytes.toString('utf8')),proof:{path:file,generation:stamp,sha256:hash(bytes)}};
 }
 function validateHelpers(value){
- need(value?.schema==='collection-wizard-reviewed-helpers/1'&&value.reviewed===true&&value.appAsarSha256===OFFICIAL_HOST&&Array.isArray(value.helpers)&&value.helpers.length<=32,'COLLECTION_WIZARD_ADMISSION_INVALID');
+ need(fields(value,['schema','reviewed','appAsarSha256','helpers'])&&value.schema==='collection-wizard-reviewed-helpers/1'&&value.reviewed===true&&value.appAsarSha256===OFFICIAL_HOST&&Array.isArray(value.helpers)&&value.helpers.length<=32,'COLLECTION_WIZARD_ADMISSION_INVALID');
  const seen=new Set();
  for(const row of value.helpers){
-  need(typeof row?.folder==='string'&&/^[A-Za-z0-9_.-]{1,200}$/.test(row.folder)&&!['.','..'].includes(row.folder)&&!seen.has(row.folder.toLowerCase())&&Array.isArray(row.files)&&row.files.length>0&&row.files.length<=128,'COLLECTION_WIZARD_ADMISSION_INVALID');
+  need(fields(row,['folder','files','externalSources'])&&typeof row.folder==='string'&&/^[A-Za-z0-9_.-]{1,200}$/.test(row.folder)&&!['.','..'].includes(row.folder)&&!seen.has(row.folder.toLowerCase())&&Array.isArray(row.files)&&row.files.length>0&&row.files.length<=128,'COLLECTION_WIZARD_ADMISSION_INVALID');
+  if(Object.hasOwn(row,'externalSources')){need(Array.isArray(row.externalSources)&&row.externalSources.length<=128,'COLLECTION_WIZARD_ADMISSION_INVALID');normalizeAdditionalSources(row.externalSources);}
   seen.add(row.folder.toLowerCase());const names=new Set();
   for(const file of row.files){
-   need(typeof file?.path==='string'&&file.path.length>0&&!/[\\:\x00-\x1f]/.test(file.path)&&file.path.split('/').every(p=>p&&p!=='.'&&p!=='..')&&isHash(file.sha256),'COLLECTION_WIZARD_HELPER_FILE_INVALID');
+   need(fields(file,['path','sha256'])&&typeof file.path==='string'&&file.path.length>0&&!/[\\:\x00-\x1f]/.test(file.path)&&file.path.split('/').every(p=>p&&p!=='.'&&p!=='..')&&isHash(file.sha256),'COLLECTION_WIZARD_HELPER_FILE_INVALID');
    const name=file.path.toLowerCase();need(!names.has(name),'COLLECTION_WIZARD_HELPER_FILE_DUPLICATE');names.add(name);
   }
   need(names.has('index.js')||names.has('index.cjs'),'COLLECTION_WIZARD_HELPER_ENTRY_REQUIRED');
@@ -85,7 +89,7 @@ function createWizardHostAdmission(api,util,options={}){
    const manifest=present?readMetadata(manifestPath,disk):null;
    const helpers=manifest?validateHelpers(manifest.value):[];if(manifest)metadata.push(manifest.proof);
    const provenance=readMetadata(provenancePath,disk);need(isHash(provenance.value.pluginSha256),'COLLECTION_WIZARD_ADMISSION_INVALID');metadata.push(provenance.proof);
-   const dynamic=[];
+   const dynamic=[],external=[];
    for(const extension of loaded){
     if(!extension.dynamic)continue;
     const root=extension.path;
@@ -95,10 +99,13 @@ function createWizardHostAdmission(api,util,options={}){
     const known=stock.extensions.find(row=>row.kind===kind&&row.folder.toLowerCase()===folder);
     const helper=kind==='user'?helpers.find(row=>row.folder.toLowerCase()===folder):null;
     need(known||helper,'COLLECTION_WIZARD_UNREVIEWED_EXTENSION');dynamic.push({path:root,files:(known||helper).files});
+    if(helper)external.push(...normalizeAdditionalSources(helper.externalSources));
    }
    need(dynamic.some(row=>norm(row.path)===ownRoot),'COLLECTION_WIZARD_ADAPTER_NOT_LOADED');
    need(stock.appAsarSha256===OFFICIAL_HOST,'COLLECTION_WIZARD_UNREVIEWED_HOST');
-   const expected={appAsarSha256:OFFICIAL_HOST,dynamic};
+   const pinned=new Map([[norm(packagePath),OFFICIAL_HOST],...dynamic.flatMap(d=>d.files.map(f=>[norm(path.join(d.path,f.path)),f.sha256]))]),additionalSources=[];
+   for(const file of external){const id=norm(file.path);if(pinned.has(id)){need(pinned.get(id)===file.sha256,'COLLECTION_WIZARD_SOURCE_HASH_CONFLICT');continue;}pinned.set(id,file.sha256);additionalSources.push(file);}
+   const expected={appAsarSha256:OFFICIAL_HOST,dynamic,...(additionalSources.length?{additionalSources}: {})};
    const key=JSON.stringify({expected,loaded,metadata});
    if(!verifier||key!==verifierKey){verifier=createLocalInstallHostAdmission({packagePath,expected,api,fsImpl:options.fsImpl||fs.promises});verifierKey=key;}
    const sources=await verifier();

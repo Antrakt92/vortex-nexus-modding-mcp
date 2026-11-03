@@ -216,7 +216,7 @@
     },
     {
       "path": "docs/BACKGROUND-COLLECTION-WIZARD.md",
-      "sha256_lf": "71e0dbc0137cce37cacae9ba51cdcb234047adb8f466e594e2884ebab81ba982"
+      "sha256_lf": "dce8749db86f71a4c551d90212f90c0edf99c12e1843932ebc523865176a4b07"
     },
     {
       "path": "docs/CHILD-TERMINAL-OBSERVER.md",
@@ -816,11 +816,11 @@
     },
     {
       "path": "tools/modding/vortex-agent/collection-wizard-controller.cjs",
-      "sha256_lf": "fb59d75107426cac8249527f481f9f8bedf033a9d1ca368fc3bd63f8733f78ad"
+      "sha256_lf": "230190aebd1b71a452a6b644dd4faa12a468e950000d25517a9073f2d6dbd519"
     },
     {
       "path": "tools/modding/vortex-agent/collection-wizard-controller.test.cjs",
-      "sha256_lf": "6646e5208239a748c06b810a08aba40529178a78edae2ebe156cfdb53aa2aa76"
+      "sha256_lf": "452aacda01d4530c60456fb637ec2dc00387ab29e0c2fdef70e5881eb5ffa61c"
     },
     {
       "path": "tools/modding/vortex-agent/collection-wizard-dom.cjs",
@@ -832,15 +832,15 @@
     },
     {
       "path": "tools/modding/vortex-agent/collection-wizard-guard.test.cjs",
-      "sha256_lf": "290ab3e2e7093a8f804bd7f01a34f4adf9a96c93524b9f854e0bc736dda67e90"
+      "sha256_lf": "0ff68792e7bc8e69908be21554cdfa55bffe4afea845554baa2077248cb57fc9"
     },
     {
       "path": "tools/modding/vortex-agent/collection-wizard-host.cjs",
-      "sha256_lf": "d39193afed0c7026fd6edf1d5d4b4a5792252bcbe1bb00bf436a9e601750bd17"
+      "sha256_lf": "2c4a405e30245819a842f978d55958f9d550543a4715bf1107c2c4d5f44f7913"
     },
     {
       "path": "tools/modding/vortex-agent/collection-wizard-host.test.cjs",
-      "sha256_lf": "bcc2bf17d4cdbf62ed9087c808f2e97c4dd57eb5496416705828f7cdf8aac74d"
+      "sha256_lf": "a9957da30f4aa217fa91243c64a34d65663155b721d1e18b1d0e53ef43664481"
     },
     {
       "path": "tools/modding/vortex-agent/collection-wizard-native.cjs",
@@ -1092,7 +1092,11 @@
     },
     {
       "path": "tools/modding/vortex-agent/local-install-host.cjs",
-      "sha256_lf": "cde8c3d3db92aa71857b4e2a99fa125404dfab6a8ffad66660e9edf57f935821"
+      "sha256_lf": "6c0380dbd7d4f4b1092caeab458972da7a6173259b57a18b6acc79195fd11132"
+    },
+    {
+      "path": "tools/modding/vortex-agent/local-install-host.test.cjs",
+      "sha256_lf": "cb4473501e0f44591a44568a04268de199f5eb6f63fa0eb7b950e0af7d8c85c1"
     },
     {
       "path": "tools/modding/vortex-agent/local-install-host.test.mjs",

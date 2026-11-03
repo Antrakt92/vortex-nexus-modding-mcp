@@ -33,11 +33,13 @@ function createCollectionWizardController(api,options){
  const doc=()=>options.getDocument?options.getDocument():typeof document==='object'?document:null;
  const t=(...args)=>api.translate(...args);
  const admit=options.admit||createWizardHostAdmission(api,util);
+ const admitRead=options.admitRead||createWizardHostAdmission(api,util);
  const inspectDOM=options.inspectDOM||inspect;
  let ready=false,invalidated=false,binding=null,epochIds=new Set(),prepared=null,proof=null;
+ let readQueue=Promise.resolve();
  const state=()=>api.getState();
  const rawOwner=(id)=>state().persistent?.mods?.cyberpunk2077?.[id];
- const native=()=>observeNative({state:state(),selectors,util,t,modId:binding?.modId,sourceAdmitted:proof!==null});
+ const native=(sourceAdmitted=proof!==null)=>observeNative({state:state(),selectors,util,t,modId:binding?.modId,sourceAdmitted});
  const dom=n=>inspectDOM(doc(),{t,profileLabel:n?.profileLabel});
  const context=()=>({gameId:selectors.activeGameId(state()),profileId:selectors.activeProfileId(state())});
  function invalidate(){invalidated=true;if(binding)binding.invalidated=true;}
@@ -65,9 +67,9 @@ function createCollectionWizardController(api,options){
   epochIds=new Set(Object.keys(s.persistent?.mods?.cyberpunk2077??{}));
   ready=true;
  }).catch(()=>{invalidate();});
- function observe(){
+ function observe(sourceAdmitted=proof!==null){
   need(ready&&!invalidated&&binding&&!binding.invalidated,'BINDING_UNAVAILABLE');
-  const n=native();need(stable(n.owner)===binding.ownerIdentity,'OWNER_CHANGED');
+  const n=native(sourceAdmitted);need(stable(n.owner)===binding.ownerIdentity,'OWNER_CHANGED');
   return {n,d:dom(n)};
  }
  function validate(args){
@@ -134,23 +136,28 @@ function createCollectionWizardController(api,options){
  return {
   initialized,
   async readiness(){
+   const work=readQueue.then(async()=>{
    await initialized;
    const out={schema:'collection-wizard-readiness/1',protocol:'vortex-agent/1',observedAtUTC:new Date().toISOString(),
     status:'held',phase:null,action:null,reason:'COLLECTION_WIZARD_BINDING_UNAVAILABLE',sourceAdmitted:false,
     bindingReady:false,writesAvailable:false,nativeTransitionVerified:false};
-   if(!binding){const d=dom();if(ready&&!invalidated&&d.status==='idle'){out.status='idle';out.reason='COLLECTION_WIZARD_IDLE';}return out;}
    try{
-    // A read must not replace the opaque admission proof while a guarded action
-    // is awaiting native work. Only prepare owns asynchronous admission.
-    if(proof)admit.revalidate(proof);const {n,d}=observe();
+    // Independent issuer/cache: a source-read can never invalidate the write
+    // proof held across asynchronous preparation or native session observation.
+    const readProof=await admitRead();admitRead.revalidate(readProof);out.sourceAdmitted=true;
+    if(!binding){const d=dom();if(ready&&!invalidated&&d.status==='idle'){out.status='idle';out.reason='COLLECTION_WIZARD_IDLE';}return out;}
+    const {n,d}=observe(true);
     Object.assign(out,{gameId:n.gameId,profileId:n.profileId,modId:n.owner.id,archiveId:n.owner.archiveId,
      collectionId:n.owner.collectionId,revisionId:n.owner.revisionId,revisionNumber:n.owner.revisionNumber,
-     phase:d.phase??null,action:d.phase==='start'?'install_now':d.phase==='finish'?'done':null,sourceAdmitted:proof!==null,bindingReady:true});
+     phase:d.phase??null,action:d.phase==='start'?'install_now':d.phase==='finish'?'done':null,sourceAdmitted:true,bindingReady:true});
     validateCollectionWizard({expected:out,native:n,dom:d,binding});
     out.status='ready';out.reason='COLLECTION_WIZARD_PREFLIGHT_REQUIRED';
     // Readiness never substitutes for asynchronous metadata/source preparation.
-   }catch(e){out.reason=/^COLLECTION_WIZARD_[A-Z0-9_]+$/.test(e.message)?e.message:'COLLECTION_WIZARD_SOURCE_UNAVAILABLE';}
+   }catch(e){out.reason=/^COLLECTION_WIZARD_[A-Z0-9_]+$/.test(e.message)?e.message:
+    /^LOCAL_INSTALL_HOST_[A-Z0-9_]+$/.test(e.message)?'COLLECTION_WIZARD_'+e.message:'COLLECTION_WIZARD_SOURCE_UNAVAILABLE';}
    return out;
+   });
+   readQueue=work.catch(()=>{});return work;
   },
   async prepare(args){
    await initialized;need(!prepared?.consumed||prepared.completed,'ACTION_ALREADY_CONSUMED');

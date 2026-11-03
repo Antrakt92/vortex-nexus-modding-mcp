@@ -31,7 +31,7 @@ async function fixture(t) {
     }
   };
   const admit = async () => ({}); admit.revalidate = () => true;
-  const controller = createCollectionWizardController(api, { selectors, admit,
+  const controller = createCollectionWizardController(api, { selectors, admit, admitRead:admit,
     util: { renderModName: mod => mod.attributes.customFileName,
       getGame: () => ({ getInstalledVersion: () => versionRead() }) },
     pollMs: 1, transitionTimeoutMs: 10,
