@@ -3,7 +3,16 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import path from 'node:path';
-import { ORDINARY_MOD_LIMIT, assertOrdinaryModSnapshot } from './native-fixture-snapshot.mjs';
+import { ORDINARY_MOD_LIMIT, assertOrdinaryModSnapshot, ordinaryProcessesPreserved } from './native-fixture-snapshot.mjs';
+
+test('ordinary process preservation rejects PID reuse, missing generations and changed identities', () => {
+  const row = {pid:123,parent:1,exe:'C:/Vortex.exe',type:'',generation:'639000000000000000'};
+  assert.equal(ordinaryProcessesPreserved([row],[{...row}]),true);
+  for (const changed of [{generation:'639000000000000001'},{generation:undefined},{exe:'foreign'},
+    {parent:2},{type:'helper'},{pid:124}]) assert.equal(ordinaryProcessesPreserved([row],[{...row,...changed}]),false);
+  assert.equal(ordinaryProcessesPreserved([row],[row,row]),false);
+  assert.equal(ordinaryProcessesPreserved([],[]),false);
+});
 
 function runnerSnapshot(count) {
   const source = fs.readFileSync(new URL('./native-fixture.mjs', import.meta.url), 'utf8');
@@ -46,7 +55,7 @@ test('a capped legacy receipt is also refused by the independent verifier', () =
   const code = source.slice(start, end);
   const complete = { mods: [{ id: 'own' }], health: {}, profiles: [], manifestSha256: 'same' };
   for (const cappedSide of ['ordinary-before.json', 'ordinary-after.json']) {
-    const context = { assert, assertOrdinaryModSnapshot,
+    const context = { assert, assertOrdinaryModSnapshot, ordinaryProcessesPreserved,
       read: name => name === cappedSide ? { ...complete,
         mods: Array.from({ length: ORDINARY_MOD_LIMIT }, (_, index) => ({ id: 'mod_' + index })) } : complete };
     assert.throws(() => vm.runInNewContext(code, context), /ORDINARY_MOD_INVENTORY_INCOMPLETE/);

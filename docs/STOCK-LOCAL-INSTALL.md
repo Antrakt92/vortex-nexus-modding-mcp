@@ -83,6 +83,10 @@ includes the current phase, `waitReason`, elapsed milliseconds, remaining budget
 exclusive `phaseTimes` and metric call counts/durations. Nested metrics overlap;
 do not add them together as total installation time. Diagnostics contain fixed
 labels and numbers, without raw host state or authenticated URLs.
+Context-check counts include inexpensive preparation checks as well as full
+process checks. They are not a count of PowerShell invocations. Fresh process
+checks remain at native effect/permission boundaries and before completion
+publication; no earlier observation of process absence is reused.
 
 The work budget is 240 seconds, starting after the mutation lock is acquired
 (the lock itself waits at most 30 seconds). Host/source and metadata waits are

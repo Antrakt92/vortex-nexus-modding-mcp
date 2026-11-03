@@ -3,12 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import net from 'node:net';
-import { spawn, execFileSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { remote } from './bridge.mjs';
 import paths from './paths.cjs';
 import credential from './credential.cjs';
-import { ORDINARY_MOD_LIMIT, assertOrdinaryModSnapshot } from './native-fixture-snapshot.mjs';
+import { ORDINARY_MOD_LIMIT, assertOrdinaryModSnapshot, ordinaryProcessesPreserved } from './native-fixture-snapshot.mjs';
 const base = path.join(paths.workspace, 'local-state/vortex-agent-native-fixture');
 const here = path.dirname(fileURLToPath(import.meta.url));
 const must = (ok, code) => { if (!ok) throw Error(code); };
@@ -24,8 +24,47 @@ async function tool(name, args = {}) {
   must(!result.isError, 'ORDINARY_READ_FAILED'); return JSON.parse(result.content[0].text);
 }
 function processes() {
-  const script = `Get-CimInstance Win32_Process -Filter "Name = 'Vortex.exe'" | ForEach-Object { [pscustomobject]@{pid=$_.ProcessId;parent=$_.ParentProcessId;exe=$_.ExecutablePath;type=([regex]::Match($_.CommandLine,'--type=([^ ]+)').Groups[1].Value)} } | ConvertTo-Json -Compress`;
-  return JSON.parse(execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', timeout: 20000 }));
+  try {
+    const windows = process.env.SystemRoot;
+    must(process.platform === 'win32' && typeof windows === 'string'
+      && /^[a-z]:\\[^<>:"|?*\x00-\x1f]+$/i.test(windows)
+      && path.win32.normalize(windows) === windows, 'FIXTURE_PROCESS_LIST_UNVERIFIABLE');
+    const result = spawnSync(path.win32.join(windows, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+      ['-NoLogo', '-NoProfile', '-NonInteractive', '-File', path.join(here, 'fixture-process-inventory.ps1')],
+      { encoding: 'utf8', timeout: 20000, maxBuffer: 1024 * 1024, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    must(result && !result.error && result.status === 0 && !result.signal && typeof result.stdout === 'string'
+      && typeof result.stderr === 'string' && result.stderr.trim() === '', 'FIXTURE_PROCESS_LIST_UNVERIFIABLE');
+    const value = JSON.parse(result.stdout);
+    const exact = (v, keys) => v && typeof v === 'object' && !Array.isArray(v)
+      && Object.keys(v).length === keys.length && keys.every(k => Object.hasOwn(v, k));
+    must(exact(value, ['Schema', 'Complete', 'Count', 'Processes']) && value.Schema === 'fixture-process-inventory/1'
+      && value.Complete === true && Number.isSafeInteger(value.Count) && value.Count > 0 && value.Count <= 65536
+      && Array.isArray(value.Processes) && value.Processes.length === value.Count, 'FIXTURE_PROCESS_LIST_UNVERIFIABLE');
+    const ids = new Set();
+    for (const row of value.Processes) {
+      must(exact(row, ['ProcessId', 'ParentProcessId', 'ExecutablePath', 'StartTicks', 'IsMain'])
+        && Number.isSafeInteger(row.ProcessId) && row.ProcessId > 0 && row.ProcessId <= 0xffffffff && !ids.has(row.ProcessId)
+        && Number.isSafeInteger(row.ParentProcessId) && row.ParentProcessId >= 0 && row.ParentProcessId <= 0xffffffff
+        && row.ProcessId !== row.ParentProcessId && typeof row.ExecutablePath === 'string'
+        && row.ExecutablePath.toLowerCase() === 'c:\\program files\\vortex\\vortex.exe'
+        && typeof row.StartTicks === 'string' && /^[1-9][0-9]{14,18}$/.test(row.StartTicks)
+        && BigInt(row.StartTicks) <= 9223372036854775807n && typeof row.IsMain === 'boolean', 'FIXTURE_PROCESS_LIST_UNVERIFIABLE');
+      ids.add(row.ProcessId);
+    }
+    const rows = new Map(value.Processes.map(row => [row.ProcessId, row]));
+    must(value.Processes.some(row => row.IsMain), 'FIXTURE_PROCESS_LIST_UNVERIFIABLE');
+    for (const row of value.Processes) {
+      must(row.IsMain === !ids.has(row.ParentProcessId), 'FIXTURE_PROCESS_LIST_UNVERIFIABLE');
+      const visited = new Set([row.ProcessId]);
+      let child = row, parent = rows.get(child.ParentProcessId);
+      while (parent) {
+        must(!visited.has(parent.ProcessId) && BigInt(parent.StartTicks) <= BigInt(child.StartTicks), 'FIXTURE_PROCESS_LIST_UNVERIFIABLE');
+        visited.add(parent.ProcessId); child = parent; parent = rows.get(child.ParentProcessId);
+      }
+    }
+    return value.Processes.map(row => ({ pid: row.ProcessId, parent: row.ParentProcessId, exe: row.ExecutablePath,
+      type: row.IsMain ? '' : 'helper', generation: row.StartTicks }));
+  } catch { throw Error('FIXTURE_PROCESS_LIST_UNVERIFIABLE'); }
 }
 function crc32(data) {
   let c = 0xffffffff;
@@ -133,7 +172,7 @@ async function main() {
   const receiptPath = path.join(root, 'native-receipt.json');
   const receipt = fs.existsSync(receiptPath) ? JSON.parse(fs.readFileSync(receiptPath)) : { status: 'missing' };
   const after = await snapshot(); write(path.join(root, 'ordinary-after.json'), after);
-  const ordinaryUnchanged = JSON.stringify(before.health) === JSON.stringify(after.health) && JSON.stringify(before.profiles) === JSON.stringify(after.profiles) && JSON.stringify(before.mods) === JSON.stringify(after.mods) && before.manifestSha256 === after.manifestSha256 && before.processes.every(p => after.processes.some(a => a.pid === p.pid));
+  const ordinaryUnchanged = JSON.stringify(before.health) === JSON.stringify(after.health) && JSON.stringify(before.profiles) === JSON.stringify(after.profiles) && JSON.stringify(before.mods) === JSON.stringify(after.mods) && before.manifestSha256 === after.manifestSha256 && ordinaryProcessesPreserved(before.processes, after.processes);
   const result = { root, nativeStatus: receipt.status, fixtureExited: exited, ordinaryUnchanged, ordinaryManifestSha256: after.manifestSha256, error: receipt.error, remainingFixturePids: after.processes.filter(p => p.pid === child.pid || p.parent === child.pid).map(p => p.pid) };
   write(path.join(root, 'runner-result.json'), result); console.log(JSON.stringify(result));
   // No forced termination: preserve failed evidence and identify the exact fixture PID.
