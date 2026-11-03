@@ -15,6 +15,7 @@ const { VERIFICATION } = require('./receipts.cjs');
 const credential = require('./credential.cjs');
 const { publicErrorCode } = require('./serialization.cjs');
 const { localInstallAdmission } = require('./local-install-binding.cjs');
+const { validInstallDiagnostics, PHASES, STATES, REASONS, WAITS, METRICS } = require('./install-diagnostics.cjs');
 function register(server, api, options = {}) {
   const credentials = options.credentials || [];
   const catalog = catalogFromDisk(util);
@@ -27,6 +28,13 @@ function register(server, api, options = {}) {
     gamePath: id, stagingPath: id, downloadPath: id,
     filesystemIds: z.strictObject({ gamePath: id, stagingPath: id, downloadPath: id }) };
   const pins = { size: z.number().int().positive(), sha256: z.string().regex(/^[a-f0-9]{64}$/) };
+  const milliseconds = z.number().int().nonnegative();
+  const diagnosticsSchema = z.strictObject({ schema:z.literal('install-diagnostics/1'),
+    phase:z.enum(PHASES),state:z.enum(STATES),reason:z.enum(REASONS),waitReason:z.enum(WAITS),
+    elapsedMs:milliseconds,budgetMs:milliseconds,remainingMs:milliseconds,
+    effectsMayHaveOccurred:z.boolean(),nativeMayContinue:z.boolean(),
+    phaseTimes:z.record(z.enum(PHASES),milliseconds),
+    metrics:z.record(z.enum(METRICS),z.strictObject({calls:milliseconds,totalMs:milliseconds})) });
   const status = z.strictObject({ protocol: z.literal('vortex-agent/1'), requestId: id,
     operation: z.enum(['install_download', 'install_local_archive', 'set_mods_enabled', 'deploy_mods', 'download_nexus']),
     operationCompleted: z.literal(true), diskDeploymentVerified: z.literal(false), verificationRequired: z.literal(VERIFICATION),
@@ -35,6 +43,7 @@ function register(server, api, options = {}) {
     downloadId: id.optional(), reused: z.boolean().optional(), archiveSha256Verified: z.boolean().optional(),
     size: z.number().int().positive().optional(), autoInstall: z.literal(false).optional(), archiveCRCVerified: z.literal(false).optional(),
     payloadFilesVerified: z.number().int().positive().optional(),
+    installDiagnostics: diagnosticsSchema.optional(),
   });
   const add = (name, fields, fn, writes = false, description) => server.registerTool(name, {
     description: description ?? (writes ? 'Guarded active-context mutation; unique requestId and live path pins required. Result is NOT disk deployment proof.' : 'Curated read-only Vortex inspection.'),
@@ -49,6 +58,8 @@ function register(server, api, options = {}) {
     }
     catch (error) { return { isError: true, content: [{ type: 'text', text: JSON.stringify({
       error: publicErrorCode(error, api, credentials), action: 'Re-read health/context, inspect external receipts and Vortex UI/log privately. Never blindly retry a mutation.',
+      ...(name === 'install_local_archive' && validInstallDiagnostics(error?.installDiagnostics)
+        ? {installDiagnostics:safe(error.installDiagnostics,api,'install_diagnostics',credentials)} : {}),
     }) }] }; }
     finally { release(); }
   });

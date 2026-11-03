@@ -36,7 +36,20 @@ export async function* boundedLines(input, max = 1024 * 1024) {
   if (dropping) yield null;
   else if (bytes) yield decode(Buffer.concat(pieces, bytes));
 }
+const UNAVAILABLE = 'Vortex MCP unavailable or timed out. Start Vortex with the audited vortex-agent extension, verify port 3701 ownership; inspect receipts before retrying a write.';
+const LOCAL_INSTALL_TRANSPORT_LOST = 'Vortex local archive transport lost or timed out. Native work may continue. Reconcile the original requestId with reconcile_operation; do not retry install_local_archive.';
+const transportAbort = error => error?.name === 'AbortError' || error?.name === 'TimeoutError';
 export async function remote(method, params = {}, fetcher = fetch, tokenProvider = credential.readToken) {
+  let dispatched = false;
+  try { return await remoteRequest(method, params, fetcher, tokenProvider, () => { dispatched = true; }); }
+  catch (error) {
+    if (dispatched && method === 'tools/call' && params.name === 'install_local_archive'
+      && (error?.message === UNAVAILABLE || transportAbort(error))) throw new Error(LOCAL_INSTALL_TRANSPORT_LOST);
+    if (transportAbort(error)) throw new Error('Invalid Vortex MCP response');
+    throw error;
+  }
+}
+async function remoteRequest(method, params, fetcher, tokenProvider, onDispatch) {
   if (method === 'tools/call' && params.name === 'install_download') {
     throw new Error('Native installation is unsupported by this adapter. Use the inspected native workflow in vortex-mod-lifecycle; do not retry install_download.');
   }
@@ -44,10 +57,14 @@ export async function remote(method, params = {}, fetcher = fetch, tokenProvider
   let token;
   try { token = await tokenProvider(); }
   catch { throw new Error('Vortex Agent credential unavailable. Run node "' + fileURLToPath(new URL('./credential.cjs', import.meta.url)) + '" --initialize once as the Windows user running Vortex.'); }
-  try { response = await fetcher(ENDPOINT, { method: 'POST', redirect: 'error',
+  try {
+    const request = { method: 'POST', redirect: 'error',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', Authorization: 'Bearer ' + token },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }), signal: AbortSignal.timeout(300000) }); }
-  catch { throw new Error('Vortex MCP unavailable or timed out. Start Vortex with the audited vortex-agent extension, verify port 3701 ownership; inspect receipts before retrying a write.'); }
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }), signal: AbortSignal.timeout(300000) };
+    // HTTP abort ends this transport only; it never cancels or replays native work.
+    onDispatch(); response = await fetcher(ENDPOINT, request);
+  }
+  catch { throw new Error(UNAVAILABLE); }
   if (!response.ok) {
     cancelBody(response.body);
     throw new Error(response.status === 401 ? 'Vortex MCP authentication failed. Run credential.cjs --initialize once as the same Windows user as Vortex, then verify extension and credential ownership.' : `Vortex MCP HTTP ${response.status}; verify the adapted extension and port ownership.`);
@@ -89,6 +106,7 @@ export async function remote(method, params = {}, fetcher = fetch, tokenProvider
         if (done) break;
       }
     } catch (error) {
+      if (transportAbort(error)) throw error;
       throw new Error(error.message === 'MCP response too large' ? 'MCP response too large' : 'Invalid Vortex MCP response');
     } finally { releaseReader(reader); }
   } else {
@@ -101,6 +119,7 @@ export async function remote(method, params = {}, fetcher = fetch, tokenProvider
       }
       message = parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, bytes)));
     } catch (error) {
+      if (transportAbort(error)) throw error;
       throw new Error(error.message === 'MCP response too large' ? 'MCP response too large' : 'Invalid Vortex MCP response');
     } finally { releaseReader(reader); }
   }

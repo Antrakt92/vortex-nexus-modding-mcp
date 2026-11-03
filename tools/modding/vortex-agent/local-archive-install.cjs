@@ -4,6 +4,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { inspectOwnZip, LIMITS } = require('./own-zip.cjs');
 const { validateLocalArchiveName, assertLocalArchiveAdmission } = require('./local-archive-policy.cjs');
+const { createInstallDiagnostics } = require('./install-diagnostics.cjs');
 const need = (ok, code) => { if (!ok) throw Error(code); };
 const sha = data => crypto.createHash('sha256').update(data).digest('hex');
 const stamp = s => [s.dev, s.ino, s.size, s.mtimeNs, s.ctimeNs].join(':');
@@ -56,14 +57,22 @@ function boundaryHooks(api) {
     try {
     need(!active.uncertain && game === active.gameId && downloadId === active.downloadId
       && modId === active.modId && !active.hookSeen, 'LOCAL_ARCHIVE_UNOWNED_INSTALL');
+    active.diagnostics.assertWork();
+    const leave = active.diagnostics.enter('native_hook');
+    let permitted = false;
+    try {
     active.hookSeen = true;
     noNexus(info);
     await active.check();
+    active.diagnostics.assertWork();
+    need(!active.uncertain && !active.violation, 'LOCAL_ARCHIVE_NATIVE_OPERATION_HELD');
     // The stock manager assigns a later lookup match to this hook payload before
     // previous-version detection. A newly appearing match must fail, not replace.
     need(info && info.meta === undefined, 'LOCAL_ARCHIVE_METADATA_UNSAFE');
     Object.defineProperty(info, 'meta', { enumerable: true, configurable: false,
       get: () => undefined, set: () => { throw Error('LOCAL_ARCHIVE_METADATA_CHANGED'); } });
+    permitted = true;
+    } finally { if (permitted) leave(); }
     } catch (error) { active.violation = true; throw error; }
   });
   api.onAsync('will-remove-mods', async () => {
@@ -72,19 +81,26 @@ function boundaryHooks(api) {
   });
   hooks.set(api, state); return state;
 }
-function native(api, event, args, timeoutMs, active, extract = value => value) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { active.uncertain = true; reject(Error('LOCAL_ARCHIVE_NATIVE_TIMEOUT_RECONCILE')); }, timeoutMs);
+function native(api, event, args, timeoutMs, active) {
+  let settled = false;
+  return active.diagnostics.wait(event === 'import-downloads' ? 'native_import' : 'native_install', () => new Promise((resolve, reject) => {
     const callback = (error, result) => {
-      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
       if (error) { active.uncertain = true; reject(Error('LOCAL_ARCHIVE_NATIVE_FAILED_RECONCILE')); }
-      else { try { resolve(extract(result)); } catch (err) { reject(err); } }
+      else resolve(result);
     };
     try { need(api.events.emit(event, ...args(callback)), 'LOCAL_ARCHIVE_NATIVE_LISTENER_MISSING'); }
-    catch (error) { clearTimeout(timer); reject(error); }
+    catch (error) { settled = true; reject(error); }
+  }), timeoutMs, {onTimeout: () => { settled = true; active.uncertain = true; }}).catch(error => {
+    // Keep the existing native-stage timeout code; the new diagnostics identify
+    // its exact phase. The overall operation cutoff has its own explicit code.
+    if (error?.code === 'LOCAL_ARCHIVE_STAGE_TIMEOUT') throw Error('LOCAL_ARCHIVE_NATIVE_TIMEOUT_RECONCILE');
+    throw error;
   });
 }
-async function installLocalArchive(api, args, { check, effect, admitHost, timeoutMs = 120000 }) {
+async function installLocalArchive(api, args, { check, effect, admitHost, timeoutMs = 120000, diagnostics = createInstallDiagnostics() }) {
+  diagnostics.assertWork();
   need(args.gameId === 'cyberpunk2077', 'LOCAL_ARCHIVE_GAME_UNSUPPORTED');
   need(typeof admitHost === 'function', 'LOCAL_ARCHIVE_SOURCE_ADMISSION_REQUIRED');
   const name = path.basename(args.archivePath), modId = validateLocalArchiveName(name);
@@ -94,8 +110,10 @@ async function installLocalArchive(api, args, { check, effect, admitHost, timeou
   baseline[args.gameId] ||= {};
   const profiles = structuredClone(api.getState().persistent.profiles || {});
   const baselineDownloadIds = new Set(Object.keys(api.getState().persistent.downloads?.files || {}));
-  const pkg = packageProof(args);
-  const active = { gameId: args.gameId, modId, downloadId: null, hookSeen: false, uncertain: false };
+  diagnostics.phase('package');
+  const pkg = diagnostics.measureSync('archive_proof', () => packageProof(args));
+  const active = { gameId: args.gameId, modId, downloadId: null, hookSeen: false, uncertain: false, diagnostics };
+  diagnostics.onTrip(() => { active.uncertain = true; });
   let completed = false, nativeStarted = false, importedProof;
   const verifyArchives = () => { pkg.verify(); importedProof?.verify(); };
   const listeners = [];
@@ -104,9 +122,13 @@ async function installLocalArchive(api, args, { check, effect, admitHost, timeou
     api.events.prependListener(event, fn); listeners.push([event, fn]);
   }
   async function admission() {
+    diagnostics.assertWork();
     need(!active.uncertain && !active.violation, 'LOCAL_ARCHIVE_NATIVE_OPERATION_HELD');
-    check(); verifyArchives(); await admitHost(); check(); verifyArchives();
-    const metadata = await api.lookupModMeta({ fileMD5: pkg.md5, fileSize: pkg.bytes, gameId: args.gameId });
+    check(); verifyArchives();
+    await diagnostics.wait('host_admission', admitHost, 30000);
+    diagnostics.assertWork(); check(); verifyArchives();
+    const metadata = await diagnostics.wait('metadata', () => api.lookupModMeta({ fileMD5: pkg.md5, fileSize: pkg.bytes, gameId: args.gameId }), 30000);
+    diagnostics.assertWork();
     check(); verifyArchives();
     assertLocalArchiveAdmission({ archiveName: name, mods: api.getState().persistent.mods?.[args.gameId] || {},
       existingDirectories: fs.readdirSync(args.stagingPath), metadata, autoEnable: false, autoDeploy: false });
@@ -115,6 +137,7 @@ async function installLocalArchive(api, args, { check, effect, admitHost, timeou
   active.check = admission;
   holder.active = active;
   try {
+    diagnostics.assertWork(); diagnostics.phase('preflight');
     await admission();
     // Do not import another copy of an archive Vortex already owns.
     need(!Object.values(api.getState().persistent.downloads?.files || {}).some(d =>
@@ -126,38 +149,45 @@ async function installLocalArchive(api, args, { check, effect, admitHost, timeou
       active.dispatching = false;
     });
     for (const event of ['remove-mod', 'remove-mods']) arm(event, () => { active.violation = true; throw Error('LOCAL_ARCHIVE_REPLACEMENT_REFUSED'); });
+    diagnostics.phase('import');
     const ids = await effect(() => {
       nativeStarted = true;
       return native(api, 'import-downloads', cb => [[args.archivePath], values => cb(null, values), true], timeoutMs, active);
     }, verifyArchives);
     need(Array.isArray(ids) && ids.length === 1 && typeof ids[0] === 'string' && ids[0], 'LOCAL_ARCHIVE_IMPORT_RESULT_INVALID');
     active.downloadId = ids[0];
-    const until = Date.now() + timeoutMs;
-    while (api.getState().persistent.downloads?.files?.[active.downloadId]?.state !== 'finished') {
-      need(Date.now() < until, 'LOCAL_ARCHIVE_IMPORT_PENDING_RECONCILE');
-      check(); await new Promise(resolve => setTimeout(resolve, 100));
-    }
+    diagnostics.phase('import_settle');
+    await diagnostics.wait('import_settle', async () => {
+      while (api.getState().persistent.downloads?.files?.[active.downloadId]?.state !== 'finished') {
+        diagnostics.assertWork(); check();
+        await new Promise(resolve => setTimeout(resolve, 100));
+        diagnostics.assertWork();
+      }
+    }, timeoutMs);
+    diagnostics.assertWork();
     const record = api.getState().persistent.downloads.files[active.downloadId];
     noNexus(record);
     need(!baselineDownloadIds.has(active.downloadId) && Array.isArray(record.game) && record.game.length === 1
       && record.game[0] === args.gameId && record.localPath === name, 'LOCAL_ARCHIVE_IMPORTED_IDENTITY_MISMATCH');
     const imported = path.join(args.downloadPath, record.localPath);
-    importedProof = packageProof({ ...args, archivePath: imported });
+    importedProof = diagnostics.measureSync('archive_proof', () => packageProof({ ...args, archivePath: imported }));
     await admission();
+    diagnostics.phase('install');
     const installed = await effect(() => {
       active.dispatching = true;
       return native(api, 'start-install-download', cb => [active.downloadId,
         { allowAutoEnable: false, profileId: args.profileId }, cb], timeoutMs, active);
     }, verifyArchives);
     check(); verifyArchives(); need(!active.violation && !active.uncertain, 'LOCAL_ARCHIVE_NATIVE_OPERATION_HELD');
+    diagnostics.assertWork(); diagnostics.phase('staged_proof');
     need(installed === modId && active.hookSeen, 'LOCAL_ARCHIVE_INSTALLED_IDENTITY_MISMATCH');
     const state = api.getState(), mod = state.persistent.mods?.[args.gameId]?.[modId];
     need(mod?.state === 'installed' && mod.installationPath === modId && mod.archiveId === active.downloadId
       && state.persistent.profiles[args.profileId].modState?.[modId]?.enabled !== true, 'LOCAL_ARCHIVE_INSTALLED_RECORD_UNVERIFIED');
-    for (const [relative, digest] of Object.entries(pkg.payload)) {
+    diagnostics.measureSync('staged_proof', () => { for (const [relative, digest] of Object.entries(pkg.payload)) {
       const staged = path.join(args.stagingPath, modId, relative);
       ordinary(staged); need(sha(fs.readFileSync(staged)) === digest, 'LOCAL_ARCHIVE_STAGED_BYTES_UNVERIFIED');
-    }
+    } });
     const afterMods = structuredClone(state.persistent.mods || {}); delete afterMods[args.gameId][modId];
     const afterProfiles = structuredClone(state.persistent.profiles || {});
     for (const profile of Object.values(afterProfiles)) {
@@ -168,6 +198,7 @@ async function installLocalArchive(api, args, { check, effect, admitHost, timeou
     }
     need(JSON.stringify(afterMods) === JSON.stringify(baseline)
       && JSON.stringify(afterProfiles) === JSON.stringify(profiles), 'LOCAL_ARCHIVE_EXISTING_STATE_CHANGED');
+    diagnostics.assertWork();
     completed = true;
     return { modId, downloadId: active.downloadId, installedRecordVerified: true, enabled: false,
       archiveSha256Verified: true, payloadFilesVerified: pkg.payloadFiles };

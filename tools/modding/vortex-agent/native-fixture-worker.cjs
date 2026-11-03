@@ -4,10 +4,37 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const http = require('node:http');
+const { isDeepStrictEqual } = require('node:util');
 const input = require('./input.json');
 const { actions, selectors, util } = require('@nexusmods/vortex-api');
 const root = input.root, G = 'cyberpunk2077', P = 'native-agent-fixture';
 const must = (ok, code) => { if (!ok) throw Error(code); };
+// Independent fixture assertions: no identifiers or native payload in diagnostics.
+function diagnosticProof(value, completed = false) {
+  const phases = ['preflight', 'package', 'import', 'import_settle', 'install', 'native_hook', 'staged_proof', 'finalizing_receipt'];
+  const metrics = ['context_checks', 'archive_proof', 'host_admission', 'metadata', 'native_import', 'import_settle', 'native_install', 'staged_proof', 'receipt_commit'];
+  const exact = (v, keys) => v && typeof v === 'object' && !Array.isArray(v)
+    && Object.keys(v).length === keys.length && keys.every(k => Object.hasOwn(v, k));
+  const numeric = v => Number.isSafeInteger(v) && v >= 0;
+  must(exact(value, ['schema', 'phase', 'state', 'waitReason', 'reason', 'elapsedMs', 'budgetMs', 'remainingMs',
+    'effectsMayHaveOccurred', 'nativeMayContinue', 'phaseTimes', 'metrics']) && value.schema === 'install-diagnostics/1'
+    && phases.includes(value.phase) && ['running', 'finalizing', 'completed', 'failed_before_effect', 'held'].includes(value.state)
+    && ['none', 'source_proof', 'metadata_reply', 'import_callback', 'download_finished', 'install_callback', 'receipt_commit'].includes(value.waitReason)
+    && ['none', 'deadline', 'stage_timeout', 'native_failure', 'operation_error', 'receipt_cleanup'].includes(value.reason)
+    && ['elapsedMs', 'budgetMs', 'remainingMs'].every(k => numeric(value[k])) && value.budgetMs > 0
+    && value.remainingMs === Math.max(0, value.budgetMs - value.elapsedMs)
+    && typeof value.effectsMayHaveOccurred === 'boolean' && typeof value.nativeMayContinue === 'boolean'
+    && exact(value.phaseTimes, phases) && phases.every(k => numeric(value.phaseTimes[k]))
+    && exact(value.metrics, metrics) && metrics.every(k => exact(value.metrics[k], ['calls', 'totalMs'])
+      && numeric(value.metrics[k].calls) && numeric(value.metrics[k].totalMs)), 'INSTALL_DIAGNOSTICS_SCHEMA_INVALID');
+  if (completed) {
+    must(value.state === 'completed' && value.phase === 'finalizing_receipt' && value.reason === 'none'
+      && value.waitReason === 'none' && value.effectsMayHaveOccurred && !value.nativeMayContinue, 'INSTALL_DIAGNOSTICS_NOT_COMPLETED');
+    must(metrics.every(k => value.metrics[k].calls >= 1) && value.metrics.archive_proof.calls === 2
+      && ['native_import', 'import_settle', 'native_install', 'staged_proof', 'receipt_commit'].every(k => value.metrics[k].calls === 1),
+    'INSTALL_DIAGNOSTICS_COUNTS_INVALID');
+  }
+}
 const norm = p => path.resolve(p).toLowerCase();
 const sha = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 function contained(p) {
@@ -183,9 +210,49 @@ async function run(api) {
     if (input.installRoute === 'mcp-local-archive') {
       const pins = Object.fromEntries(['gameId', 'profileId', 'gamePath', 'stagingPath', 'downloadPath', 'filesystemIds'].map(k => [k, health[k]]));
       note('mcp-local-install-intent');
-      const result = await rpc(token, 'install_local_archive', { ...pins, requestId: input.runId + '_install',
-        archivePath: input.archive, size: input.archiveSize, sha256: input.archiveSha256 });
+      const requestId = input.runId + '_install', samples = [];
+      let settled = false, observationError;
+      // Handle rejection immediately while the read-only observer runs independently.
+      const installing = rpc(token, 'install_local_archive', { ...pins, requestId,
+        archivePath: input.archive, size: input.archiveSize, sha256: input.archiveSha256 })
+        .then(result => { settled = true; return { result }; }, error => { settled = true; return { error }; });
+      while (!settled && samples.length < 90) {
+        const started = Date.now();
+        try {
+          const observed = await rpc(token, 'reconcile_operation', { requestId });
+          if (observed.attempt) must(observed.attempt.requestId === requestId
+            && observed.attempt.operation === 'install_local_archive', 'LIVE_INSTALL_ATTEMPT_MISMATCH');
+          if (observed.installDiagnostics) diagnosticProof(observed.installDiagnostics);
+          samples.push({ source: observed.installDiagnosticsSource || 'unavailable',
+            attemptAt: observed.attempt?.at || null, diagnostics: observed.installDiagnostics || null });
+        } catch (error) { observationError = error; break; }
+        if (!settled && samples.length < 90) {
+          let timer;
+          try { await Promise.race([installing, new Promise(resolve => { timer = setTimeout(resolve, Math.max(0, 1000 - (Date.now() - started))); })]); }
+          finally { clearTimeout(timer); }
+        }
+      }
+      const outcome = await installing;
+      if (outcome.error) throw outcome.error;
+      if (observationError) throw observationError;
+      const result = outcome.result;
+      must(result.operationCompleted === true, 'LOCAL_INSTALL_NOT_COMPLETED');
+      diagnosticProof(result.installDiagnostics, true);
       note('mcp-local-install-completed', { result });
+      must(samples.some(sample => sample.source === 'live' && sample.diagnostics), 'LIVE_INSTALL_DIAGNOSTICS_NOT_OBSERVED');
+      const retained = await rpc(token, 'reconcile_operation', { requestId });
+      const sidecar = JSON.parse(fs.readFileSync(contained(path.join(input.adapterReceipts, requestId + '.diagnostics.json')), 'utf8'));
+      must(retained.attempt?.requestId === requestId && retained.attempt.operation === 'install_local_archive'
+        && retained.installDiagnosticsSource === 'retained' && retained.terminalOperationVerified === true,
+      'RETAINED_INSTALL_DIAGNOSTICS_UNAVAILABLE');
+      diagnosticProof(retained.installDiagnostics, true);
+      must(sidecar.schema === 'install-diagnostic-record/1' && sidecar.requestId === requestId
+        && sidecar.operation === 'install_local_archive' && sidecar.attemptAt === retained.attempt.at
+        && samples.filter(sample => sample.diagnostics).every(sample => sample.attemptAt === retained.attempt.at)
+        && isDeepStrictEqual(sidecar.diagnostics, retained.installDiagnostics)
+        && isDeepStrictEqual(sidecar.diagnostics, result.installDiagnostics), 'INSTALL_DIAGNOSTICS_SIDECAR_MISMATCH');
+      note('mcp-local-install-diagnostics', { requestId, samples,
+        retained: { source: retained.installDiagnosticsSource, attemptAt: retained.attempt.at, diagnostics: retained.installDiagnostics } });
       modId = result.modId;
     }
     const curated = input.installRoute === 'mcp-local-archive';

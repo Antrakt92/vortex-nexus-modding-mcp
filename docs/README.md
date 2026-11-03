@@ -7,6 +7,7 @@
 - [Configuration](CONFIGURATION.md): workspaces, local stores and client settings.
 - [Running-session workflows](NO-RESTART-WORKFLOW.md): inspection and reviewed download/enable/deploy plans.
 - [Local ZIP installation](STOCK-LOCAL-INSTALL.md): install new own Cyberpunk builds disabled through the official Vortex host, without temporary plugins.
+- [Installation workflow plan](INSTALL-WORKFLOW-PLAN.md): phase measurements, optimization gates and separate update/collection acceptance steps.
 - [Authorized restart](AUTHORIZED-RESTART.md): native close for hidden Vortex windows, verified exit and maintenance readback.
 - [Collection downloads](COLLECTION-DOWNLOADS.md): exact Nexus IDs and tracked-download reuse.
 - [Collection releases](COLLECTION-RELEASES.md): early preflight, frozen candidates and separate publication/post-release boundaries.

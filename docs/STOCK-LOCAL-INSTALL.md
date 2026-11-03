@@ -75,6 +75,32 @@ node tools/modding/vortex-agent/bridge.mjs --call read_local_install_readiness '
 # Pass the reviewed JSON arguments to --call install_local_archive.
 ```
 
+## Progress and waiting limits
+
+While the call is running, call `reconcile_operation` with its original request
+ID to read `installDiagnostics`. Poll at most once per second. The observation
+includes the current phase, `waitReason`, elapsed milliseconds, remaining budget,
+exclusive `phaseTimes` and metric call counts/durations. Nested metrics overlap;
+do not add them together as total installation time. Diagnostics contain fixed
+labels and numbers, without raw host state or authenticated URLs.
+
+The work budget is 240 seconds, starting after the mutation lock is acquired
+(the lock itself waits at most 30 seconds). Host/source and metadata waits are
+capped at 30 seconds each; native callbacks at 120 seconds each. Every wait also
+uses the remaining work budget. The bridge transport allows 300 seconds.
+Synchronous file/process checks cannot be interrupted by a JavaScript timer;
+the budget is checked at operation boundaries. Durable receipt finalization is
+not canceled or raced against a timeout.
+
+Success and guarded failures include a final diagnostic snapshot. Reconciliation
+reports `installDiagnosticsSource` as `live`, `retained` or `unavailable`, with
+separate `diagnosticsIssues`. A small immutable `.diagnostics.json` sidecar may
+retain the final observation alongside the original receipts. Missing or corrupt
+diagnostics do not invalidate a completion, prove success, clear an interlock or
+authorize a retry. Older operations remain valid without diagnostic records.
+Before the attempt exists (including lock contention), diagnostics are unavailable.
+An unavailable observation does not mean Vortex is idle or the operation failed.
+
 ## Refusal or lost response
 
 Keep the original request ID and call `reconcile_operation`. It reports matching
@@ -82,6 +108,12 @@ download records, the expected mod's observed state and the original receipts.
 It never clears the interlock or replays installation. A native timeout does not
 cancel Vortex. Failed/uncertain native work remains held, including its in-memory
 guards, until explicit reconciliation and an authorized restart when needed.
+
+`nativeMayContinue:true` means the adapter cannot rule out native work after
+losing acknowledgement; it does not report current native activity. If completion
+was already published but marker cleanup failed, the error is
+`COMPLETION_PUBLISHED_CLEANUP_PENDING`. Inspect the published completion and
+remaining markers; the adapter does not manufacture a contradictory failure.
 
 Do not replay with another ID, change the workspace or delete a marker. A
 pre-effect refusal can be corrected without pretending a native attempt ran.

@@ -189,6 +189,11 @@ current bounded observations, but never clears an interlock or retries an effect
 Inspect an uncertain operation before any manual recovery; do not remove a lock
 merely because a callback timed out.
 
+Own-local installs also expose optional live/final `installDiagnostics` through
+reconciliation and the final tool response: phase, waiting reason, a shared work
+budget and measured checks. Missing diagnostics never change receipt authority.
+See [progress and waiting limits](../../../docs/STOCK-LOCAL-INSTALL.md#progress-and-waiting-limits).
+
 Success always reports `diskDeploymentVerified:false`. Independently compare the
 deployment manifest, owners, preserved hashes, staged/game bytes and hardlinks.
 Game behavior needs a separate user test. Source compatibility, MCP connectivity,
