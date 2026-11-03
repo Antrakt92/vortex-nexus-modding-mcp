@@ -6,6 +6,7 @@ const { z } = require('zod');
 const { actions, selectors, util, log } = require('@nexusmods/vortex-api');
 const control = require('./vortexControl');
 const { createOperations, safe } = require('./guard.cjs');
+const { getCollectionWizardController } = require('./collection-wizard-controller.cjs');
 const { dialogs, conflicts, externalChanges, listDownloads, collectionHealth, unresolvedConflicts } = require('./inspection.cjs');
 const { readModLifecycle } = require('./lifecycle-inspection.cjs');
 const { assessInstalledCandidates, LIMITS: ASSESSMENT_LIMITS } = require('./installed-candidate-assessment.cjs');
@@ -18,10 +19,11 @@ const { publicErrorCode } = require('./serialization.cjs');
 const { localInstallAdmission } = require('./local-install-binding.cjs');
 const { validInstallDiagnostics, PHASES, STATES, REASONS, WAITS, METRICS } = require('./install-diagnostics.cjs');
 function register(server, api, options = {}) {
+  const wizard = getCollectionWizardController(api, { selectors, util });
   const credentials = options.credentials || [];
   const catalog = catalogFromDisk(util);
   const admitLocalInstallHost = localInstallAdmission(api, util, options.localInstallHostBinding);
-  const operations = createOperations(api, actions, selectors, { credentials, catalog,
+  const operations = createOperations(api, actions, selectors, { credentials, catalog, wizard,
     admitLocalInstallHost: admitLocalInstallHost });
   const id = z.string().min(1).max(200);
   const read = { gameId: id.optional(), limit: z.number().int().min(1).max(500).default(100) };
@@ -37,13 +39,18 @@ function register(server, api, options = {}) {
     phaseTimes:z.record(z.enum(PHASES),milliseconds),
     metrics:z.record(z.enum(METRICS),z.strictObject({calls:milliseconds,totalMs:milliseconds})) });
   const status = z.strictObject({ protocol: z.literal('vortex-agent/1'), requestId: id,
-    operation: z.enum(['install_download', 'install_local_archive', 'set_mods_enabled', 'deploy_mods', 'download_nexus']),
+    operation: z.enum(['install_download', 'install_local_archive', 'set_mods_enabled', 'deploy_mods', 'download_nexus', 'advance_collection_wizard']),
     operationCompleted: z.literal(true), diskDeploymentVerified: z.literal(false), verificationRequired: z.literal(VERIFICATION),
     modId: id.optional(), installedRecordVerified: z.boolean().optional(), enabled: z.boolean().optional(),
     modIds: z.array(id).optional(), enabledFlagsVerified: z.boolean().optional(), deploymentPromiseResolved: z.boolean().optional(),
     downloadId: id.optional(), reused: z.boolean().optional(), archiveSha256Verified: z.boolean().optional(),
     size: z.number().int().positive().optional(), autoInstall: z.literal(false).optional(), archiveCRCVerified: z.literal(false).optional(),
     payloadFilesVerified: z.number().int().positive().optional(),
+    archiveId: id.optional(), collectionId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+    revisionId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+    revisionNumber: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+    action: z.enum(['install_now', 'done']).optional(), transition: z.enum(['started', 'finished']).optional(),
+    nativeTransitionVerified: z.literal(true).optional(),
     installDiagnostics: diagnosticsSchema.optional(),
   });
   const add = (name, fields, fn, writes = false, description) => server.registerTool(name, {
@@ -97,6 +104,14 @@ function register(server, api, options = {}) {
   add('list_known_mod_conflicts', { gameId: id.optional() }, a => control.listKnownModConflicts(api, a.gameId));
   add('list_unsolved_conflicts', {}, () => unresolvedConflicts(api, selectors, util));
   add('read_collection_health', {}, () => collectionHealth(api, selectors));
+  add('read_collection_wizard', {}, () => wizard.readiness(), false,
+    'Read source-admitted collection wizard readiness and exact collection identity. No action, installation or deployment proof.');
+  add('advance_collection_wizard', { ...write, modId: id, archiveId: id,
+    collectionId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    revisionId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    revisionNumber: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    action: z.enum(['install_now', 'done']) }, operations.advance_collection_wizard, true,
+    'Advance one exact source-admitted collection wizard through Install Now or Done. Requires active context, filesystem pins and a unique requestId. Native transition only; not installation or disk deployment proof. Reconcile uncertain effects before retry.');
   add('list_dialogs', {}, () => dialogs(api));
   add('list_external_changes', {}, () => externalChanges(api));
   add('install_download', { ...write, ...pins, downloadId: id }, operations.install_download, true);
@@ -107,6 +122,8 @@ function register(server, api, options = {}) {
   add('download_nexus', { ...write, ...pins, nexusModId: z.number().int().positive(), nexusFileId: z.number().int().positive(), reuseOnly: z.boolean().default(false) }, operations.download_nexus, true);
 }
 function start(api, port = 3701, options = {}) {
+  // Observe the wizard epoch before accepting requests, not at first tool use.
+  getCollectionWizardController(api, { selectors, util });
   const host = localhostHostValidation(), origin = localhostOriginValidation();
   const listener = http.createServer(async (req, res) => {
     if (req.url !== '/mcp') return res.writeHead(404).end();

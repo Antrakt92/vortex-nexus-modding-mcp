@@ -2,7 +2,7 @@
 const path = require('node:path');
 const { PHASES, STATES, REASONS, WAITS } = require('./install-diagnostics.cjs');
 const { SCHEMA: ASSESSMENT_SCHEMA, STATUSES: ASSESSMENT_STATUSES, REASONS: ASSESSMENT_REASONS } = require('./installed-candidate-assessment.cjs');
-const OPERATIONS = new Set(['install_download', 'install_local_archive', 'set_mods_enabled', 'deploy_mods', 'download_nexus']);
+const OPERATIONS = new Set(['install_download', 'install_local_archive', 'set_mods_enabled', 'deploy_mods', 'download_nexus', 'advance_collection_wizard']);
 const URI = /\b(?:[a-z][a-z0-9+.-]*:\/\/|[a-z][a-z0-9+.-]+:|[a-z]:(?![\\/]))[^\s"'<>]+/gi;
 const PATH_FIELD = /^(?:game|staging|download)Path$/;
 function insist(ok, code) { if (!ok) throw new Error(code); }
@@ -10,6 +10,20 @@ function insist(ok, code) { if (!ok) throw new Error(code); }
 // Policies apply to exact positions in outputs of named curated producers. They
 // are NOT a global exemption for arbitrary objects having a key named gameId/id.
 function operational(kind, trail) {
+  if (kind === 'read_collection_wizard' && trail.length === 1) {
+    const key = trail[0];
+    if (['protocol', 'gameId', 'profileId', 'modId'].includes(key)) return key;
+    if (key === 'archiveId') return 'downloadId';
+    if (key === 'schema') return 'wizardReadSchema';
+    if (key === 'status') return 'wizardReadStatus';
+    if (key === 'observedAtUTC') return 'at';
+    if (['collectionId', 'revisionId', 'revisionNumber'].includes(key)) return 'wizardOptionalPositive';
+    if (key === 'action') return 'wizardOptionalAction';
+    if (key === 'phase') return 'wizardPhase';
+    if (key === 'reason') return 'wizardReason';
+    if (['sourceAdmitted', 'bindingReady', 'writesAvailable'].includes(key)) return 'wizardBoolean';
+    if (key === 'nativeTransitionVerified') return 'wizardFalse';
+  }
   if (kind === 'assess_installed_candidates') {
     if (trail.length === 1 && ['protocol','gameId','profileId'].includes(trail[0])) return trail[0];
     if (trail.length === 1 && trail[0] === 'schema') return 'assessmentSchema';
@@ -85,6 +99,10 @@ function operational(kind, trail) {
   if (kind === 'parameters') {
     if (trail.length === 1 && trail[0] === 'archivePath') return 'absolutePath';
     if (trail.length === 1 && ['gameId', 'profileId', 'requestId', 'downloadId', 'sha256'].includes(trail[0])) return trail[0];
+    if (trail.length === 1 && trail[0] === 'modId') return 'modId';
+    if (trail.length === 1 && trail[0] === 'archiveId') return 'downloadId';
+    if (trail.length === 1 && ['collectionId', 'revisionId', 'revisionNumber'].includes(trail[0])) return 'wizardPositive';
+    if (trail.length === 1 && trail[0] === 'action') return 'wizardAction';
     if (trail.length === 1 && PATH_FIELD.test(trail[0])) return 'absolutePath';
     if (trail.length === 2 && trail[0] === 'modIds' && /^\d+$/.test(trail[1])) return 'modId';
     if (trail.length === 2 && trail[0] === 'filesystemIds' && PATH_FIELD.test(trail[1])) return 'filesystemId';
@@ -92,6 +110,11 @@ function operational(kind, trail) {
   if (kind === 'receipt' || kind === 'operation_status' || OPERATIONS.has(kind)) {
     if (trail[0] === 'parameters') return operational('parameters', trail.slice(1));
     if (trail.length === 1 && ['protocol', 'operation', 'requestId', 'gameId', 'profileId', 'modId', 'downloadId', 'at'].includes(trail[0])) return trail[0];
+    if (trail.length === 1 && trail[0] === 'archiveId') return 'downloadId';
+    if (trail.length === 1 && ['collectionId', 'revisionId', 'revisionNumber'].includes(trail[0])) return 'wizardPositive';
+    if (trail.length === 1 && trail[0] === 'action') return 'wizardAction';
+    if (trail.length === 1 && trail[0] === 'transition') return 'wizardTransition';
+    if (trail.length === 1 && trail[0] === 'nativeTransitionVerified') return 'wizardTrue';
     if (trail.length === 2 && trail[0] === 'modIds' && /^\d+$/.test(trail[1])) return 'modId';
   }
   if (kind === 'reconcile_operation') {
@@ -119,6 +142,18 @@ function operational(kind, trail) {
   return null;
 }
 function validOperational(type, value) {
+  if (type === 'wizardPositive') return Number.isSafeInteger(value) && value > 0;
+  if (type === 'wizardOptionalPositive') return value === null || (Number.isSafeInteger(value) && value > 0);
+  if (type === 'wizardBoolean') return typeof value === 'boolean';
+  if (type === 'wizardTrue') return value === true;
+  if (type === 'wizardFalse') return value === false;
+  if (type === 'wizardReadSchema') return value === 'collection-wizard-readiness/1';
+  if (type === 'wizardReadStatus') return ['ready', 'held', 'idle', 'ambiguous'].includes(value);
+  if (type === 'wizardAction') return ['install_now', 'done'].includes(value);
+  if (type === 'wizardOptionalAction') return value === null || ['install_now', 'done'].includes(value);
+  if (type === 'wizardTransition') return ['started', 'finished'].includes(value);
+  if (type === 'wizardPhase') return value === null || ['start', 'finish'].includes(value);
+  if (type === 'wizardReason') return value === null || (typeof value === 'string' && /^COLLECTION_WIZARD_[A-Z0-9_]{1,100}$/.test(value));
   if (type === 'assessmentSchema') return value === ASSESSMENT_SCHEMA;
   if (type === 'assessmentReadStatus') return ['ok','partial'].includes(value);
   if (type === 'assessmentStatus') return ASSESSMENT_STATUSES.includes(value);
@@ -176,6 +211,12 @@ function safe(value, api, kind = 'display', additionalCredentials = []) {
     if (item && typeof item === 'object') insist(!privateNodes.has(item), 'ACCOUNT_DATA_NOT_CURATED');
     const key = trail.at(-1) || '';
     if (/token|credential|cookie|apikey|password|authorization|url|^(?:userInfo|account|username|email|userId)$/i.test(key)) return '[redacted]';
+    const type = operational(kind, trail);
+    if (type && type.startsWith('wizard')) {
+      insist(validOperational(type, item), 'OPERATIONAL_VALUE_NOT_CURATED');
+      insist(![...credentials].some(secret => String(item).includes(secret)), 'OPERATIONAL_SECRET_OVERLAP');
+      return item;
+    }
     if (item && typeof item === 'object') {
       insist(!active.has(item), 'SERIALIZATION_CYCLE_NOT_CURATED');
       active.add(item);
@@ -187,7 +228,6 @@ function safe(value, api, kind = 'display', additionalCredentials = []) {
       active.delete(item); return out;
     }
     if (typeof item !== 'string') return item;
-    const type = operational(kind, trail);
     if (type) {
       // Credential overlap is NOT account-name overlap: do not return or persist
       // a broken identifier, and do not exempt even a one-character real secret.

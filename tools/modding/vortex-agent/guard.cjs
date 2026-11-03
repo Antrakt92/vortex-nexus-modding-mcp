@@ -302,6 +302,29 @@ function createOperations(api, actions, selectors, options = {}) {
   return {
     health: () => ({ protocol: PROTOCOL, extensionVersion: '1.1.0', targetVortexVersion: '2.7.2.0', ...context(api, selectors),
       security: 'per-user-DPAPI-bearer', installSupported: false, diskDeploymentVerified: false }),
+    advance_collection_wizard: args => {
+      const wizard = options.wizard;
+      insist(wizard && ['prepare', 'validate', 'click', 'waitForTransition', 'verifyTransition'].every(key => typeof wizard[key] === 'function'),
+        'COLLECTION_WIZARD_CONTROLLER_UNAVAILABLE');
+      return mutate('advance_collection_wizard', args, async (effect, beforeCompletion) => {
+      const sync = (fn, code) => {
+        const value = fn();
+        if (value && typeof value.then === 'function') {
+          void Promise.resolve(value).catch(() => {});
+          throw Error(code);
+        }
+        insist(value !== false, code);
+        return value;
+      };
+      await wizard.prepare(args);
+      check(args);
+      await effect(() => sync(() => wizard.click(args), 'COLLECTION_WIZARD_CLICK_MUST_BE_SYNCHRONOUS'),
+        () => sync(() => wizard.validate(args), 'COLLECTION_WIZARD_VALIDATION_MUST_BE_SYNCHRONOUS'));
+      const result = await wizard.waitForTransition(args);
+      beforeCompletion(() => sync(() => wizard.verifyTransition(args, result), 'COLLECTION_WIZARD_TRANSITION_MUST_BE_SYNCHRONOUS'));
+      return result;
+      }).then(result => { wizard.committed?.(args); return result; });
+    },
     install_download: args => mutate('install_download', args, async () => {
       await archive(api, args, args.downloadId, selectors, catalog); check(args);
       // v2.7.2 InstallManager can silently replace by newestFileId/Nexus identity,

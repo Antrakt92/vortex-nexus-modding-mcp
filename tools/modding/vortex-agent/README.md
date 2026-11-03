@@ -42,6 +42,13 @@ The client does not call window or restart APIs. Vortex itself can still show a
 legitimate native dialog during a requested operation. Starting minimized is
 not a guarantee against a brief window.
 
+The maintained source also provides a
+[background collection wizard](../../../docs/BACKGROUND-COLLECTION-WIZARD.md):
+curated readiness and guarded Install Now/Done transitions without OS input or
+desktop takeover. Its newly observed-owner scope is narrower than normal manual
+Vortex use. Source/model and built-wire checks pass; live wizard-action acceptance
+is tracked separately in that guide.
+
 ## Paths and authentication
 
 `NEXUS_WORKSPACE` defaults to the repository root. Runtime build files,
