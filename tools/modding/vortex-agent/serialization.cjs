@@ -102,6 +102,20 @@ function operational(kind, trail) {
     if (trail.length === 2 && trail[0] === 'staging' && trail[1] === 'code') return 'nativeStagingCode';
     if (trail.length === 2 && trail[0] === 'staging' && trail[1] === 'tagStatus') return 'nativeStagingStatus';
     if (trail.length === 2 && trail[0] === 'updater' && trail[1] === 'state') return 'nativeUpdaterState';
+    if (trail[0] === 'extensions') {
+      if (trail.length === 2 && trail[1] === 'code') return 'nativeExtensionsCode';
+      if (trail.length === 3 && trail[1] === 'pendingRemovalKeys' && /^\d+$/.test(trail[2])) return 'nativeExtensionId';
+      if (trail.length === 4 && ['stateRows','loadedRows'].includes(trail[1]) && /^\d+$/.test(trail[2])
+        && ['stateKey','effectiveId'].includes(trail[3])) return 'nativeExtensionId';
+      if (trail.length === 5 && ['stateRows','loadedRows'].includes(trail[1]) && /^\d+$/.test(trail[2])) {
+        if (trail[4] === 'type') return 'nativeExtensionUndefined';
+        if (trail[4] === 'value') {
+          if (trail[3] === 'path') return 'nativeExtensionPath';
+          if (trail[3] === 'version') return 'nativeExtensionVersion';
+          if (trail[3] === 'enabled') return 'nativeExtensionEnabled';
+        }
+      }
+    }
     if (trail.length === 3 && trail[0] === 'deploymentTargets' && /^\d+$/.test(trail[1])) {
       if (trail[2] === 'typeId') return 'nativeTypeId';
       if (trail[2] === 'path') return 'absolutePath';
@@ -216,6 +230,12 @@ function validOperational(type, value) {
   if (type === 'nativeStagingCode') return /^NATIVE_PREFLIGHT_STAGING_TAG_(?:MISSING|UNAVAILABLE|UNSAFE|CHANGED)$/.test(value);
   if (type === 'nativeStagingStatus') return ['missing','present','unknown'].includes(value);
   if (type === 'nativeUpdaterState') return ['disabled', 'idle', 'checking', 'available', 'downgrade-offered', 'downloading', 'staged', 'error'].includes(value);
+  if (type === 'nativeExtensionsCode') return /^NATIVE_PREFLIGHT_EXTENSIONS_(?:UNAVAILABLE|INVALID|LIMIT|CHANGED)$/.test(value);
+  if (type === 'nativeExtensionId') return value.length > 0 && value.length <= 192 && !/[\x00-\x1f\x7f\\/:?*"<>]/.test(value);
+  if (type === 'nativeExtensionPath') return value.length > 0 && value.length <= 1024 && path.isAbsolute(value) && !/[\x00-\x1f\x7f?*]/.test(value);
+  if (type === 'nativeExtensionVersion') return value.length > 0 && value.length <= 80 && /^[A-Za-z0-9.+_-]+$/.test(value);
+  if (type === 'nativeExtensionUndefined') return value === 'undefined';
+  if (type === 'nativeExtensionEnabled') return value === 'failed';
   if (type === 'dialogIdentity' || type === 'downloadId') return value.length > 0 && value.length <= 512 && !/[\x00-\x1f\x7f]/.test(value);
   if (type === 'protocol') return value === 'vortex-agent/1';
   if (type === 'operation') return OPERATIONS.has(value);

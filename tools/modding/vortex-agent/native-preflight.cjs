@@ -5,6 +5,7 @@ const {types} = require('node:util');
 const {performance} = require('node:perf_hooks');
 const {context: readContext} = require('./guard.cjs');
 const TIMEOUT_MS = 2000;
+const EXTENSION_LIMIT = 1000;
 const ROOTS = ['gamePath','stagingPath','downloadPath'];
 const STATES = new Set(['disabled','idle','checking','available','downgrade-offered','downloading','staged','error']);
 const insist = (ok, code) => {if (!ok) throw Error(code);};
@@ -30,6 +31,66 @@ function field(o, key) {
   const d = Object.getOwnPropertyDescriptor(o, key);
   insist(d && Object.hasOwn(d, 'value') && d.enumerable, 'NATIVE_PREFLIGHT_NATIVE_DATA_INVALID');
   return d.value;
+}
+const extensionId = s => clean(s,192) && !/[\\/:?*"<>]/.test(s);
+const extensionVersion = s => clean(s,80) && /^[A-Za-z0-9.+_-]+$/.test(s);
+const extensionPath = s => clean(s,1024) && path.isAbsolute(s) && !/[?*]/.test(s);
+function extensionCell(row, key, validate) {
+  insist(plain(row), 'NATIVE_PREFLIGHT_EXTENSIONS_INVALID');
+  const d = Object.getOwnPropertyDescriptor(row,key);
+  if (!d) {
+    const proto = Object.getPrototypeOf(row);
+    insist(proto === null || !Object.getOwnPropertyDescriptor(proto,key), 'NATIVE_PREFLIGHT_EXTENSIONS_INVALID');
+    return {present:false};
+  }
+  insist(Object.hasOwn(d,'value') && d.enumerable, 'NATIVE_PREFLIGHT_EXTENSIONS_INVALID');
+  if (d.value === undefined) return {present:true,type:'undefined'};
+  insist(validate(d.value), 'NATIVE_PREFLIGHT_EXTENSIONS_INVALID');
+  return {present:true,value:d.value};
+}
+const extensionsUnknown = code => ({available:false,complete:false,code,pendingRemovalCount:null});
+function extensionPreflight(api) {
+  try {
+    // Fixed extension API ports only. Project own data descriptors once: do not
+    // evaluate extension callbacks, arbitrary info payloads or remove getters.
+    if (typeof api.getLoadedExtensions !== 'function') return extensionsUnknown('NATIVE_PREFLIGHT_EXTENSIONS_UNAVAILABLE');
+    const raw = field(field(api.getState(),'app'),'extensions');
+    insist(plain(raw), 'NATIVE_PREFLIGHT_EXTENSIONS_INVALID');
+    const keys = Reflect.ownKeys(raw);
+    insist(keys.length <= EXTENSION_LIMIT, 'NATIVE_PREFLIGHT_EXTENSIONS_LIMIT');
+    insist(keys.every(extensionId), 'NATIVE_PREFLIGHT_EXTENSIONS_INVALID');
+    const bool = v => typeof v === 'boolean';
+    const stateRows = keys.sort().map(stateKey => {
+      const row = field(raw,stateKey);
+      return {stateKey,path:extensionCell(row,'path',extensionPath),
+        version:extensionCell(row,'version',extensionVersion),
+        enabled:extensionCell(row,'enabled',v => bool(v) || v === 'failed'),
+        remove:extensionCell(row,'remove',bool),bundled:extensionCell(row,'bundled',bool)};
+    });
+    const loaded = api.getLoadedExtensions();
+    insist(!types.isProxy(loaded) && Array.isArray(loaded), 'NATIVE_PREFLIGHT_EXTENSIONS_INVALID');
+    insist(loaded.length <= EXTENSION_LIMIT, 'NATIVE_PREFLIGHT_EXTENSIONS_LIMIT');
+    const loadedRows = [];
+    for (let i=0;i<loaded.length;i++) {
+      const d = Object.getOwnPropertyDescriptor(loaded,String(i));
+      insist(d && Object.hasOwn(d,'value') && d.enumerable, 'NATIVE_PREFLIGHT_EXTENSIONS_INVALID');
+      const row = d.value, effectiveId = field(row,'name');
+      insist(extensionId(effectiveId), 'NATIVE_PREFLIGHT_EXTENSIONS_INVALID');
+      // Built-in static extensions can legitimately have no path or info.
+      loadedRows.push({effectiveId,path:extensionCell(row,'path',extensionPath),
+        dynamic:extensionCell(row,'dynamic',bool)});
+    }
+    loadedRows.sort((a,b) => a.effectiveId < b.effectiveId ? -1 : a.effectiveId > b.effectiveId ? 1 : 0);
+    const pendingRemovalKeys = stateRows.filter(row => row.remove.value === true).map(row => row.stateKey);
+    return {available:true,complete:true,stateRows,loadedRows,pendingRemovalKeys,
+      pendingRemovalCount:pendingRemovalKeys.length};
+  } catch (error) {
+    const d = error !== null && (typeof error === 'object' || typeof error === 'function') && !types.isProxy(error)
+      ? Object.getOwnPropertyDescriptor(error,'message') : undefined;
+    const code = d && Object.hasOwn(d,'value') && d.value === 'NATIVE_PREFLIGHT_EXTENSIONS_LIMIT'
+      ? d.value : 'NATIVE_PREFLIGHT_EXTENSIONS_INVALID';
+    return extensionsUnknown(code);
+  }
 }
 function absolute(p) {
   insist(clean(p,4096) && path.isAbsolute(p) && !/^[a-z][a-z0-9+.-]*:\/\//i.test(p), 'NATIVE_PREFLIGHT_TARGETS_INVALID');
@@ -112,6 +173,7 @@ function bounded(call, project, label, timers) {
 async function readNativePreflight(api, selectors, util, options = {}) {
   const initial = current(api,selectors), initialTargets = targets(util,initial);
   const initialStaging = stagingTag(initial);
+  const initialExtensions = extensionPreflight(api);
   const timers = options.timers ?? {setTimeout,clearTimeout};
   insist(typeof timers.setTimeout === 'function' && typeof timers.clearTimeout === 'function', 'NATIVE_PREFLIGHT_OPTIONS_INVALID');
   let native;
@@ -143,8 +205,12 @@ async function readNativePreflight(api, selectors, util, options = {}) {
   const finalStaging = stagingTag(final);
   const staging = !initialStaging.value.available ? initialStaging.value : !finalStaging.value.available ? finalStaging.value
     : initialStaging.stamp !== finalStaging.stamp ? stagingUnknown('NATIVE_PREFLIGHT_STAGING_TAG_CHANGED') : finalStaging.value;
+  const finalExtensions = extensionPreflight(api);
+  const extensions = !initialExtensions.available ? initialExtensions : !finalExtensions.available ? finalExtensions
+    : JSON.stringify(initialExtensions) !== JSON.stringify(finalExtensions)
+      ? extensionsUnknown('NATIVE_PREFLIGHT_EXTENSIONS_CHANGED') : finalExtensions;
   return {protocol:'vortex-agent/1',schema:'native-preflight/1',observedAtUTC:new Date().toISOString(),
-    context:final,appVersion,deploymentTargets:finalTargets,updater,staging,snapshotAtomic:false,nativeEffects:false,
-    shutdownPermit:false,sourceAdmissionVerified:false,status:appVersion.available && updater.available && staging.available ? 'ok' : 'partial'};
+    context:final,appVersion,deploymentTargets:finalTargets,updater,staging,extensions,snapshotAtomic:false,nativeEffects:false,
+    shutdownPermit:false,sourceAdmissionVerified:false,status:appVersion.available && updater.available && staging.available && extensions.available ? 'ok' : 'partial'};
 }
 module.exports = {TIMEOUT_MS,readNativePreflight};

@@ -19,6 +19,13 @@ embedded Vortex adapter's compatibility label.
 | [0.1.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.1.0) | 2026-10-29 | Combined inspection, collection download reuse and coordinated plans |
 | [Recovery sources](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/recovery-sources-20261025) | 2026-10-25 | Pinned upstream Git bundles for source recovery |
 
+## Unreleased
+
+- Extend `read_native_preflight` with bounded extension state and loaded effective
+  IDs, including queued removals. Missing, malformed, oversized or changing data
+  is explicitly incomplete; no filesystem census or restart permission is implied.
+  Requires a rebuilt adapter and coordinated activation; not yet live-verified.
+
 ## 0.8.1 — 2026-11-04
 
 Fix reading and publishing large immutable capture records. Changes since
