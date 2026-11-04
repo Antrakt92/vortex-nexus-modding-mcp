@@ -6,8 +6,8 @@ function fixture() {
   for(let p=scratch;;p=path.dirname(p)) {if(fs.existsSync(p))assert.equal(fs.lstatSync(p).isSymbolicLink(),false);if(p===path.dirname(p))break;}
   fs.mkdirSync(scratch,{recursive:true});const root=fs.mkdtempSync(path.join(scratch,'native-preflight-test-'));
   const roots=Object.fromEntries(['gamePath','stagingPath','downloadPath'].map(k=>{const p=path.join(root,k);fs.mkdirSync(p);return[k,p];}));
-  const state={settings:{gameMode:{discovered:{game:{path:roots.gamePath}}}},persistent:{profiles:{profile:{gameId:'game'}}}};
-  const api={getState:()=>state},selectors={activeGameId:()=> 'game',activeProfileId:()=> 'profile',installPathForGame:()=>roots.stagingPath,downloadPathForGame:()=>roots.downloadPath};
+  const state={app:{extensions:{}},settings:{gameMode:{discovered:{game:{path:roots.gamePath}}}},persistent:{profiles:{profile:{gameId:'game'}}}};
+  const api={getState:()=>state,getLoadedExtensions:()=>[]},selectors={activeGameId:()=> 'game',activeProfileId:()=> 'profile',installPathForGame:()=>roots.stagingPath,downloadPathForGame:()=>roots.downloadPath};
   let table={'':roots.gamePath,enb:roots.gamePath,dinput:roots.gamePath};
   const util={getGame:id=>{assert.equal(id,'game');return{getModPaths:p=>{assert.equal(p,roots.gamePath);return table;}};}};
   const native={app:{getVersion(){assert.equal(this,native.app);assert.equal(arguments.length,0);return Promise.resolve('2.9.1');}},
@@ -16,6 +16,76 @@ function fixture() {
   return{root,roots,state,api,selectors,util,native,live,timers,options:{getWindow:()=>({api:native}),timers},setTable:v=>{table=v;},run(options){return readNativePreflight(api,selectors,util,options??this.options);}};
 }
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
+
+test('extension queue retains orphan removals, exact state keys and loaded effective IDs without info payloads',async()=>{
+ const f=fixture();f.state.app.extensions={randomKey:{path:f.root,version:'0.13.2',enabled:'failed',remove:false,bundled:false,
+   get info(){assert.fail('private info');},account:'not-returned'},orphan:{remove:true},unset:{remove:undefined}};
+ f.api.getLoadedExtensions=()=>[{name:'effective-ID',path:f.root,dynamic:true,get info(){assert.fail('loaded info');}}, {name:'static',dynamic:false}];
+ const r=await f.run();assert.equal(r.status,'ok');assert.equal(r.extensions.available,true);assert.equal(r.extensions.complete,true);
+ assert.deepEqual(r.extensions.pendingRemovalKeys,['orphan']);assert.equal(r.extensions.pendingRemovalCount,1);
+ assert.deepEqual(r.extensions.stateRows.map(x=>x.stateKey),['orphan','randomKey','unset']);
+ assert.deepEqual(r.extensions.stateRows[0].path,{present:false});assert.deepEqual(r.extensions.stateRows[2].remove,{present:true,type:'undefined'});
+ assert.deepEqual(r.extensions.loadedRows[0],{effectiveId:'effective-ID',path:{present:true,value:f.root},dynamic:{present:true,value:true}});
+ assert.deepEqual(r.extensions.loadedRows[1].path,{present:false});assert.equal(JSON.stringify(r).includes('not-returned'),false);
+ r.extensions.stateRows[0].remove.value=false;assert.equal((await f.run()).extensions.pendingRemovalCount,1);
+});
+
+test('missing extension API or state is partial and never claims an empty queue',async()=>{
+ for(const mode of ['api','app','extensions','throw','primitive']){const f=fixture();
+  if(mode==='api')delete f.api.getLoadedExtensions;if(mode==='app')delete f.state.app;
+  if(mode==='extensions')delete f.state.app.extensions;if(mode==='throw')f.api.getLoadedExtensions=()=>{throw Error('secret');};
+  if(mode==='primitive')f.api.getLoadedExtensions=()=>{throw 'private primitive';};
+  const r=await f.run();assert.equal(r.status,'partial');assert.equal(r.extensions.available,false);assert.equal(r.extensions.complete,false);
+  assert.equal(r.extensions.pendingRemovalCount,null);assert.equal(r.extensions.pendingRemovalKeys,undefined);assert.equal(JSON.stringify(r).includes('private'),false);
+ }
+});
+
+test('malformed remove values are unknown instead of coerced to boolean',async()=>{
+ for(const remove of [null,0,1,'false','true',{},[]]){const f=fixture();f.state.app.extensions={own:{remove}};
+  const r=await f.run();assert.equal(r.status,'partial');assert.equal(r.extensions.code,'NATIVE_PREFLIGHT_EXTENSIONS_INVALID');assert.equal(r.extensions.pendingRemovalCount,null);}
+});
+
+test('hostile extension descriptors and proxies never execute traps or getters',async()=>{
+ const fail=()=>assert.fail('extension caller code executed');
+ for(const change of [
+  f=>Object.defineProperty(f.state,'app',{enumerable:true,get:fail}),
+  f=>Object.defineProperty(f.state.app,'extensions',{enumerable:true,get:fail}),
+  f=>f.state.app.extensions=new Proxy({}, {ownKeys:fail}),
+  f=>Object.defineProperty(f.state.app.extensions,'own',{enumerable:true,get:fail}),
+  f=>f.state.app.extensions={own:new Proxy({}, {getOwnPropertyDescriptor:fail})},
+  f=>f.state.app.extensions={own:Object.defineProperty({},'remove',{enumerable:true,get:fail})},
+  f=>f.api.getLoadedExtensions=()=>new Proxy([],{get:fail}),
+  f=>f.api.getLoadedExtensions=()=>[Object.defineProperty({},'name',{enumerable:true,get:fail})],
+  f=>f.api.getLoadedExtensions=()=>[new Proxy({},{getPrototypeOf:fail})],
+  f=>f.api.getLoadedExtensions=()=>Object.defineProperty([],'0',{enumerable:true,get:fail}),
+ ]){const f=fixture();change(f);const r=await f.run();assert.equal(r.extensions.available,false);assert.equal(r.extensions.pendingRemovalCount,null);}
+});
+
+test('oversized or sparse extension inventories refuse without truncation',async()=>{
+ for(const mode of ['state','loaded','sparse']){const f=fixture();
+  if(mode==='state')f.state.app.extensions=Object.fromEntries(Array.from({length:1001},(_,i)=>['id'+i,{}]));
+  else f.api.getLoadedExtensions=()=>mode==='loaded'?Array.from({length:1001},()=>({name:'own'})):Array(1);
+  const r=await f.run();assert.equal(r.extensions.available,false);assert.equal(r.extensions.pendingRemovalKeys,undefined);
+  assert.equal(r.extensions.code,'NATIVE_PREFLIGHT_EXTENSIONS_'+(mode==='sparse'?'INVALID':'LIMIT'));
+ }
+});
+
+test('queued changes and loaded identities are re-sampled after awaited native calls',async()=>{
+ for(const mode of ['remove','loaded','unavailable']){const f=fixture();f.state.app.extensions={own:{remove:false}};
+  f.native.updater.getStatus=()=>{if(mode==='remove')f.state.app.extensions.own.remove=true;
+   if(mode==='loaded')f.api.getLoadedExtensions=()=>[{name:'newly-loaded'}];
+   if(mode==='unavailable')delete f.state.app.extensions;
+   return{seq:1,snapshot:{state:{type:'idle'}}};};
+  const r=await f.run();assert.equal(r.status,'partial');assert.equal(r.extensions.available,false);
+  assert.equal(r.extensions.code,'NATIVE_PREFLIGHT_EXTENSIONS_'+(mode==='unavailable'?'INVALID':'CHANGED'));
+ }
+});
+
+test('cross-realm extension rows are data-only and loaded duplicate IDs are preserved',async()=>{
+ const f=fixture(),vm=require('node:vm');f.state.app.extensions=vm.runInNewContext('({orphan:{remove:true}})');
+ f.api.getLoadedExtensions=()=>vm.runInNewContext('([{name:"duplicate",dynamic:false},{name:"duplicate",dynamic:false}])');
+ const r=await f.run();assert.equal(r.extensions.pendingRemovalCount,1);assert.equal(r.extensions.loadedRows.length,2);
+});
 
 test('missing staging tag is observed before native calls without initializing the directory',async()=>{
  const f=fixture(),before=fs.readdirSync(f.roots.stagingPath);

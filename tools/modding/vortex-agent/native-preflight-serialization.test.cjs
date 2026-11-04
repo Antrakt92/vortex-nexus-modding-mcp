@@ -14,6 +14,21 @@ function sample() {
 }
 const api = (credential = 'own-private-credential', userInfo = {}) => ({getState:() => ({confidential:{apiKey:credential},persistent:{nexus:{userInfo}}})});
 
+test('extension queue and loaded IDs survive account-name overlap while credential overlap refuses',()=>{
+ const value=sample();value.extensions={available:true,complete:true,pendingRemovalCount:1,pendingRemovalKeys:['own'],
+  stateRows:[{stateKey:'own',path:{present:true,value:path.resolve('own-extension')},version:{present:true,value:'0.13.2'},
+   enabled:{present:true,value:'failed'},remove:{present:true,value:true},bundled:{present:false}}],
+  loadedRows:[{effectiveId:'own',path:{present:true,type:'undefined'},dynamic:{present:true,value:false}}]};
+ assert.deepEqual(safe(value,api(undefined,{name:'own',state:'failed',type:'undefined',version:'0.13.2'}),'read_native_preflight'),value);
+ for(const credential of ['own','failed','undefined','0.13.2'])assert.throws(()=>safe(value,api(credential),'read_native_preflight'),/OPERATIONAL_SECRET_OVERLAP/);
+ for(const code of ['UNAVAILABLE','INVALID','LIMIT','CHANGED']){
+  const partial={...sample(),status:'partial',extensions:{available:false,complete:false,code:'NATIVE_PREFLIGHT_EXTENSIONS_'+code,pendingRemovalCount:null}};
+  assert.deepEqual(safe(partial,api(),'read_native_preflight'),partial);
+ }
+ for(const id of ['bad/url','nxm:secret','own\n']){const bad=structuredClone(value);bad.extensions.loadedRows[0].effectiveId=id;
+  assert.throws(()=>safe(bad,api(),'read_native_preflight'),/OPERATIONAL_VALUE_NOT_CURATED/);}
+});
+
 test('preflight exact operational fields and empty default target survive account-name collisions', () => {
   const value=sample();
   const account={name:'own',version:'2.9.1',profile:'profile-a',label:'native-preflight/1',id:'idle',tag:'missing'};

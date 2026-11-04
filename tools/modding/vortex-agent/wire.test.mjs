@@ -23,13 +23,13 @@ test('built extension wire: allowlist, SDK2 HTTP, legacy bridge, schemas and bro
     listener = http.createServer(fn); const listen = listener.listen.bind(listener);
     listener.listen = () => listen(0, '127.0.0.1'); return listener;
   } };
-  const state = { confidential: { apiKey: 'unit-private-credential' }, settings: { profiles: { activeProfileId: 'p' }, gameMode: { discovered: { cyberpunk2077: { path: modelDir } } } },
+  const state = { app:{extensions:{wire:{path:modelDir,version:'1.0.0',remove:true}}}, confidential: { apiKey: 'unit-private-credential' }, settings: { profiles: { activeProfileId: 'p' }, gameMode: { discovered: { cyberpunk2077: { path: modelDir } } } },
     persistent: { nexus: { userInfo: { username: 'wire', accountLabel: 'vortex-agent', accountVersion: '1.1.0', displayName: 'cyberpunk' } },
       profiles: { p: { id: 'p', name: 'modeled', gameId: 'cyberpunk2077', modState: {} } }, mods: { cyberpunk2077: {} }, downloads: { files: {} } },
     session: { base: {}, notifications: { dialogs: [{ id: 'dialog', title: 'Modeled dialog', content: { message: 'nxm://game/files/1?key=private-nxm-value', input: [{ id: 'ordinary', label: 'field', value: 'unknown-sensitive-value', defaultValue: 'unknown-default' }] } }] } } };
   // Native API lifecycle collaborators only; this wire fixture has no real DOM
   // and therefore cannot acquire wizard admission or click a native action.
-  const api = { getState: () => state, store: { getState: () => state }, ext: {},
+  const api = { getState: () => state, getLoadedExtensions:()=>[{name:'wire',path:modelDir,dynamic:true}], store: { getState: () => state }, ext: {},
     events: new EventEmitter(), onAsync() {}, closeDialog() { throw Error('NO_NATIVE_RESPONSE_IN_WIRE_MODEL'); }, awaitUI: async () => {}, translate: key => key };
   const vortex = { actions: {}, selectors: { activeProfileId: () => 'p', activeGameId: () => 'cyberpunk2077',
     knownGames: () => [{ id: 'cyberpunk2077' }], activeProfile: () => state.persistent.profiles.p,
@@ -105,12 +105,20 @@ test('built extension wire: allowlist, SDK2 HTTP, legacy bridge, schemas and bro
     assert.deepEqual(native.deploymentTargets.map(row=>row.typeId),['','own_alias']);
     assert.equal(native.deploymentTargets[0].path,await fs.realpath(modelDir));
     assert.equal(native.shutdownPermit,false); assert.equal(native.sourceAdmissionVerified,false);
+    assert.equal(native.extensions.complete,true);assert.equal(native.extensions.pendingRemovalCount,1);
+    assert.deepEqual(native.extensions.pendingRemovalKeys,['wire']);
+    assert.equal(native.extensions.stateRows[0].stateKey,'wire');assert.equal(native.extensions.loadedRows[0].effectiveId,'wire');
     assert.equal(native.staging.tagStatus,'missing');assert.equal(native.staging.nativeInitializationRequired,true);
     assert.equal(native.staging.readinessVerified,false);
     await fs.writeFile(modelDir+'/__vortex_staging_folder','own-invalid-content');
     const tagged=JSON.parse((await call('tools/call',{name:'read_native_preflight',arguments:{}})).content[0].text);
     assert.equal(tagged.staging.tagStatus,'present');assert.equal(tagged.staging.nativeInitializationRequired,null);
     assert.equal(tagged.staging.readinessVerified,false);
+    delete state.app.extensions;
+    const missingExtensions=JSON.parse((await call('tools/call',{name:'read_native_preflight',arguments:{}})).content[0].text);
+    assert.equal(missingExtensions.status,'partial');assert.equal(missingExtensions.extensions.pendingRemovalCount,null);
+    assert.equal(missingExtensions.extensions.pendingRemovalKeys,undefined);
+    state.app.extensions={wire:{remove:true}};
     for (const marker of ['unknown-private','private-updater-error','private.invalid']) assert.ok(!nativeResult.content[0].text.includes(marker));
     const gettersBeforeInvalid=nativeGetterCalls;
     const invalidNative=await call('tools/call',{name:'read_native_preflight',arguments:{dispatch:'anything'}});
