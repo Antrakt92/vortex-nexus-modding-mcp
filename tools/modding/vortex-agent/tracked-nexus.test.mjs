@@ -527,3 +527,131 @@ test('overwritten legacy reference policies are unused while active owned and re
     assert.throws(() => make('bad-reference'), /TRACKED_REFERENCE_MODULE_DRIFT/);
     assert.equal(fs.existsSync(path.join(root, 'bad-reference')), false);
   });
+
+function lifecycleFixture(mode = 'collection', alreadyTagged = false) {
+  const { rows } = bound(); const packages = rows.slice(0, 3).map((p, i) => ({ ...p,
+    sourceTag: `reviewed-tag-${i}`, choices: undefined, patches: { 'r6/example.reds': '1234ABCD' },
+    modReference: { tag: `reviewed-tag-${i}`, repo: { modId: String(p.nexusModId), fileId: String(p.nexusFileId) } },
+    nativeSelectorInputs: { modId: p.nexusModId, fileId: p.nexusFileId, logicalFileName: 'exact' },
+  }));
+  const beforeDownloads = { unrelated: { state: 'finished', modInfo: { untouched: undefined } } };
+  for (const p of packages) beforeDownloads[p.requiredDownloadId] = { state: 'finished', fileMD5: p.md5,
+    size: p.bytes, localPath: p.expectedModId + '.zip', game: ['cyberpunk2077'],
+    modInfo: { nexus: { ids: { modId: p.nexusModId, fileId: p.nexusFileId } },
+      ...(alreadyTagged ? { referenceTag: p.sourceTag, referenceTags: [p.sourceTag] } : { referenceTag: 'legacy' }) } };
+  const scope = { beforeDownloads, packages, gameId: 'cyberpunk2077', profileId: 'ordinary', mode };
+  const info = (p, download) => mode === 'collection'
+    ? { download, choices: p.choices, patches: p.patches, modReference: p.modReference }
+    : { download, choices: p.choices, profileId: scope.profileId, modReference: undefined };
+  const queue = (d, p) => ({ ...structuredClone(d), modInfo: { ...structuredClone(d.modInfo), referenceTags: ['legacy', p.sourceTag] } });
+  return { scope, packages, beforeDownloads, info, queue };
+}
+test('native prequeue tags are admitted only for the reviewed scope and cannot revert after WILL', () => {
+  const { createDownloadLifecycle } = require('./tracked-nexus-policy.cjs'), f = lifecycleFixture(), p = f.packages[0];
+  const policy = createDownloadLifecycle(f.scope), actual = structuredClone(f.beforeDownloads);
+  actual[p.requiredDownloadId] = f.queue(actual[p.requiredDownloadId], p);
+  assert.throws(() => policy.check(actual), /UNREVIEWED_NATIVE_DOWNLOAD_CHANGED/);
+  policy.check(actual, { ownResumeObserved: true, sessionBound: true });
+  assert.throws(() => policy.will(p.requiredDownloadId, f.info(p, f.beforeDownloads[p.requiredDownloadId]), p.nativeSelectorInputs), /WILL_NOT_QUEUED/);
+  policy.will(p.requiredDownloadId, f.info(p, actual[p.requiredDownloadId]), p.nativeSelectorInputs);
+  actual[p.requiredDownloadId] = structuredClone(f.beforeDownloads[p.requiredDownloadId]);
+  assert.throws(() => policy.check(actual, { ownResumeObserved: true, sessionBound: true }), /UNREVIEWED_NATIVE_DOWNLOAD_CHANGED/);
+  const noop = lifecycleFixture('collection', true), noChange = createDownloadLifecycle(noop.scope), n = noop.packages[0];
+  noChange.will(n.requiredDownloadId, noop.info(n, noop.beforeDownloads[n.requiredDownloadId]), n.nativeSelectorInputs);
+  assert.doesNotThrow(() => noChange.check(noop.beforeDownloads));
+});
+test('semantic install contract preserves spec presence and rejects unknown native metadata changes', () => {
+  const { createDownloadLifecycle } = require('./tracked-nexus-policy.cjs'), f = lifecycleFixture('direct'), p = f.packages[0], d = f.beforeDownloads[p.requiredDownloadId];
+  for (const change of [i => { delete i.choices; }, i => { i.modReference = null; }, i => { i.profileId = 'other'; }, i => { i.extra = true; }]) {
+    const policy = createDownloadLifecycle(f.scope), info = f.info(p, d); change(info);
+    assert.throws(() => policy.will(p.requiredDownloadId, info, p.nativeSelectorInputs));
+  }
+  const policy = createDownloadLifecycle(f.scope), actual = structuredClone(f.beforeDownloads);
+  policy.will(p.requiredDownloadId, f.info(p, d), p.nativeSelectorInputs);
+  actual[p.requiredDownloadId].installed = { gameId: f.scope.gameId, modId: p.expectedModId };
+  policy.check(actual);
+  actual[p.requiredDownloadId].modInfo.unknown = 'changed'; assert.throws(() => policy.check(actual), /UNREVIEWED/);
+  delete actual[p.requiredDownloadId].modInfo.unknown; actual.unrelated.modInfo.untouched = null;
+  assert.throws(() => policy.check(actual), /UNRELATED_DOWNLOAD_CHANGED/);
+  let reads = 0; const getter = lifecycleFixture('direct');
+  Object.defineProperty(getter.beforeDownloads[getter.packages[0].requiredDownloadId], 'unsafe', { enumerable: true, get() { reads++; return 'no'; } });
+  assert.throws(() => createDownloadLifecycle(getter.scope), /ACCESSOR/); assert.equal(reads, 0);
+});
+test('fatal native scope stays vetoed after unwind/expiry and pause remains a single owned request', () => {
+  const { createNativeStopBoundary } = require('./tracked-nexus-settlement.cjs');
+  class Canceled extends Error {} const events = [], receipts = [];
+  let owned = true; const scope = { gameId: 'cyberpunk2077', profileId: 'ordinary', downloadIds: ['exact'], collectionOwnerId: 'owner',
+    api: { getState: () => ({ session: { collections: { activeSession: { collectionId: 'owner', gameId: 'cyberpunk2077', profileId: 'ordinary' } } } }),
+      events: { emit: (...args) => events.push(args) } }, assertOwned() { assert(owned); }, record: (...r) => receipts.push(r), ProcessCanceled: Canceled };
+  const boundary = createNativeStopBoundary(scope); assert(boundary.fail(Error('FIRST')) instanceof Canceled);
+  owned = false; assert(boundary.fail(Error('LATER')) instanceof Canceled);
+  assert.throws(() => boundary.will('cyberpunk2077', 'exact'), Canceled); assert.throws(() => boundary.deploy('ordinary'), Canceled);
+  assert.doesNotThrow(() => boundary.will('other', 'exact')); assert.doesNotThrow(() => boundary.will('cyberpunk2077', 'unrelated'));
+  assert.deepEqual(events, [['pause-collection', 'cyberpunk2077', 'owner', 'user']]); assert.equal(receipts.length, 2);
+  assert.equal(boundary.observation().pauseCompletionProven, false);
+  const direct = createNativeStopBoundary({ ...scope, collectionOwnerId: null }); direct.fail(Error('FAILED'));
+  assert.equal(events.length, 1); assert.equal(direct.observation().pauseUnavailable, true);
+});
+test('maintained generated consumer invokes lifecycle and sticky stop; unknown source stays refused',
+  { skip: !process.env.VORTEX_TRACKED_REFERENCE }, async () => {
+    const { adaptTrackedIndex } = await import('./prepare-tracked-nexus.mjs'), input = fs.readFileSync(path.join(process.env.VORTEX_TRACKED_REFERENCE, 'index.reference.js'));
+    assert.throws(() => adaptTrackedIndex(Buffer.concat([input, Buffer.from(' ')])), /REFERENCE_ENTRY_DRIFT/);
+    const code = adaptTrackedIndex(input).toString(), f = lifecycleFixture('direct'), p = f.packages[0], handlers = new Map();
+    class Canceled extends Error {} let nativeChecks = 0;
+    const api = { onAsync: (name, fn) => handlers.set(name, fn) }, init = code.split('\n').filter(l => l.startsWith('downloadLifecycle=require(') || l.startsWith('stopBoundary=require(')).join('\n');
+    const modules = { './tracked-nexus-policy.cjs': require('./tracked-nexus-policy.cjs'), './settlement.cjs': require('./tracked-nexus-settlement.cjs') };
+    const initialized = new Function('require', 'initial', 'baseline', 'api', 'guard', 'save', 'util',
+      'let downloadLifecycle,stopBoundary;'+init+';return {downloadLifecycle,stopBoundary};')(
+      name => modules[name], { persistent: { downloads: { files: f.beforeDownloads } } }, { health: f.scope, packages: f.packages }, api, () => {}, () => {}, { ProcessCanceled: Canceled });
+    const callback = code.split('\n').find(l => l.startsWith(" api.onAsync('will-install-mod'"));
+    const run = new Function('api', 'stopBoundary', 'baseline', 'currentPackage', 'downloadId', 'must', 'guard', 'checkedDownload', 'nexusIdentity', 'validateNativePrevious', 'downloadLifecycle',
+      "let active=true,phase='install',fatal,hookSeen=false,deployHeld=false;"+callback+'\n'+code.split('\n').find(l => l.startsWith(" api.onAsync('will-deploy'"))+";return ()=>{active=false;phase='failed';};")(api, initialized.stopBoundary, { health: f.scope }, p, p.requiredDownloadId,
+      (v,c) => { if (!v) throw Error(c); }, () => {}, () => {}, () => {}, async () => { nativeChecks++; return p.nativeSelectorInputs; }, initialized.downloadLifecycle);
+    const invalid = f.info(p, f.beforeDownloads[p.requiredDownloadId]); invalid.profileId = 'wrong';
+    await assert.rejects(handlers.get('will-install-mod')(f.scope.gameId, p.requiredDownloadId, p.expectedModId, invalid), Canceled);
+    assert.equal(nativeChecks, 1);
+    await assert.rejects(handlers.get('will-install-mod')(f.scope.gameId, p.requiredDownloadId, p.expectedModId, f.info(p, f.beforeDownloads[p.requiredDownloadId])), Canceled);
+    run(); // Model the real outer catch unwinding its active scope.
+    assert.throws(() => handlers.get('will-deploy')(f.scope.profileId), Canceled);
+    await assert.rejects(handlers.get('will-install-mod')(f.scope.gameId, p.requiredDownloadId, p.expectedModId, f.info(p, f.beforeDownloads[p.requiredDownloadId])), Canceled);
+    assert.equal(nativeChecks, 1); assert(initialized.stopBoundary.observation().held);
+    assert(!code.includes('return new Promise(()=>{});'));
+  });
+test('pinned native tag actions and reducers reach WILL before installed marker, with exact preservation',
+  { skip: !process.env.VORTEX_NATIVE_APP_ASAR || !process.env.VORTEX_TYPESCRIPT }, () => {
+    const compilerBytes=fs.readFileSync(process.env.VORTEX_TYPESCRIPT);
+    assert.equal(sha(compilerBytes),'3ae902c92cc44dace175c0e69e13a4b0899f6983c6121d76b9ab8dd5795e7675');
+    const ts=require(process.env.VORTEX_TYPESCRIPT), bytes=fs.readFileSync(process.env.VORTEX_NATIVE_APP_ASAR);
+    assert.equal(sha(bytes),'ba2d8017558beabdd804aeaec182c0b949b2ce425b924e38c4807c8c29023060');
+    const hdr=JSON.parse(bytes.subarray(16,16+bytes.readUInt32LE(12))), e=hdr.files['renderer.js.map'];
+    const off=8+bytes.readUInt32LE(4)+Number(e.offset), map=JSON.parse(bytes.subarray(off,off+e.size));
+    function source(suffix){const ids=map.sources.flatMap((s,i)=>s.endsWith(suffix)?[i]:[]);assert.equal(ids.length,1);return ts.createSourceFile(suffix,map.sourcesContent[ids[0]],ts.ScriptTarget.Latest,true);}
+    function find(ast,p){const hits=[];function walk(n){if(p(n))hits.push(n);ts.forEachChild(n,walk);}walk(ast);assert.equal(hits.length,1);return hits[0];}
+    function fn(suffix,name){const ast=source(suffix);return find(ast,n=>ts.isFunctionDeclaration(n)&&n.name?.text===name).getText(ast).replace(/^export /,'');}
+    const transpile=s=>ts.transpileModule(s,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
+    function reducer(name){const ast=source('/src/extensions/download_management/reducers/state.ts');const text=find(ast,n=>ts.isPropertyAssignment(n)&&n.name.getText(ast).includes('action.'+name+' as any')).initializer.getText(ast);return new Function('setSafe',transpile('const run='+text)+';return run')(setSafe);}
+    const setSafe=new Function(transpile(fn('/src/util/storeHelper.ts','setSafe'))+';return setSafe')();
+    const tags=new Function(transpile(fn('/src/extensions/mod_management/util/testModReference.ts','downloadReferenceTags'))+';return downloadReferenceTags')();
+    const append=new Function('downloadReferenceTags','setDownloadModInfo',transpile(fn('/src/extensions/download_management/util/referenceTags.ts','appendReferenceTagActions'))+';return appendReferenceTagActions')(tags,(id,key,value)=>({id,key,value}));
+    const meta=reducer('setDownloadModInfo'), installed=reducer('setDownloadInstalled');
+    const manager=source('/src/extensions/mod_management/InstallManager.ts');
+    const appendAt=manager.text.indexOf('appendReferenceTagActions(downloadId, downloads[downloadId], dep.reference.tag)');
+    assert(appendAt>0&&manager.text.indexOf('this.queueInstallation(',appendAt)>appendAt);
+    find(manager,n=>ts.isAwaitExpression(n)&&n.expression.getText(manager).startsWith('api.emitAndAwait(')&&n.expression.arguments?.[0]?.text==='will-install-mod');
+    const {createDownloadLifecycle}=require('./tracked-nexus-policy.cjs');
+    for(const preTagged of [false,true]){
+      const f=lifecycleFixture('collection',preTagged), p=f.packages[0], lifecycle=createDownloadLifecycle(f.scope);
+      let state={files:structuredClone(f.beforeDownloads)};
+      for(const action of append(p.requiredDownloadId,state.files[p.requiredDownloadId],p.sourceTag))state=meta(state,action);
+      lifecycle.check(state.files,{ownResumeObserved:true,sessionBound:true});
+      lifecycle.will(p.requiredDownloadId,f.info(p,state.files[p.requiredDownloadId]),p.nativeSelectorInputs);
+      const queued=structuredClone(state.files);
+      state.files[p.requiredDownloadId]=structuredClone(f.beforeDownloads[p.requiredDownloadId]);
+      if(!preTagged)assert.throws(()=>lifecycle.check(state.files,{ownResumeObserved:true,sessionBound:true}),/UNREVIEWED/);
+      else lifecycle.check(state.files,{ownResumeObserved:true,sessionBound:true});
+      state={files:queued};state=installed(state,{id:p.requiredDownloadId,gameId:f.scope.gameId,modId:p.expectedModId});
+      lifecycle.check(state.files,{ownResumeObserved:true,sessionBound:true});
+      state.files[p.requiredDownloadId].modInfo.unknown='refuse';
+      assert.throws(()=>lifecycle.check(state.files,{ownResumeObserved:true,sessionBound:true}),/UNREVIEWED/);
+    }
+  });

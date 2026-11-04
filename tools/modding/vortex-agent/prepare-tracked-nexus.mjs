@@ -55,6 +55,7 @@ function once(source, old, replacement) {
 }
 
 export function adaptTrackedIndex(input) {
+  need(sha(input) === catalog.entrySHA256, 'TRACKED_REFERENCE_ENTRY_DRIFT');
   let text = input.toString('utf8');
   text = once(text, 'baseline.packages.length===2',
     'Array.isArray(baseline.packages)&&baseline.packages.length===cfg.reviewedPackages.length');
@@ -74,6 +75,29 @@ export function adaptTrackedIndex(input) {
     "expectedSize=require('./payload-size-proof.cjs').verifiedPayloadBytes(files,pkg.payload)");
   text = once(text, "m?.state==='installed'&&m.archiveId===downloadId&&m.installationPath===pkg.expectedModId",
     "m?.state==='installed'&&(m.id===undefined||m.id===pkg.expectedModId)&&m.archiveId===downloadId&&m.installationPath===pkg.expectedModId&&m.type===pkg.expectedType");
+  text = once(text, "const accepted=new Map(),acceptedPayloads=new Map(),seenDialogs=new Set();",
+    "const accepted=new Map(),acceptedPayloads=new Map(),seenDialogs=new Set();let downloadLifecycle,stopBoundary;");
+  text = once(text, "const {normalizeProfiles,preserveDownloads,verifyAcceptedTransfers}=require('./transfer-policy.cjs');",
+    "const {normalizeProfiles,verifyAcceptedTransfers}=require('./transfer-policy.cjs');");
+  text = once(text, "preserveDownloads(originalDownloads,s.persistent.downloads.files,baseline.packages,allowedNew);",
+    "downloadLifecycle.check(s.persistent.downloads.files);");
+  text = once(text, "const downloadsProof=preserveDownloads(originalDownloads,finalState.persistent.downloads.files,baseline.packages,allowedNew);",
+    "const downloadsProof=downloadLifecycle.check(finalState.persistent.downloads.files,{final:true});");
+  text = once(text, "transferStart=Date.now();baseline.profilesDigest=digest(initial.persistent.profiles);",
+    "transferStart=Date.now();baseline.profilesDigest=digest(initial.persistent.profiles);\n"
+    + "downloadLifecycle=require('./tracked-nexus-policy.cjs').createDownloadLifecycle({beforeDownloads:initial.persistent.downloads.files,packages:baseline.packages,gameId:baseline.health.gameId,profileId:baseline.health.profileId,mode:'direct'});\n"
+    + "stopBoundary=require('./settlement.cjs').createNativeStopBoundary({api,gameId:baseline.health.gameId,profileId:baseline.health.profileId,downloadIds:baseline.packages.map(p=>p.requiredDownloadId),assertOwned:()=>guard(undefined,true),record:save,ProcessCanceled:util.ProcessCanceled});");
+  text = once(text, "sameNativeMetadataCacheKey:true});guard();",
+    "sameNativeMetadataCacheKey:true});guard();return verified.inputs;");
+  text = once(text, "api.onAsync('will-install-mod',async(game,id,mod,info)=>{try{",
+    "api.onAsync('will-install-mod',async(game,id,mod,info)=>{stopBoundary?.will(game,id);try{");
+  text = once(text, "await validateNativePrevious(info);hookSeen=true;}catch(e){fatal=e;throw e;}});",
+    "const identity=await validateNativePrevious(info);downloadLifecycle.will(id,info,identity);hookSeen=true;}catch(e){fatal=e;throw stopBoundary?stopBoundary.fail(e):e;}});");
+  text = once(text, "api.onAsync('will-deploy',()=>{", "api.onAsync('will-deploy',(profile)=>{stopBoundary?.deploy(profile);");
+  text = once(text, "return new Promise(()=>{});});",
+    "throw stopBoundary?stopBoundary.fail(fatal):new util.ProcessCanceled('EARLY_DEPLOY_PERMANENT_HOLD');});");
+  text = once(text, "}catch(e){const failedPhase=phase;active=false;",
+    "}catch(e){const failedPhase=phase;fatal=e;stopBoundary?.fail(e);active=false;");
   text = text.replace('exact three final-cutoff official tracked updates', 'exact reviewed bounded official tracked updates')
     .replaceAll('ALL2_NATIVE_SIMULATION_MAPPING_DIFFERS_NO_INSTALL', 'ALL_BATCH_NATIVE_SIMULATION_MAPPING_DIFFERS_NO_INSTALL')
     .replaceAll('all2-simulations-accepted', 'all-batch-simulations-accepted');
