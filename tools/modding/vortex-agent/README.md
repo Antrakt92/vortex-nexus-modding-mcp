@@ -42,6 +42,11 @@ The client does not call window or restart APIs. Vortex itself can still show a
 legitimate native dialog during a requested operation. Starting minimized is
 not a guarantee against a brief window.
 
+For exact metadata drift, use
+[`read_mod_record_fingerprints`](../../../docs/MOD-RECORD-FINGERPRINTS.md).
+It compares record and rule fingerprints without exposing raw values or
+changing records. Installation, compatibility and deployment remain separate.
+
 [Native installation questions](../../../docs/NATIVE-DIALOGS.md) have typed
 read/response tools for Cancel, Ignore dependencies and Update current profile.
 They respond through Vortex callbacks without desktop input. Cancel preserves

@@ -10,6 +10,7 @@ const BUILD = paths.build;
 const source = path.dirname(fileURLToPath(import.meta.url));
 const vendor = path.join(source, '../../../dependencies/vortex-mcp');
 const modules = ['paths.cjs', 'paths-core.cjs', 'guard.cjs', 'extension.cjs', 'credential.cjs', 'inspection.cjs', 'lifecycle-inspection.cjs', 'native-preflight.cjs', 'serialization.cjs', 'download-identity.cjs', 'receipts.cjs', 'http-ingress.cjs', 'own-zip.cjs', 'local-archive-policy.cjs', 'local-archive-install.cjs', 'local-install-host.cjs', 'local-install-binding.cjs', 'stock-vortex-2.9.1-admission.json', 'install-diagnostics.cjs', 'installed-candidate-assessment.cjs', 'collection-wizard-controller.cjs', 'collection-wizard-dom.cjs', 'collection-wizard-native.cjs', 'collection-wizard-policy.cjs', 'collection-wizard-host.cjs', 'collection-dialog-controller.cjs', 'collection-dialog-policy.cjs', 'collection-update-prompt.cjs', 'native-dialog-controller.cjs', 'native-dialog-host-admission.cjs', 'native-dialog-operations.cjs'];
+modules.push('mod-record-fingerprints.cjs');
 const sha = async file => crypto.createHash('sha256').update(await fs.readFile(file)).digest('hex');
 
 async function noReparsePaths(...files) {
