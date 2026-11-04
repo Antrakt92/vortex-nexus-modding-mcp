@@ -2,14 +2,69 @@
 const path = require('node:path');
 const { PHASES, STATES, REASONS, WAITS } = require('./install-diagnostics.cjs');
 const { SCHEMA: ASSESSMENT_SCHEMA, STATUSES: ASSESSMENT_STATUSES, REASONS: ASSESSMENT_REASONS } = require('./installed-candidate-assessment.cjs');
-const OPERATIONS = new Set(['install_download', 'install_local_archive', 'set_mods_enabled', 'deploy_mods', 'download_nexus', 'advance_collection_wizard', 'respond_collection_dialog', 'advance_collection_update_prompt']);
+const OPERATIONS = new Set(['install_download', 'install_local_archive', 'set_mods_enabled', 'deploy_mods', 'download_nexus', 'advance_collection_wizard', 'respond_collection_dialog', 'advance_collection_update_prompt', 'respond_native_dialog']);
 const URI = /\b(?:[a-z][a-z0-9+.-]*:\/\/|[a-z][a-z0-9+.-]+:|[a-z]:(?![\\/]))[^\s"'<>]+/gi;
 const PATH_FIELD = /^(?:game|staging|download)Path$/;
 function insist(ok, code) { if (!ok) throw new Error(code); }
 
 // Policies apply to exact positions in outputs of named curated producers. They
 // are NOT a global exemption for arbitrary objects having a key named gameId/id.
+function nativeDialogRecord(trail) {
+  if(trail.length!==1)return null;const key=trail[0];
+  if(['gameId','profileId','requestId','operation','at','protocol'].includes(key))return key;
+  if(key==='dialogId')return 'dialogIdentity';
+  if(['fingerprint','parametersDigest','dialogKey'].includes(key))return 'nativeDialogSHA';
+  if(key==='action')return 'nativeDialogAction';
+  if(key==='schema')return 'nativeDialogLedgerSchema';
+  if(['noReplay','inspectBeforeRetry'].includes(key))return 'nativeDialogTrue';
+  if(key==='operationCompleted')return 'nativeDialogFalse';
+  if(key==='effectsMayHaveOccurred')return 'nativeDialogBoolean';
+  if(key==='errorCode')return 'nativeDialogErrorCode';
+  return null;
+}
 function operational(kind, trail) {
+  if(kind==='native_dialog_failure'&&trail.length===1){const key=trail[0];
+    if(key==='operationCompleted')return 'nativeDialogFalse';
+    if(['effectsMayHaveOccurred','inspectBeforeRetry'].includes(key))return 'nativeDialogBoolean';
+    if(key==='errorCode')return 'nativeDialogErrorCode';
+    return operational('receipt',trail);
+  }
+  if(kind==='read_native_dialog'){
+    if(trail.length!==1)return null;const key=trail[0];
+    if(['gameId','profileId'].includes(key))return key;
+    if(key==='dialogId')return 'dialogIdentity';if(key==='fingerprint')return 'nativeDialogSHA';
+    if(key==='schema')return 'nativeDialogReadSchema';if(key==='status')return 'nativeDialogReadStatus';
+    if(key==='family')return 'nativeDialogFamily';if(key==='eligibleActions')return 'nativeDialogActions';
+    if(key==='queueSize')return 'nativeDialogQueueSize';
+    if(['callbackOriginVerified','targetArchiveIdentityVerified','installationCompleted'].includes(key))return 'nativeDialogFalse';
+    if(key==='dialogDismissalOnly')return 'nativeDialogTrue';
+  }
+  if(kind==='respond_native_dialog'){
+    if(trail[0]==='parameters'){
+      const part=trail.slice(1);if(part.length===1&&part[0]==='fingerprint')return 'nativeDialogSHA';
+      if(part.length===1&&part[0]==='action')return 'nativeDialogAction';
+      if(part.length===1&&part[0]==='dialogId')return 'dialogIdentity';
+      return operational('parameters',part);
+    }
+    if(trail.length===1){const key=trail[0];
+      if(key==='schema')return 'nativeDialogResponseSchema';if(key==='action')return 'nativeDialogAction';
+      if(key==='fingerprint')return 'nativeDialogSHA';if(key==='dialogId')return 'dialogIdentity';
+      if(key==='status')return 'nativeDialogCompleteStatus';
+      if(['remember','callbackOriginVerified','targetArchiveIdentityVerified','installationCompleted','diskDeploymentVerified'].includes(key))return 'nativeDialogFalse';
+      if(['nativeDialogDismissalVerified','dialogDismissalOnly','operationCompleted'].includes(key))return 'nativeDialogTrue';
+      if(key==='abortOnly')return 'nativeDialogBoolean';
+    }
+  }
+  if(kind==='read_native_dialog_operation'){
+    if(['attempt','completion','held'].includes(trail[0])){
+      if(trail[0]==='completion'&&trail[1]==='response')return operational('respond_native_dialog',trail.slice(2));
+      return nativeDialogRecord(trail.slice(1));
+    }
+    if(trail.length===1){const key=trail[0];if(['protocol','operation','requestId'].includes(key))return key;
+      if(key==='status')return 'nativeDialogLedgerStatus';
+      if(['replayAllowed','globalInterlockChanged','installationCompleted'].includes(key))return 'nativeDialogFalse';
+    }
+  }
   if (kind === 'read_collection_update_prompt' && trail.length === 1) {
     const key=trail[0];
     if (['gameId','profileId'].includes(key)) return key;
@@ -192,6 +247,21 @@ function operational(kind, trail) {
   return null;
 }
 function validOperational(type, value) {
+  if(type==='nativeDialogSHA')return typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
+  if(type==='nativeDialogAction')return ['cancel','ignore_dependencies','update_current_profile'].includes(value);
+  if(type==='nativeDialogActions')return Array.isArray(value)&&value.length<=2&&new Set(value).size===value.length&&value.every(a=>validOperational('nativeDialogAction',a));
+  if(type==='nativeDialogReadSchema')return value==='native-dialog-readiness/1';
+  if(type==='nativeDialogResponseSchema')return value==='native-dialog-response/1';
+  if(type==='nativeDialogLedgerSchema')return value==='native-dialog-control-ledger/1';
+  if(type==='nativeDialogReadStatus')return ['ready','empty'].includes(value);
+  if(type==='nativeDialogCompleteStatus')return value==='complete';
+  if(type==='nativeDialogLedgerStatus')return ['complete','held','pending','absent'].includes(value);
+  if(type==='nativeDialogFamily')return ['dependency_warning','previous_version'].includes(value);
+  if(type==='nativeDialogQueueSize')return Number.isInteger(value)&&value>=0&&value<=128;
+  if(type==='nativeDialogTrue')return value===true;if(type==='nativeDialogFalse')return value===false;
+  if(type==='nativeDialogBoolean')return typeof value==='boolean';
+  if(type==='nativeDialogErrorCode')return typeof value==='string'&&/^[A-Z][A-Z0-9_]{0,199}$/.test(value);
+
   if (type === 'wizardUpdateSchema') return value === 'collection-update-prompt-readiness/1';
   if (type === 'wizardUpdateStatus') return ['idle','held','ready'].includes(value);
   if (type === 'wizardUpdateAction') return value === 'download_update';
@@ -277,7 +347,12 @@ function safe(value, api, kind = 'display', additionalCredentials = []) {
     if (item && typeof item === 'object') insist(!privateNodes.has(item), 'ACCOUNT_DATA_NOT_CURATED');
     const key = trail.at(-1) || '';
     if (/token|credential|cookie|apikey|password|authorization|url|^(?:userInfo|account|username|email|userId)$/i.test(key)) return '[redacted]';
-    const type = operational(kind, trail);
+    // Only these named receipt producers may inherit the native-dialog field
+    // contract. A random object/key or another operation keeps its old policy.
+    let policyKind=kind,policyTrail=trail;
+    if(['receipt','operation_status'].includes(kind)&&value?.operation==='respond_native_dialog')policyKind=value.operationCompleted===false&&Object.hasOwn(value,'errorCode')&&!Object.hasOwn(value,'schema')?'native_dialog_failure':'respond_native_dialog';
+    if(kind==='reconcile_operation'&&['attempt','completion','failure','interlock'].includes(trail[0])&&value?.[trail[0]]?.operation==='respond_native_dialog'){const record=value[trail[0]];policyKind=record.operationCompleted===false&&Object.hasOwn(record,'errorCode')&&!Object.hasOwn(record,'schema')?'native_dialog_failure':'respond_native_dialog';policyTrail=trail.slice(1);}
+    const type = operational(policyKind, policyTrail);
     if (type === 'dialogIdentity') {
       insist(typeof item === 'string' && validOperational(type,item) && !new RegExp(URI.source,'i').test(item), 'OPERATIONAL_VALUE_NOT_CURATED');
       insist(![...credentials].some(secret=>item.includes(secret)), 'OPERATIONAL_SECRET_OVERLAP'); return item;
@@ -289,7 +364,7 @@ function safe(value, api, kind = 'display', additionalCredentials = []) {
       insist(!item.some(id => [...credentials].some(secret => id.includes(secret))), 'OPERATIONAL_SECRET_OVERLAP');
       return [...item];
     }
-    if (type && type.startsWith('wizard')) {
+    if (type && (type.startsWith('wizard')||type.startsWith('nativeDialog'))) {
       insist(validOperational(type, item), 'OPERATIONAL_VALUE_NOT_CURATED');
       insist(![...credentials].some(secret => String(item).includes(secret)), 'OPERATIONAL_SECRET_OVERLAP');
       return item;

@@ -2,7 +2,7 @@
 const path = require('node:path');
 const PROTOCOL = 'vortex-agent/1', VERSION = 2;
 const VERIFICATION = 'External manifest/owners/protected hashes/staging-game bytes/hardlink verification and runtime acceptance';
-const operations = new Set(['install_download', 'install_local_archive', 'set_mods_enabled', 'deploy_mods', 'download_nexus', 'advance_collection_wizard', 'respond_collection_dialog', 'advance_collection_update_prompt']);
+const operations = new Set(['install_download', 'install_local_archive', 'set_mods_enabled', 'deploy_mods', 'download_nexus', 'advance_collection_wizard', 'respond_collection_dialog', 'advance_collection_update_prompt', 'respond_native_dialog']);
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const id = value => typeof value === 'string' && value.length > 0 && value.length <= 200 && !/[\r\n\0]/.test(value);
 const dialogIdentity = value => typeof value === 'string' && value.length > 0 && value.length <= 512 && !/[\x00-\x1f\x7f]/.test(value);
@@ -12,7 +12,9 @@ const keys = (value, allowed) => object(value) && Object.keys(value).every(k => 
 const common = ['protocol', 'receiptVersion', 'requestId', 'operation', 'gameId', 'profileId', 'at'];
 function validParameters(a, operation) {
   if (!operations.has(operation)) return false;
-  const allowed = operation === 'advance_collection_update_prompt'
+  const allowed = operation === 'respond_native_dialog'
+    ? ['gameId','profileId','requestId','gamePath','stagingPath','downloadPath','filesystemIds','dialogId','fingerprint','action']
+    : operation === 'advance_collection_update_prompt'
     ? ['gameId','profileId','requestId','gamePath','stagingPath','downloadPath','filesystemIds','oldModId','collectionId','collectionSlug','revisionNumber','action']
     : operation === 'respond_collection_dialog'
     ? ['gameId', 'profileId', 'requestId', 'gamePath', 'stagingPath', 'downloadPath', 'filesystemIds', 'modId', 'archiveId', 'collectionId', 'revisionId', 'revisionNumber', 'dialogId', 'action']
@@ -24,6 +26,9 @@ function validParameters(a, operation) {
   if (!['gamePath', 'stagingPath', 'downloadPath'].every(k => typeof a[k] === 'string' && path.isAbsolute(a[k])
     && typeof a.filesystemIds?.[k] === 'string' && /^\d+:\d+$/.test(a.filesystemIds[k]))) return false;
   if (!keys(a.filesystemIds, ['gamePath', 'stagingPath', 'downloadPath'])) return false;
+  if (operation === 'respond_native_dialog' && !(dialogIdentity(a.dialogId)
+    && typeof a.fingerprint === 'string' && /^[a-f0-9]{64}$/.test(a.fingerprint)
+    && ['ignore_dependencies','update_current_profile'].includes(a.action))) return false;
   if (operation === 'advance_collection_wizard' && !(a.gameId === 'cyberpunk2077' && id(a.modId) && id(a.archiveId)
     && ['collectionId', 'revisionId', 'revisionNumber'].every(key => Number.isSafeInteger(a[key]) && a[key] > 0)
     && ['install_now', 'done'].includes(a.action))) return false;
@@ -60,6 +65,11 @@ function validCompletion(value, attempt) {
     || value.verificationRequired !== VERIFICATION || Date.parse(value.at) < Date.parse(attempt.at)) return false;
   const fields = [...common, 'operationCompleted', 'diskDeploymentVerified', 'verificationRequired'];
   const a = attempt.parameters;
+  if (value.operation === 'respond_native_dialog') return keys(value,[...fields,'schema','action','dialogId','nativeDialogDismissalVerified','remember','abortOnly','callbackOriginVerified','targetArchiveIdentityVerified','installationCompleted','dialogDismissalOnly'])
+    && value.schema === 'native-dialog-response/1' && value.action === a.action && value.dialogId === a.dialogId
+    && value.nativeDialogDismissalVerified === true && value.remember === false && value.abortOnly === false
+    && value.callbackOriginVerified === false && value.targetArchiveIdentityVerified === false
+    && value.installationCompleted === false && value.dialogDismissalOnly === true;
   if (value.operation === 'advance_collection_wizard') return keys(value, [...fields, 'modId', 'archiveId', 'collectionId', 'revisionId', 'revisionNumber', 'action', 'transition', 'nativeTransitionVerified'])
     && ['modId', 'archiveId', 'collectionId', 'revisionId', 'revisionNumber', 'action'].every(key => value[key] === a[key])
     && value.transition === (a.action === 'install_now' ? 'started' : 'finished') && value.nativeTransitionVerified === true;

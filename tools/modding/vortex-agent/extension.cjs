@@ -48,7 +48,7 @@ function register(server, api, options = {}) {
     phaseTimes:z.record(z.enum(PHASES),milliseconds),
     metrics:z.record(z.enum(METRICS),z.strictObject({calls:milliseconds,totalMs:milliseconds})) });
   const status = z.strictObject({ protocol: z.literal('vortex-agent/1'), requestId: id,
-    operation: z.enum(['install_download', 'install_local_archive', 'set_mods_enabled', 'deploy_mods', 'download_nexus', 'advance_collection_wizard', 'respond_collection_dialog', 'advance_collection_update_prompt']),
+    operation: z.enum(['install_download', 'install_local_archive', 'set_mods_enabled', 'deploy_mods', 'download_nexus', 'advance_collection_wizard', 'respond_collection_dialog', 'advance_collection_update_prompt', 'respond_native_dialog']),
     operationCompleted: z.literal(true), diskDeploymentVerified: z.literal(false), verificationRequired: z.literal(VERIFICATION),
     modId: id.optional(), installedRecordVerified: z.boolean().optional(), enabled: z.boolean().optional(),
     modIds: z.array(id).optional(), enabledFlagsVerified: z.boolean().optional(), deploymentPromiseResolved: z.boolean().optional(),
@@ -58,11 +58,17 @@ function register(server, api, options = {}) {
     archiveId: id.optional(), collectionId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
     revisionId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
     revisionNumber: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
-    action: z.enum(['install_now', 'done', 'update_current_profile', 'download_update']).optional(), transition: z.enum(['started', 'finished']).optional(),
+    action: z.enum(['install_now', 'done', 'update_current_profile', 'download_update', 'cancel', 'ignore_dependencies']).optional(), transition: z.enum(['started', 'finished']).optional(),
     nativeTransitionVerified: z.literal(true).optional(),
     gameId: id.optional(), profileId: id.optional(), dialogId: id.optional(), sessionId: z.string().min(1).max(512).optional(),
     memberKey: z.string().min(1).max(512).optional(), oldModIds: z.array(z.string().min(1).max(512)).min(1).max(100).optional(), nativeDialogDismissalVerified: z.literal(true).optional(), installationCompleted: z.literal(false).optional(),
     oldModId: id.optional(), collectionSlug: id.optional(), nativePromptDismissalVerified: z.literal(true).optional(),
+    schema: z.literal('native-dialog-response/1').optional(),
+    status: z.literal('complete').optional(),
+    fingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    remember: z.literal(false).optional(), abortOnly: z.boolean().optional(),
+    callbackOriginVerified: z.literal(false).optional(), targetArchiveIdentityVerified: z.literal(false).optional(),
+    dialogDismissalOnly: z.literal(true).optional(),
     installDiagnostics: diagnosticsSchema.optional(),
   });
   const add = (name, fields, fn, writes = false, description) => server.registerTool(name, {
@@ -139,6 +145,13 @@ function register(server, api, options = {}) {
     action: z.literal('update_current_profile') }, operations.respond_collection_dialog, true,
     'Answer only one exact stock previous-version collection question with Update current profile and remember=false. Requires source admission, retained observed lifecycle epoch, exact identities and unique requestId. Verifies dialog dismissal only, never installation, callback origin, target archive identity or deployment. Reconcile uncertain effects before retry.');
   add('list_dialogs', {}, () => dialogs(api));
+  add('read_native_dialog', {gameId:id,profileId:id}, operations.read_native_dialog, false,
+    'Observe the current first stock installation question, including when other questions are queued. Returns a fresh fingerprint and typed Cancel, Ignore dependencies or Update current profile actions. Does not establish callback origin, archive identity or installation completion.');
+  add('respond_native_dialog', {...write,dialogId:id,fingerprint:z.string().regex(/^[a-f0-9]{64}$/),
+    action:z.enum(['cancel','ignore_dependencies','update_current_profile'])}, operations.respond_native_dialog, true,
+    'Answer one freshly observed stock installation question through the native callback, always remember=false. Cancel is an abort-only control and preserves existing unresolved operations; other actions require the ordinary mutation guard. Unique requestId and exact current context/fingerprint required. Only dialog dismissal is verified, never installation or rollback.');
+  add('read_native_dialog_operation', {requestId:z.string().regex(/^[a-zA-Z0-9_-]{8,80}$/)}, operations.read_native_dialog_operation, false,
+    'Read a native-dialog control request ledger after a lost reply. No replay, global interlock removal, installation completion or rollback.');
   add('list_external_changes', {}, () => externalChanges(api));
   add('install_download', { ...write, ...pins, downloadId: id }, operations.install_download, true);
   add('install_local_archive', { ...write, ...pins, archivePath: z.string().min(1).max(4096) }, operations.install_local_archive, true,
