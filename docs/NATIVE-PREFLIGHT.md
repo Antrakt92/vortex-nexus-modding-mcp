@@ -114,3 +114,18 @@ and package-provenance checks. The wire fixture supplies its own native window;
 only a call through the installed Vortex adapter establishes runtime availability.
 Test coverage includes foreign-realm plain objects, hostile descriptors/proxies,
 all updater states, withheld private fields, timeouts and context/map drift.
+
+### Extension projection acceptance — 2026-11-04
+
+After a coordinated adapter upgrade on official Vortex 2.9.1, the actual resident
+read returned `status:"ok"`, six persisted extension state rows and 174 loaded
+extensions. Its 128 dynamic effective IDs and paths matched an independently
+reviewed disk census; all 128 info files and 184 source files matched, with only
+the expected adapter bundle replacement. The observed removal queue was empty
+**after** restart. The previous adapter could not read it before restart, so this
+does not establish that the earlier queue was empty.
+
+The active profile, mod flags/states and deployment manifest were unchanged.
+Receipt pins were preserved, the application ASAR was unchanged, and no game,
+mod installation, deployment or application update was performed. This establishes
+resident read acceptance; it does not admit a subsequent capture or native write.

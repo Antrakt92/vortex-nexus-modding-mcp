@@ -24,7 +24,8 @@ embedded Vortex adapter's compatibility label.
 - Extend `read_native_preflight` with bounded extension state and loaded effective
   IDs, including queued removals. Missing, malformed, oversized or changing data
   is explicitly incomplete; no filesystem census or restart permission is implied.
-  Requires a rebuilt adapter and coordinated activation; not yet live-verified.
+  Requires a rebuilt adapter and coordinated activation. Live read acceptance on
+  official Vortex 2.9.1 passed on 2026-11-04; restart approval remains separate.
 
 ## 0.8.1 — 2026-11-04
 

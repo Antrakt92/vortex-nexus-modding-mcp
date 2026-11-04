@@ -40,7 +40,7 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256_lf": "8d3ec02c6e1f047291baa10dd7ef5b987bc3ad27012c0f84104a358d8ac09241"
+      "sha256_lf": "5786fa4b5703fc5540330e109a30ca0ae9a556f85b96a12fa6e98c5e06bb44a6"
     },
     {
       "path": "CONTRIBUTING.md",
@@ -392,7 +392,7 @@
     },
     {
       "path": "docs/NATIVE-PREFLIGHT.md",
-      "sha256_lf": "f84a346e5c25295126cbaeb06cc4f674ab54a2965a368a355048adcc0babc9c5"
+      "sha256_lf": "0f2e896c131b2978d9924657d1ae65c963e406b277027bea85d1beb086132cd2"
     },
     {
       "path": "docs/NATIVE-RUNTIME-BINDING.md",
