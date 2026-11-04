@@ -190,6 +190,11 @@ function createOperations(api, actions, selectors, options = {}) {
   const sanitize = (value, kind) => safe(value, api, kind, options.credentials || []);
   const check = args => assertContext(api, selectors, args, options.stopped || stopped);
   const catalog = options.catalog;
+  let nativeDialogs;
+  const dialogs = () => nativeDialogs ||= require('./native-dialog-operations.cjs').createNativeDialogOperations(api, selectors, {
+    receipts: dir, checkContext: check, commitCompletion,
+    ordinaryMutation: (args, run) => mutate('respond_native_dialog', args, run), ...(options.nativeDialogOptions || {}),
+  });
   const flags = args => Object.fromEntries(Object.entries(api.getState().persistent?.profiles?.[args.profileId]?.modState || {})
     .map(([id, item]) => [id, item.enabled === true]));
   const unchangedFlags = (args, before, allowed = []) => {
@@ -300,6 +305,9 @@ function createOperations(api, actions, selectors, options = {}) {
     });
   }
   return {
+    read_native_dialog: args => dialogs().read_native_dialog(args),
+    respond_native_dialog: args => dialogs().respond_native_dialog(args),
+    read_native_dialog_operation: args => dialogs().read_native_dialog_operation(args),
     health: () => ({ protocol: PROTOCOL, extensionVersion: '1.1.0', targetVortexVersion: '2.7.2.0', ...context(api, selectors),
       security: 'per-user-DPAPI-bearer', installSupported: false, diskDeploymentVerified: false }),
     advance_collection_wizard: args => {

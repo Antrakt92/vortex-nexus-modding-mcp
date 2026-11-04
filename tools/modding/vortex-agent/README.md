@@ -42,6 +42,12 @@ The client does not call window or restart APIs. Vortex itself can still show a
 legitimate native dialog during a requested operation. Starting minimized is
 not a guarantee against a brief window.
 
+[Native installation questions](../../../docs/NATIVE-DIALOGS.md) have typed
+read/response tools for Cancel, Ignore dependencies and Update current profile.
+They respond through Vortex callbacks without desktop input. Cancel preserves
+any existing failed-operation interlock; the other responses use the ordinary
+mutation guard. Unknown questions refuse.
+
 The maintained source also provides a
 [background collection wizard](../../../docs/BACKGROUND-COLLECTION-WIZARD.md):
 curated readiness and guarded Install Now/Done transitions without OS input or

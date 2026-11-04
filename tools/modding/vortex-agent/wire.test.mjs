@@ -75,6 +75,7 @@ test('built extension wire: allowlist, SDK2 HTTP, legacy bridge, schemas and bro
       'list_mod_rules', 'find_mod_dependents', 'read_mod_lifecycle', 'assess_installed_candidates', 'list_file_conflicts', 'list_known_mod_conflicts',
       'list_unsolved_conflicts', 'read_collection_health', 'read_collection_wizard', 'advance_collection_wizard', 'read_collection_dialog', 'respond_collection_dialog', 'read_collection_update_prompt', 'advance_collection_update_prompt', 'list_dialogs', 'list_external_changes',
       'set_mods_enabled', 'deploy_mods', 'download_nexus', 'install_local_archive', 'read_local_install_readiness',
+      'read_native_dialog', 'respond_native_dialog', 'read_native_dialog_operation',
     ].sort());
     assert.equal(list.tools.some(tool => tool.name === 'install_download'), false);
     const localInstallTool = list.tools.find(tool => tool.name === 'install_local_archive');
@@ -91,6 +92,15 @@ test('built extension wire: allowlist, SDK2 HTTP, legacy bridge, schemas and bro
     assert.deepEqual(dialogTool.inputSchema.properties.action,{type:'string',const:'update_current_profile'});
     const badDialog=await call('tools/call',{name:'respond_collection_dialog',arguments:{action:'update_all_profiles'}});
     assert.equal(badDialog.isError,true);
+    const nativeDialogTool=list.tools.find(tool=>tool.name==='respond_native_dialog');
+    assert.equal(nativeDialogTool.inputSchema.additionalProperties,false);
+    assert.deepEqual(nativeDialogTool.inputSchema.properties.action.enum,
+      ['cancel','ignore_dependencies','update_current_profile']);
+    assert.equal(nativeDialogTool.outputSchema.properties.status.const,'complete');
+    assert.equal(nativeDialogTool.outputSchema.properties.dialogDismissalOnly.const,true);
+    assert.equal(list.tools.find(tool=>tool.name==='read_native_dialog_operation').annotations.readOnlyHint,true);
+    const unsafeNativeDialog=await call('tools/call',{name:'respond_native_dialog',arguments:{action:'update_all_profiles'}});
+    assert.equal(unsafeNativeDialog.isError,true);
     const missingPins = await call('tools/call', {name: 'install_local_archive', arguments: {archivePath: 'own.zip'}});
     assert.equal(missingPins.isError, true, 'Installation cannot omit context and package pins');
     const nativeTool = list.tools.find(tool => tool.name === 'read_native_preflight');
@@ -258,4 +268,57 @@ test('built extension wire: allowlist, SDK2 HTTP, legacy bridge, schemas and bro
       assert.ok(JSON.parse(stdout).content);
     }
   } finally { await new Promise(resolve => listener.close(resolve)); }
+});
+
+test('source registration accepts complete native-dialog success after modeled callback', async () => {
+  // Validate the production registration's real Zod schema. Only lifecycle and
+  // operation collaborators are modeled; no Vortex, HTTP listener or disk effect.
+  const sourceFile=fileURLToPath(new URL('./extension.cjs',import.meta.url));
+  const sourceRequire=createRequire(sourceFile);
+  const vendor=process.env.VORTEX_ADAPTER_TEST_VENDOR
+    || fileURLToPath(new URL('../../../dependencies/vortex-mcp/package.json',import.meta.url));
+  const vendorRequire=createRequire(vendor);
+  const {z}=vendorRequire('zod');
+  const {createNativeDialogController}=sourceRequire('./native-dialog-controller.cjs');
+  const {QUESTION_TEXT}=sourceRequire('./collection-dialog-policy.cjs');
+  const {VERIFICATION}=sourceRequire('./receipts.cjs');
+  const registered=new Map();let success;
+  const inert=()=>({});
+  const fakeOperations=new Proxy({}, {get:(_target,key)=>key==='respond_native_dialog'?async()=>success:inert});
+  const mockedRequire=id=>{
+    if(id==='zod')return{z};
+    if(id==='./vortexControl')return new Proxy({}, {get:()=>inert});
+    if(id==='@modelcontextprotocol/server')return{McpServer:class{}};
+    if(id==='@modelcontextprotocol/node')return{};
+    if(id==='@nexusmods/vortex-api')return{actions:{},selectors:{},util:{},log(){}};
+    if(id==='./guard.cjs')return{createOperations:()=>fakeOperations,safe:value=>value};
+    if(id==='./collection-wizard-controller.cjs')return{getCollectionWizardController:inert};
+    if(id==='./collection-dialog-controller.cjs')return{createCollectionDialogController:inert};
+    if(id==='./collection-update-prompt.cjs')return{getCollectionUpdatePromptController:inert};
+    if(id==='./download-identity.cjs')return{catalogFromDisk:inert};
+    if(id==='./local-install-binding.cjs')return{localInstallAdmission:()=>inert};
+    if(id==='./http-ingress.cjs')return{acquire:()=>()=>{}};
+    return sourceRequire(id);
+  };
+  const module={exports:{}};
+  vm.runInThisContext('(function(require,module,exports,__dirname,__filename){'+await fs.readFile(sourceFile,'utf8')+'\n})')(mockedRequire,module,module.exports,fileURLToPath(new URL('.',import.meta.url)),sourceFile);
+  module.exports.register({registerTool(name,definition,handler){registered.set(name,{definition,handler});}},{});
+  const tool=registered.get('respond_native_dialog');assert.ok(tool);
+  for(const [family,action]of [['dependency','cancel'],['dependency','ignore_dependencies'],['version','update_current_profile']]){
+    const question={id:'current-native-dialog',type:'question',title:family==='dependency'?'Updating may break dependencies':'Existing mod',defaultAction:undefined,
+      content:{text:family==='dependency'?"You're updating a mod that others depend upon and the update doesn't seem to be compatible (according to the dependency information). If you continue we have to disable these dependencies, otherwise you'll continually get warnings about it.":QUESTION_TEXT,options:{wrap:true},checkboxes:[{id:'remember',value:false,text:'Remember my choice'}]},actions:family==='dependency'?['Cancel','Ignore']:['Cancel','Update all profiles','Update current profile']};
+    const state={persistent:{profiles:{profile:{gameId:'game'}}},settings:{profiles:{nextProfileId:'profile'}},session:{notifications:{dialogs:[question]}}};
+    let nativeCalls=0;
+    const api={getState:()=>state,closeDialog(id,_label,input){nativeCalls++;assert.equal(id,question.id);assert.deepEqual(input,{remember:false});state.session.notifications.dialogs=[];}};
+    const controller=createNativeDialogController(api,{selectors:{activeGameId:()=> 'game',activeProfileId:()=> 'profile'},assertRead(){},assertRespond(){}});
+    const observed=await controller.read({gameId:'game',profileId:'profile'});
+    const response=await controller.respond({gameId:'game',profileId:'profile',dialogId:observed.dialogId,fingerprint:observed.fingerprint,action},{});
+    assert.equal(nativeCalls,1);
+    success={protocol:'vortex-agent/1',requestId:'native-dialog-schema-'+action,operation:'respond_native_dialog',status:'complete',operationCompleted:true,diskDeploymentVerified:false,verificationRequired:VERIFICATION,...response,gameId:'game',profileId:'profile'};
+    const result=await tool.handler({});assert.notEqual(result.isError,true);
+    const accepted=tool.definition.outputSchema.safeParse(result.structuredContent);
+    assert.equal(accepted.success,true,JSON.stringify(accepted.error?.issues));
+    assert.deepEqual(JSON.parse(result.content[0].text),result.structuredContent);
+    assert.equal(tool.definition.outputSchema.omit({status:true}).safeParse(result.structuredContent).success,false,'prior strict schema rejects status only after callback effect');
+  }
 });
