@@ -8,6 +8,7 @@ embedded Vortex adapter's compatibility label.
 
 | Version | Published | Main changes |
 | --- | --- | --- |
+| [0.8.1](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.8.1) | 2026-11-04 | Fix bounded parsing of large immutable capture records |
 | [0.8.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.8.0) | 2026-11-03 | Guarded collection prompts, explicit capture profiles and settings comparison fixes |
 | [0.7.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.7.0) | 2026-11-03 | Own-ZIP installation plans, installed-candidate assessment and bounded install diagnostics |
 | [0.6.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.6.0) | 2026-11-03 | New own-local ZIP installation through official Vortex, source readiness and recovery checks |
@@ -18,12 +19,28 @@ embedded Vortex adapter's compatibility label.
 | [0.1.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.1.0) | 2026-10-29 | Combined inspection, collection download reuse and coordinated plans |
 | [Recovery sources](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/recovery-sources-20261025) | 2026-10-25 | Pinned upstream Git bundles for source recovery |
 
-## Unreleased
+## 0.8.1 — 2026-11-04
 
-- Allow immutable-record I/O to opt into the strict JSON parser's existing bounded
-  token and depth limits for large capture records. Default limits and physical
-  identity, duplicate-key, guarded publication and exact readback checks remain
-  unchanged.
+Fix reading and publishing large immutable capture records. Changes since
+[0.8.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/compare/v0.8.0...v0.8.1).
+
+### Fixed
+
+- Allow immutable-record callers to specify token and nesting limits within the
+  strict JSON parser's existing hard caps. Large captures can otherwise be
+  rejected even when they fit the byte limit. Publication and exact readback use
+  the same limits.
+- Preserve default limits, duplicate-key rejection, physical file identity checks
+  and guarded publication. Invalid limit options are rejected at construction.
+
+### Upgrading and verification
+
+- Update the source checkout used by capture helpers. The resident Vortex adapter
+  and dependencies are unchanged; this fix does not require a Vortex restart.
+- Regression coverage includes a real 4,386,417-byte capture, a larger modeled
+  file baseline, malformed inputs and unchanged default-limit behavior.
+- This release adds no installation or collection-prompt capabilities. Live
+  acceptance limits recorded for 0.8.0 still apply.
 
 ## 0.8.0 — 2026-11-03
 
