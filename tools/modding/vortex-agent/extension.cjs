@@ -18,6 +18,7 @@ function collectionControllers(api) {
 }
 const { dialogs, conflicts, externalChanges, listDownloads, collectionHealth, unresolvedConflicts } = require('./inspection.cjs');
 const { readModLifecycle } = require('./lifecycle-inspection.cjs');
+const { readModRecordFingerprints } = require('./mod-record-fingerprints.cjs');
 const { assessInstalledCandidates, LIMITS: ASSESSMENT_LIMITS } = require('./installed-candidate-assessment.cjs');
 const { readNativePreflight } = require('./native-preflight.cjs');
 const { catalogFromDisk } = require('./download-identity.cjs');
@@ -112,6 +113,11 @@ function register(server, api, options = {}) {
   add('read_mod_lifecycle', { gameId: id.optional(), modIds: z.array(id).min(1).max(20) },
     a => readModLifecycle(api, selectors, util, a), false,
     'Before preparing installation, update or removal helpers, inspect 1–20 exact installed mod IDs in one bounded state read: usage in every game profile including pending removal, native requires matches including collection file references, and archive references across games. No filesystem scan or mutation. Missing native matcher or exceeded limits fails closed. Metadata only; never authorizes installation/removal or proves deployed bytes.');
+  add('read_mod_record_fingerprints', {gameId:id,profileId:id,modIds:z.array(id).min(1).max(20),
+    ruleOrderBaselines:z.array(z.strictObject({modId:id,
+      ruleElementDigests:z.array(z.string().regex(/^[a-f0-9]{64}$/)).max(4096)})).max(20).optional()},
+    a=>readModRecordFingerprints(api,selectors,a),false,
+    'Read exact hashes for 1–20 installed native mod metadata records, hashed field keys/values and ordered/multiset rule fingerprints. No raw metadata values, files, mutation or compatibility claim. A rules-permutation fingerprint preserves every other record field; compare it to an independently retained baseline.');
   add('assess_installed_candidates', {gameId:id,profileId:id,collectionModId:id,
     expectedRevisionId:z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
     comparisons:z.array(z.strictObject({oldModId:id,candidateModId:id,

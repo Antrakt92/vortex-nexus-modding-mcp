@@ -23,6 +23,17 @@ function nativeDialogRecord(trail) {
   return null;
 }
 function operational(kind, trail) {
+  if(kind==='read_mod_record_fingerprints'){
+    const index=v=>typeof v==='string'&&/^(0|[1-9][0-9]*)$/.test(v);
+    if(trail.length===1){const k=trail[0];if(k==='schema')return 'modFPSchema';if(['gameId','profileId'].includes(k))return 'modFPId';if(k==='records')return 'modFPRecords';if(['nativeEffects','compatibilityVerified'].includes(k))return 'modFPFalse';}
+    if(trail[0]==='records'&&index(trail[1])&&Number(trail[1])<20){
+      if(trail.length===2)return 'modFPRecord';
+      if(trail.length===3){const k=trail[2];if(k==='modId')return 'modFPId';if(k==='recordDigest')return 'modFPSHA';if(['topLevelFields','attributeFields'].includes(k))return 'modFPFields';if(k==='rules')return 'modFPRules';if(k==='baselineRuleOrder')return 'modFPBaselineOrder';}
+      if(trail[2]==='baselineRuleOrder'&&trail.length===4){if(trail[3]==='matched')return 'modFPBoolean';if(trail[3]==='recordDigest')return 'modFPSHA';}
+      if(['topLevelFields','attributeFields'].includes(trail[2])&&index(trail[3])&&Number(trail[3])<100001&&trail.length===5&&['keyDigest','valueDigest'].includes(trail[4]))return 'modFPSHA';
+      if(trail[2]==='rules'&&trail.length===4){const k=trail[3];if(k==='present')return 'modFPBoolean';if(k==='type')return 'modFPType';if(k==='count')return 'modFPCount';if(k==='orderedElementDigests')return 'modFPHashes';if(['multisetDigest','permutationInvariantRecordDigest'].includes(k))return 'modFPSHA';}
+    }
+  }
   if(kind==='native_dialog_failure'&&trail.length===1){const key=trail[0];
     if(key==='operationCompleted')return 'nativeDialogFalse';
     if(['effectsMayHaveOccurred','inspectBeforeRetry'].includes(key))return 'nativeDialogBoolean';
@@ -247,6 +258,23 @@ function operational(kind, trail) {
   return null;
 }
 function validOperational(type, value) {
+  if(type.startsWith('modFP')){
+    const object=(v,keys)=>v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).sort().join(',')===keys.slice().sort().join(',');
+    const sha=v=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v);
+    if(type==='modFPSchema')return value==='mod-record-fingerprints/1';
+    if(type==='modFPId')return typeof value==='string'&&value.length>0&&value.length<=512&&!/[\x00-\x1f\x7f]/.test(value)&&!new RegExp(URI.source,'i').test(value);
+    if(type==='modFPSHA')return sha(value);
+    if(type==='modFPFalse')return value===false;if(type==='modFPBoolean')return typeof value==='boolean';
+    if(type==='modFPType')return ['absent','undefined','null','array','object','string','number','boolean'].includes(value);
+    if(type==='modFPCount')return Number.isInteger(value)&&value>=0&&value<=4096;
+    if(type==='modFPHashes')return Array.isArray(value)&&value.length<=4096&&value.every(sha);
+    if(type==='modFPRecords')return Array.isArray(value)&&value.length>0&&value.length<=20;
+    if(type==='modFPRecord')return object(value,['modId','recordDigest','topLevelFields','attributeFields','rules',...(Object.hasOwn(value,'baselineRuleOrder')?['baselineRuleOrder']:[])]);
+    if(type==='modFPBaselineOrder')return object(value,value?.matched===true?['matched','recordDigest']:['matched'])&&typeof value.matched==='boolean'&&(value.matched===false||sha(value.recordDigest));
+    if(type==='modFPFields')return Array.isArray(value)&&value.length<=100001&&value.every(v=>object(v,['keyDigest','valueDigest']));
+    if(type==='modFPRules')return object(value,value?.type==='array'?['present','type','count','orderedElementDigests','multisetDigest','permutationInvariantRecordDigest']:['present','type'])&&validOperational('modFPType',value.type)&&value.present===(value.type!=='absent')&&(value.type!=='array'||validOperational('modFPCount',value.count)&&validOperational('modFPHashes',value.orderedElementDigests)&&value.orderedElementDigests.length===value.count);
+    return false;
+  }
   if(type==='nativeDialogSHA')return typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
   if(type==='nativeDialogAction')return ['cancel','ignore_dependencies','update_current_profile'].includes(value);
   if(type==='nativeDialogActions')return Array.isArray(value)&&value.length<=2&&new Set(value).size===value.length&&value.every(a=>validOperational('nativeDialogAction',a));
@@ -364,7 +392,8 @@ function safe(value, api, kind = 'display', additionalCredentials = []) {
       insist(!item.some(id => [...credentials].some(secret => id.includes(secret))), 'OPERATIONAL_SECRET_OVERLAP');
       return [...item];
     }
-    if (type && (type.startsWith('wizard')||type.startsWith('nativeDialog'))) {
+    if(type&&['modFPRecords','modFPRecord','modFPFields','modFPRules','modFPBaselineOrder'].includes(type))insist(validOperational(type,item),'OPERATIONAL_VALUE_NOT_CURATED');
+    else if (type && (type.startsWith('wizard')||type.startsWith('nativeDialog')||type.startsWith('modFP'))) {
       insist(validOperational(type, item), 'OPERATIONAL_VALUE_NOT_CURATED');
       insist(![...credentials].some(secret => String(item).includes(secret)), 'OPERATIONAL_SECRET_OVERLAP');
       return item;

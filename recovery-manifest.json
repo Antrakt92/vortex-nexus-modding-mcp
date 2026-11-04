@@ -295,6 +295,10 @@
       "sha256_lf": "690a2a257e3c88efa64e039118d843b2fe161079e0a32b9622da518458a36a7e"
     },
     {
+      "path": "docs/MOD-RECORD-FINGERPRINTS.md",
+      "sha256_lf": "ad43bfa735dbc1641d5e9aa8f3af5f8bc2429dd286ed3d225472674afae9c7a8"
+    },
+    {
       "path": "docs/NATIVE-ACTIVITY-PATCH.md",
       "sha256_lf": "89e4a61aae084d84e640d6b343c5842467e4f49f2f1e7076a008baa951e2598e"
     },
@@ -752,7 +756,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/README.md",
-      "sha256_lf": "e590ecf6617ab455dabc53d6a79a3124bf8af0728f668135bdffe79d197fa813"
+      "sha256_lf": "765a7e3180c847f4291cc223ca372406f8b19e8e11316ed07cae1fb33cc94390"
     },
     {
       "path": "tools/modding/vortex-agent/archive-temp-lease.test.py",
@@ -784,7 +788,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/build.mjs",
-      "sha256_lf": "52e3dca682282480d48199597992db67c29c1daf4af64d56a661d0b83dbfb32f"
+      "sha256_lf": "4206ecbe6424ccdc6397e6240e142a92487278e8474a2ec67e8aeaa76f230a7d"
     },
     {
       "path": "tools/modding/vortex-agent/candidate-assessment-serialization.test.mjs",
@@ -912,7 +916,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/extension.cjs",
-      "sha256_lf": "bb45c5ff329747feb5a3493f38f79f56c08aed7add8b02105a74338eb4af63c2"
+      "sha256_lf": "296310b120da1c8aa45bd0cf3eafa70a9f7378ed246b8ba937991a8d7a10ce83"
     },
     {
       "path": "tools/modding/vortex-agent/file-proof-backend.cjs",
@@ -1137,6 +1141,18 @@
     {
       "path": "tools/modding/vortex-agent/manage-install.py",
       "sha256_lf": "65913538f9c13f5381f7a80530d0a9d3cffb6e910603757cad62f3a066b1c6f5"
+    },
+    {
+      "path": "tools/modding/vortex-agent/mod-record-fingerprint-serialization.test.cjs",
+      "sha256_lf": "65e7544dd1c050ae149c44ce3bfe569ebc752033f1206b96c8233b41f63f53bd"
+    },
+    {
+      "path": "tools/modding/vortex-agent/mod-record-fingerprints.cjs",
+      "sha256_lf": "20f176c091048df0fd9ce3dec55804faadf3408737ef3648d2e136e5296aae5a"
+    },
+    {
+      "path": "tools/modding/vortex-agent/mod-record-fingerprints.test.cjs",
+      "sha256_lf": "54d17263c532b0b464751cbd6cfbaf30e62a4214c8c72faa89db7fb81b11e0ab"
     },
     {
       "path": "tools/modding/vortex-agent/native-activity-patch.test.mjs",
@@ -3164,7 +3180,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/serialization.cjs",
-      "sha256_lf": "492409514e7bd199a216335e32447b9440964b4bfe3c4775bbfaf589e1cddc94"
+      "sha256_lf": "abba450ee1164d26760b0b2f044505a7ff70c22036e82a64f271a1d9355b204e"
     },
     {
       "path": "tools/modding/vortex-agent/session.mjs",
@@ -3224,7 +3240,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/wire.test.mjs",
-      "sha256_lf": "7a31a1000c797833742043364cbc7e4e764d31778f188750ae278ea90483ed80"
+      "sha256_lf": "1a309fe99a0ab7f5440de5faa8827b0a2f63c59803a9cfaf5eec79f1e9902163"
     },
     {
       "path": "tools/modding/workspace_paths.py",

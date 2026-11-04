@@ -76,8 +76,29 @@ test('built extension wire: allowlist, SDK2 HTTP, legacy bridge, schemas and bro
       'list_unsolved_conflicts', 'read_collection_health', 'read_collection_wizard', 'advance_collection_wizard', 'read_collection_dialog', 'respond_collection_dialog', 'read_collection_update_prompt', 'advance_collection_update_prompt', 'list_dialogs', 'list_external_changes',
       'set_mods_enabled', 'deploy_mods', 'download_nexus', 'install_local_archive', 'read_local_install_readiness',
       'read_native_dialog', 'respond_native_dialog', 'read_native_dialog_operation',
+      'read_mod_record_fingerprints',
     ].sort());
     assert.equal(list.tools.some(tool => tool.name === 'install_download'), false);
+    const fingerprints=list.tools.find(tool=>tool.name==='read_mod_record_fingerprints');
+    assert.equal(fingerprints.annotations.readOnlyHint,true);
+    assert.equal(fingerprints.inputSchema.additionalProperties,false);
+    assert.equal(fingerprints.inputSchema.properties.modIds.maxItems,20);
+    state.settings.profiles.nextProfileId='p';
+    state.persistent.mods.cyberpunk2077.fingerprint_model={state:'installed',
+      attributes:{note:'raw-metadata-must-not-leak'},rules:[{type:'after',reference:{id:'a'}},{type:'after',reference:{id:'b'}}]};
+    try {
+      const raw=await call('tools/call',{name:'read_mod_record_fingerprints',arguments:{gameId:'cyberpunk2077',profileId:'p',modIds:['fingerprint_model']}});
+      assert.notEqual(raw.isError,true,JSON.stringify(raw));
+      const result=JSON.parse(raw.content[0].text);
+      assert.equal(result.nativeEffects,false);assert.equal(result.compatibilityVerified,false);
+      assert.match(result.records[0].recordDigest,/^[a-f0-9]{64}$/);
+      assert.ok(!raw.content[0].text.includes('raw-metadata-must-not-leak'));
+      const reconstructed=await call('tools/call',{name:'read_mod_record_fingerprints',arguments:{gameId:'cyberpunk2077',profileId:'p',modIds:['fingerprint_model'],
+        ruleOrderBaselines:[{modId:'fingerprint_model',ruleElementDigests:result.records[0].rules.orderedElementDigests.slice().reverse()}]}});
+      assert.notEqual(reconstructed.isError,true,JSON.stringify(reconstructed));
+      const comparison=JSON.parse(reconstructed.content[0].text).records[0].baselineRuleOrder;
+      assert.equal(comparison.matched,true);assert.notEqual(comparison.recordDigest,result.records[0].recordDigest);
+    } finally { delete state.persistent.mods.cyberpunk2077.fingerprint_model;delete state.settings.profiles.nextProfileId; }
     const localInstallTool = list.tools.find(tool => tool.name === 'install_local_archive');
     assert.equal(localInstallTool.inputSchema.additionalProperties, false);
     assert.equal(localInstallTool.annotations.readOnlyHint, false);
