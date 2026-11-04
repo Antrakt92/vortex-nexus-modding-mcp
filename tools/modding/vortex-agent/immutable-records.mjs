@@ -8,9 +8,14 @@ export const generation = stat => [stat.dev, stat.ino, stat.size, stat.mtimeNs, 
 
 // Internal synchronous record I/O shared by journal schemas. File flush
 // and exact readback do not establish power-loss durability of directory entries.
-export function createImmutableRecordIO({maxBytes, prefix}) {
+export function createImmutableRecordIO({maxBytes, prefix, maxTokens, maxDepth}) {
   if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0 || maxBytes > 64 * 1024 * 1024
       || typeof prefix !== 'string' || !/^[A-Z_]+_$/.test(prefix)) throw Error('IMMUTABLE_RECORD_INVALID_OPTIONS');
+  // Explicit large-record budgets use the strict parser's existing bounds;
+  // omitted options retain its defaults, including during publication readback.
+  const parseOptions = Object.freeze({maxBytes, maxTokens, maxDepth});
+  try {strictJSON.parseStrictJSON(Buffer.from('0'), parseOptions);}
+  catch {throw Error('IMMUTABLE_RECORD_INVALID_OPTIONS');}
   const need = (ok, code) => {if (!ok) throw Error(prefix + code);};
   function ancestry(value, create = false) {
     const nodes = new Map(), chain = [];
@@ -46,7 +51,7 @@ export function createImmutableRecordIO({maxBytes, prefix}) {
         && generation(fs.lstatSync(file, {bigint: true})) === generation(before), 'PATH_CHANGED');
       if (expected) need(bytes.subarray(0, used).equals(expected), 'CHANGED');
       observations?.set(file, generation(before));
-      try {return strictJSON.parseStrictJSON(bytes.subarray(0, used), {maxBytes});}
+      try {return strictJSON.parseStrictJSON(bytes.subarray(0, used), parseOptions);}
       catch {throw Error(prefix + 'CORRUPT');}
     } finally {fs.closeSync(fd);}
   }

@@ -18,6 +18,13 @@ embedded Vortex adapter's compatibility label.
 | [0.1.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.1.0) | 2026-10-29 | Combined inspection, collection download reuse and coordinated plans |
 | [Recovery sources](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/recovery-sources-20261025) | 2026-10-25 | Pinned upstream Git bundles for source recovery |
 
+## Unreleased
+
+- Allow immutable-record I/O to opt into the strict JSON parser's existing bounded
+  token and depth limits for large capture records. Default limits and physical
+  identity, duplicate-key, guarded publication and exact readback checks remain
+  unchanged.
+
 ## 0.8.0 — 2026-11-03
 
 Add named MCP commands for stock collection prompts on official Vortex 2.9.1.

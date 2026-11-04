@@ -40,7 +40,7 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256_lf": "2634744337205d4bd425658741d588537d8f6387b7145bbe083c8c7ae584053d"
+      "sha256_lf": "4ae25b1b0834c368e5b0d7fa2f54fe1d2508e7d6d636bef8c3f0f06a4d62bac5"
     },
     {
       "path": "CONTRIBUTING.md",
@@ -1000,7 +1000,11 @@
     },
     {
       "path": "tools/modding/vortex-agent/immutable-records.mjs",
-      "sha256_lf": "83d967176ee1f273b4b256023e856a568039499337120f75a374fff86c6058a5"
+      "sha256_lf": "3b85a94172380f3bc533f17a46a487ca9f05a5d82d8bd2076828a35ffe06ab40"
+    },
+    {
+      "path": "tools/modding/vortex-agent/immutable-records.test.mjs",
+      "sha256_lf": "7de3a8750319fe495f81773cb01d3b115c97ef2ec1b9402af82d67a49e333952"
     },
     {
       "path": "tools/modding/vortex-agent/inspection-client.test.mjs",
