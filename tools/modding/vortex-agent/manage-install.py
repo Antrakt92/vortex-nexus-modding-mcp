@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import os
 import re
+import stat
 import uuid
 from contextlib import contextmanager
 
@@ -176,12 +177,73 @@ def receipt_pins():
     no_reparse(RECEIPTS)
     if not RECEIPTS.exists():
         return {}
-    pins = {}
-    for file in RECEIPTS.iterdir():
-        no_reparse(file)
-        if not file.is_file():
-            raise RuntimeError('Unexpected receipt entry')
-        pins[file.name] = {'size': file.stat().st_size, 'sha256': sha(file)}
+    if not RECEIPTS.is_dir():
+        raise RuntimeError('Receipt root is not a directory')
+    pins, observed, identities, names = {}, {}, set(), set()
+    total_bytes = 0
+
+    def generation(value):
+        return (value.st_dev, value.st_ino, value.st_mode, value.st_size,
+                value.st_mtime_ns, getattr(value, 'st_birthtime_ns', value.st_ctime_ns), value.st_nlink,
+                getattr(value, 'st_file_attributes', 0))
+
+    def walk(entry, relative, depth):
+        nonlocal total_bytes
+        if depth > 32 or len(pins) >= 100000:
+            raise RuntimeError('Receipt tree limit exceeded')
+        no_reparse(entry)
+        before = entry.lstat()
+        identity = (before.st_dev, before.st_ino)
+        if identity in identities or relative.casefold() in names:
+            raise RuntimeError('Receipt alias refused')
+        identities.add(identity)
+        names.add(relative.casefold())
+        observed[entry] = generation(before)
+        pin = {'generation': list(observed[entry])}
+        if stat.S_ISDIR(before.st_mode):
+            children = sorted(entry.iterdir(), key=lambda p: p.name)
+            pin.update(type='directory', changeTimeNS=before.st_ctime_ns, children=[p.name for p in children])
+            pins[relative] = pin
+            for child in children:
+                walk(child, child.relative_to(RECEIPTS).as_posix(), depth + 1)
+        elif stat.S_ISREG(before.st_mode) and before.st_nlink == 1:
+            total_bytes += before.st_size
+            if total_bytes > 1024 * 1024 * 1024:
+                raise RuntimeError('Receipt tree byte limit exceeded')
+            digest = hashlib.sha256()
+            with entry.open('rb') as stream:
+                opened = os.fstat(stream.fileno())
+                if generation(opened) != observed[entry]:
+                    raise RuntimeError('Receipt generation changed')
+                for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                    digest.update(chunk)
+                after = os.fstat(stream.fileno())
+                if generation(after) != observed[entry] or after.st_ctime_ns != opened.st_ctime_ns:
+                    raise RuntimeError('Receipt generation changed')
+            # Windows path/handle APIs can expose different ctime values; compare
+            # creation identity across APIs and change time only on open handles.
+            pin.update(type='file', size=before.st_size, handleChangeTimeNS=opened.st_ctime_ns,
+                       sha256=digest.hexdigest())
+            pins[relative] = pin
+        else:
+            raise RuntimeError('Receipt entry is not an unaliased regular file or directory')
+
+    walk(RECEIPTS, '.', 0)
+    # Recheck the entire observed tree, including empty directories and the root.
+    for entry, before in observed.items():
+        no_reparse(entry)
+        if generation(entry.lstat()) != before:
+            raise RuntimeError('Receipt tree changed during snapshot')
+        if pins[entry.relative_to(RECEIPTS).as_posix()]['type'] == 'directory':
+            if entry.lstat().st_ctime_ns != pins[entry.relative_to(RECEIPTS).as_posix()]['changeTimeNS']:
+                raise RuntimeError('Receipt tree changed during snapshot')
+            if sorted(p.name for p in entry.iterdir()) != pins[entry.relative_to(RECEIPTS).as_posix()]['children']:
+                raise RuntimeError('Receipt tree changed during snapshot')
+        else:
+            with entry.open('rb') as stream:
+                current = os.fstat(stream.fileno())
+                if generation(current) != before or current.st_ctime_ns != pins[entry.relative_to(RECEIPTS).as_posix()]['handleChangeTimeNS']:
+                    raise RuntimeError('Receipt tree changed during snapshot')
     return pins
 
 

@@ -263,7 +263,7 @@ test('default journal root follows the configured runtime workspace rather than 
     const result = execFileSync('python', ['-B', '-c',
       "import importlib.util,json,sys; s=importlib.util.spec_from_file_location('journal_receipt_test',sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); p=m.receipt_pins(); print(json.dumps({'receiptNames':list(p)}))", installer],
     { encoding: 'utf8', env: { ...process.env, NEXUS_WORKSPACE: workspace } });
-    assert.deepEqual(JSON.parse(result), { receiptNames: ['original.json'] });
+    assert.deepEqual(JSON.parse(result), { receiptNames: ['.', 'original.json'] });
     assert.deepEqual(fs.readdirSync(receipts), ['original.json']);
   } finally { if (prior === undefined) delete process.env.NEXUS_WORKSPACE; else process.env.NEXUS_WORKSPACE = prior; }
 });
