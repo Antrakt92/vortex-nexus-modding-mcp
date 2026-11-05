@@ -16,9 +16,10 @@ async function fixture(t,{version=false,close,commit}={}) {
   const state={persistent:{profiles:{profile:{gameId:'game'}}},settings:{profiles:{nextProfileId:'profile'},gameMode:{discovered:{game:{path:paths.gamePath}}}},session:{notifications:{dialogs:[dialog(version)]}}};
   let source=true,clock=100;const calls=[],selectors={activeGameId:()=> 'game',activeProfileId:()=> 'profile',installPathForGame:()=>paths.stagingPath,downloadPathForGame:()=>paths.downloadPath};
   const api={getState:()=>state,closeDialog(id,label,input){calls.push({id,label,input,ordinaryLock:disk.existsSync(path.join(receipts,'mutation.lock'))});if(close)return close(state,receipts);state.session.notifications.dialogs=[];}};
-  const ops=createOperations(api,{},selectors,{receipts,stopped(){},nativeDialogOptions:{assertHost(){if(!source)throw Error('SOURCE_CHANGED');},
-    ...(commit?{commitCompletion:commit}:{}),controllerOptions:{now:()=>clock,sleep:async ms=>{clock+=ms;},transitionTimeoutMs:10,pollMs:1}}});
-  const common=context(api,selectors);return{dir,receipts,state,calls,ops,common,sourceChanged(){source=false;},read:()=>ops.read_native_dialog({gameId:'game',profileId:'profile'}),
+  const baseOptions={receipts,stopped(){},nativeDialogOptions:{assertHost(){if(!source)throw Error('SOURCE_CHANGED');},
+    ...(commit?{commitCompletion:commit}:{}),controllerOptions:{now:()=>clock,sleep:async ms=>{clock+=ms;},transitionTimeoutMs:10,pollMs:1}}};
+  const fresh=(patch={})=>createOperations(api,{},selectors,{...baseOptions,...patch,nativeDialogOptions:{...baseOptions.nativeDialogOptions,...patch.nativeDialogOptions}}),ops=fresh();
+  const common=context(api,selectors);return{dir,receipts,state,calls,ops,common,fresh,api,selectors,sourceChanged(){source=false;},read:()=>ops.read_native_dialog({gameId:'game',profileId:'profile'}),
     args:(r,action='cancel',requestId='request_0001')=>({...common,filesystemIds:{...common.filesystemIds},requestId,dialogId:r.dialogId,fingerprint:r.fingerprint,action}),
     record:(id,kind)=>fs.readFile(path.join(receipts,'native-dialog-control',`${id}.${kind}.json`),'utf8').then(JSON.parse)};
 }
@@ -108,4 +109,33 @@ test('input accessors, extra action keys, traversal and corrupt ledger are refus
   assert.equal((await f.ops.read_native_dialog_operation({requestId:'unseen_0001'})).status,'absent');
   const dir=path.join(f.receipts,'native-dialog-control');await fs.mkdir(dir);await fs.writeFile(path.join(dir,'request_0001.attempt.json'),'{}');
   await assert.rejects(f.ops.read_native_dialog_operation({requestId:'request_0001'}),/LEDGER_INVALID/);assert.equal(f.calls.length,0);
+});
+
+
+test('two independent request guards share observation but only response guard owns checks, commits and GLOBAL effect',async t=>{
+ const f=await fixture(t,{close(state,receipts){assert(disk.existsSync(path.join(receipts,'unresolved.json')));assert(disk.existsSync(path.join(receipts,'mutation.lock')));state.session.notifications.dialogs=[];}});
+ let oldAllowed=true,oldChecks=0,newChecks=0,oldCommits=0,newCommits=0;
+ const reader=f.fresh({stopped(){oldChecks++;assert(oldAllowed,'STALE_GUARD_USED');},nativeDialogOptions:{assertHost(){assert(oldAllowed,'STALE_SOURCE_USED');},commitCompletion:async(...args)=>{oldCommits++;return commitCompletion(...args);}}});
+ const r=await reader.read_native_dialog({gameId:'game',profileId:'profile'});oldAllowed=false;
+ const writer=f.fresh({credentials:['rotated-non-overlap-secret'],stopped(){newChecks++;},nativeDialogOptions:{assertHost(){newChecks++;},commitCompletion:async(...args)=>{newCommits++;return commitCompletion(...args);}}});
+ const result=await writer.respond_native_dialog(f.args(r,'ignore_dependencies'));
+ assert.equal(result.nativeDialogDismissalVerified,true);assert.equal(oldChecks,0);assert.equal(oldCommits,0);assert(newChecks>2);assert.equal(newCommits,2);assert.equal(f.calls.length,1);
+ assert.equal(disk.existsSync(path.join(f.receipts,'unresolved.json')),false);assert.equal((await reader.read_native_dialog_operation({requestId:'request_0001'})).status,'complete');
+ const third=f.fresh();await assert.rejects(third.respond_native_dialog(f.args(r,'ignore_dependencies')),/REQUEST_REPLAY/);assert.equal(f.calls.length,1);
+});
+test('credential rotation in the response guard is not bypassed by a retained read controller',async t=>{
+ const f=await fixture(t),r=await f.fresh().read_native_dialog({gameId:'game',profileId:'profile'});
+ const rotated=f.fresh({credentials:['ignore_dependencies']});await assert.rejects(rotated.respond_native_dialog(f.args(r,'ignore_dependencies')),/OPERATIONAL_SECRET_OVERLAP/);assert.equal(f.calls.length,0);
+ const current=f.fresh({credentials:['new-secret']});const q=await current.read_native_dialog({gameId:'game',profileId:'profile'});await current.respond_native_dialog(f.args(q,'ignore_dependencies','request_0002'));assert.equal(f.calls.length,1);
+});
+test('concurrent request reads cannot overwrite current source hooks and response cannot cross a pending read',async t=>{
+ const f=await fixture(t);let firstChecks=0,secondChecks=0;
+ const first=f.fresh({nativeDialogOptions:{assertHost(){firstChecks++;}}}),second=f.fresh({nativeDialogOptions:{assertHost(){secondChecks++;}}});
+ // controller.read really yields at await assertRead; the core must retain its
+ // source hooks until that actual asynchronous read has finished.
+ const pending=first.read_native_dialog({gameId:'game',profileId:'profile'});
+ await assert.rejects(second.read_native_dialog({gameId:'game',profileId:'profile'}),/SESSION_BUSY/);await pending;
+ assert.equal(firstChecks,2);assert.equal(secondChecks,0);
+ const r=await f.read(),closing=f.fresh().respond_native_dialog(f.args(r));
+ await assert.rejects(f.fresh().read_native_dialog({gameId:'game',profileId:'profile'}),/SESSION_BUSY/);await closing;assert.equal(f.calls.length,1);
 });

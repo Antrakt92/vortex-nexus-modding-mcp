@@ -49,14 +49,15 @@ async function readRecord(file) {
   } catch(e) { if(e.code==='ENOENT') return null; throw e; }
   finally { if(handle) await handle.close(); }
 }
-function createNativeDialogOperations(api, selectors, {receipts,checkContext,ordinaryMutation,commitCompletion,
-  assertHost=createNativeDialogHostAdmission(api),controllerOptions={}}) {
-  const control=path.join(receipts,'native-dialog-control'); let controller, operation;
-  function readContext(a) {
+function createNativeDialogSession(api, selectors, {receipts,controllerOptions={}}) {
+  const control=path.join(receipts,'native-dialog-control'); let controller, operation, readHooks, sessionBusy=false;
+  async function inSession(fn){need(!sessionBusy,'SESSION_BUSY');sessionBusy=true;try{return await fn();}finally{sessionBusy=false;}}
+  function readContext(a,hooks=operation?.hooks||readHooks) {
+    need(typeof hooks?.assertHost==='function','CURRENT_GUARD_REQUIRED');
     const state=api.getState();
     need(selectors.activeGameId(state)===a.gameId&&selectors.activeProfileId(state)===a.profileId
       &&state.persistent?.profiles?.[a.profileId]?.gameId===a.gameId&&state.settings?.profiles?.nextProfileId===a.profileId,'CONTEXT_CHANGED');
-    assertHost();
+    hooks.assertHost();
   }
   async function noUnresolved() {
     try { await fs.lstat(path.join(receipts,'unresolved.json')); throw Error('UNRESOLVED_OPERATION_INTERLOCK'); }
@@ -66,13 +67,13 @@ function createNativeDialogOperations(api, selectors, {receipts,checkContext,ord
     async assertRespond(a,full,scope) {
       need(operation&&operation.args===full&&a.dialogId===full.dialogId&&a.fingerprint===full.fingerprint
         &&a.action===full.action&&scope.abortOnly===(a.action==='cancel'),'OPERATION_OWNERSHIP_REQUIRED');
-      checkContext(full); readContext(a);
+      operation.hooks.checkContext(full); readContext(a);
       if(!scope.abortOnly) { need(operation.ordinary,'ORDINARY_MUTEX_REQUIRED'); await noUnresolved(); }
     },
     performResponse(invoke,eligible,full,scope) {
       need(operation&&operation.args===full&&scope.abortOnly===(full.action==='cancel'),'OPERATION_OWNERSHIP_REQUIRED');
       const current=()=>{readContext(full);eligible();};
-      if(scope.abortOnly) { checkContext(full);current();return invoke(); }
+      if(scope.abortOnly) { operation.hooks.checkContext(full);current();return invoke(); }
       need(operation.ordinary&&typeof operation.effect==='function','ORDINARY_EFFECT_REQUIRED');
       // The ordinary effect first fsyncs unresolved.json, then synchronously
       // rechecks context, source and the front before this fixed invocation.
@@ -111,48 +112,53 @@ function createNativeDialogOperations(api, selectors, {receipts,checkContext,ord
     }
   }
   return {
-    read_native_dialog: args=>getController().read(args),
-    async respond_native_dialog(args) {
+    read_native_dialog(args,hooks) {
+      return inSession(async()=>{need(!operation,'ACTION_PENDING');readHooks=hooks;try{return await getController().read(args);}finally{readHooks=null;}});
+    },
+    async respond_native_dialog(args,hooks) {
       const a=parameters(args);
-      return inControl(async()=>{
+      return inSession(()=>inControl(async()=>{
+        need(!operation,'ACTION_PENDING');const owned={args:a,hooks,ordinary:false,effect:null};operation=owned;
+        try {
         need((await inspect(a.requestId)).status==='absent','REQUEST_REPLAY_REFUSED');
-        checkContext(a); readContext(a);
+        hooks.checkContext(a); readContext(a,hooks);
         const dialogKey=digest([a.gameId,a.profileId,a.dialogId,a.fingerprint]); await noPriorDialog(dialogKey);
         async function invoke(ordinary) {
           if(ordinary) await noUnresolved();
           const base={schema:SCHEMA,operation:OP,requestId:a.requestId,parametersDigest:digest(a),dialogKey,
             gameId:a.gameId,profileId:a.profileId,action:a.action,dialogId:a.dialogId,fingerprint:a.fingerprint};
-          await commitCompletion(file(a.requestId,'attempt'),{...base,at:new Date().toISOString(),noReplay:true});
+          await hooks.commitCompletion(file(a.requestId,'attempt'),{...base,at:new Date().toISOString(),noReplay:true});
           let returned=false,published=false;
           try {
             const respond=async (effect,beforeCompletion)=>{
-              operation={args:a,ordinary,effect};
+              need(operation===owned,'CURRENT_GUARD_CHANGED');operation.ordinary=ordinary;operation.effect=effect;
               const result=await getController().respond(Object.fromEntries(['gameId','profileId','dialogId','fingerprint','action'].map(k=>[k,a[k]])),a);
-              returned=true;beforeCompletion?.(()=>readContext(a));return {...result,gameId:a.gameId,profileId:a.profileId};
+              returned=true;beforeCompletion?.(()=>readContext(a,hooks));return {...result,gameId:a.gameId,profileId:a.profileId};
             };
-            const result=ordinary?await ordinaryMutation(a,respond):await respond();
+            const result=ordinary?await hooks.ordinaryMutation(a,respond):await respond();
             const response={protocol:PROTOCOL,requestId:a.requestId,operation:OP,status:'complete',operationCompleted:true,
               diskDeploymentVerified:false,verificationRequired:VERIFICATION,...result};
-            await commitCompletion(file(a.requestId,'completion'),{...base,at:new Date().toISOString(),response},()=>{checkContext(a);readContext(a);},()=>{published=true;});
+            await hooks.commitCompletion(file(a.requestId,'completion'),{...base,at:new Date().toISOString(),response},()=>{hooks.checkContext(a);readContext(a,hooks);},()=>{published=true;});
             return response;
           } catch(error) {
             // A linked completion remains authoritative even if temporary-name cleanup fails.
             if(published) throw Error('NATIVE_DIALOG_COMPLETION_PUBLISHED_CLEANUP_PENDING');
-            await commitCompletion(file(a.requestId,'held'),{...base,at:new Date().toISOString(),operationCompleted:false,
+            await hooks.commitCompletion(file(a.requestId,'held'),{...base,at:new Date().toISOString(),operationCompleted:false,
               effectsMayHaveOccurred:returned||error.message==='NATIVE_DIALOG_EFFECT_UNCERTAIN_RECONCILE',inspectBeforeRetry:true,
               errorCode:/^[A-Z][A-Z0-9_]+$/.test(error?.message||'')?error.message:'UPSTREAM_FAILURE'});
             throw error;
-          } finally { operation=null; }
+          } finally { /* The enclosing control scope owns current hooks. */ }
         }
         // Cancel has an independent control-plane lock. It never clears an install
         // barrier or obtains permission to install. Other actions use the ordinary guard.
-        if(a.action==='cancel') return invoke(false);
+        if(a.action==='cancel') return await invoke(false);
         await noUnresolved();
         try { await fs.lstat(path.join(receipts,'mutation.lock')); throw Error('NATIVE_DIALOG_ORDINARY_MUTATION_BUSY'); }
         catch(e) { if(e.code!=='ENOENT') throw e; }
-        need(typeof ordinaryMutation==='function','ORDINARY_GUARD_REQUIRED');
-        return invoke(true);
-      });
+        need(typeof hooks.ordinaryMutation==='function','ORDINARY_GUARD_REQUIRED');
+        return await invoke(true);
+        } finally { if(operation===owned)operation=null; }
+      }));
     },
     async read_native_dialog_operation(args) {
       const {requestId:id}=object(args,['requestId']); need(requestId(id),'REQUEST_ID_INVALID'); plainParents(control);
@@ -160,5 +166,23 @@ function createNativeDialogOperations(api, selectors, {receipts,checkContext,ord
         globalInterlockChanged:false,installationCompleted:false};
     },
   };
+}
+// One native API object is one renderer session. HTTP request guards remain
+// separate: only observation/replay state is cached, never credentials or the
+// ordinary mutation closure belonging to the request that performed the read.
+const sessions=new WeakMap();
+function createNativeDialogOperations(api,selectors,options) {
+  need(api&&typeof api==='object'&&options&&typeof options.receipts==='string','SESSION_REQUIRED');
+  const hooks={checkContext:options.checkContext,ordinaryMutation:options.ordinaryMutation,commitCompletion:options.commitCompletion,
+    assertHost:options.assertHost||createNativeDialogHostAdmission(api)};
+  need(['checkContext','commitCompletion','assertHost'].every(k=>typeof hooks[k]==='function'),'CURRENT_GUARD_REQUIRED');
+  let paths=sessions.get(api);if(!paths){paths=new Map();sessions.set(api,paths);}
+  const resolved=path.resolve(options.receipts),key=process.platform==='win32'?resolved.toLowerCase():resolved;
+  let entry=paths.get(key);if(!entry){entry={selectors,game:selectors.activeGameId,profile:selectors.activeProfileId,
+    session:createNativeDialogSession(api,selectors,{receipts:resolved,controllerOptions:options.controllerOptions})};paths.set(key,entry);}
+  need(entry.game===selectors.activeGameId&&entry.profile===selectors.activeProfileId,'SESSION_SELECTORS_CHANGED');
+  return Object.freeze({read_native_dialog:args=>entry.session.read_native_dialog(args,hooks),
+    respond_native_dialog:args=>entry.session.respond_native_dialog(args,hooks),
+    read_native_dialog_operation:args=>entry.session.read_native_dialog_operation(args)});
 }
 module.exports = {createNativeDialogOperations};

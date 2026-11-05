@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import fs from 'node:fs/promises';
 import http from 'node:http';
+import path from 'node:path';
 import {EventEmitter} from 'node:events';
 import { createRequire, isBuiltin } from 'node:module';
 import { spawn } from 'node:child_process';
@@ -13,6 +14,66 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import { handler, remote } from './bridge.mjs';
 const artifact = process.env.VORTEX_ADAPTER_TEST_ARTIFACT || paths.build + '/upstream/adapted-dist/index.js';
 const realRequire = createRequire(artifact);
+
+test('built native-dialog observation survives separate HTTP requests and current authentication',
+  {skip:!process.env.VORTEX_NATIVE_APP_ASAR},async()=>{
+  const root=paths.build+'/tests';await fs.mkdir(root,{recursive:true});
+  const modelDir=await fs.mkdtemp(root+'/native-dialog-http-'),receiptDir=modelDir+'/local-state/vortex-agent-build/receipts';
+  const exe=path.join(path.dirname(path.dirname(process.env.VORTEX_NATIVE_APP_ASAR)),'Vortex.exe');
+  const sourceRequire=createRequire(import.meta.url),{QUESTION_TEXT}=sourceRequire('./collection-dialog-policy.cjs');
+  const question=(id,version=false)=>({id,type:'question',title:version?'Existing version':'Updating may break dependencies',defaultAction:undefined,
+    content:{text:version?QUESTION_TEXT:"You're updating a mod that others depend upon and the update doesn't seem to be compatible (according to the dependency information). If you continue we have to disable these dependencies, otherwise you'll continually get warnings about it.",
+      options:{wrap:true},checkboxes:[{id:'remember',value:false,text:'Remember my choice'}]},
+    actions:version?['Cancel','Update all profiles','Update current profile']:['Cancel','Ignore']});
+  const state={app:{appVersion:'2.9.1'},settings:{profiles:{activeProfileId:'p',nextProfileId:'p'},gameMode:{discovered:{cyberpunk2077:{path:modelDir}}}},
+    persistent:{profiles:{p:{id:'p',gameId:'cyberpunk2077',modState:{}}},mods:{cyberpunk2077:{}},downloads:{files:{}}},
+    session:{base:{toolsRunning:{}},notifications:{dialogs:[question('cancel-one'),question('ignore-two'),question('version-three',true)]}}};
+  const calls=[],disk=realRequire('node:fs');let listener,token='7'.repeat(64);
+  const api={getState:()=>state,getPath:name=>{assert.equal(name,'exe');return exe;},store:{getState:()=>state},ext:{},events:new EventEmitter(),onAsync(){},awaitUI:async()=>{},translate:key=>key,
+    closeDialog(id,label,input){assert.equal(state.session.notifications.dialogs[0].id,id);assert.deepEqual(input,{remember:false});
+      const held=disk.readFileSync(receiptDir+'/unresolved.json','utf8');
+      if(label==='Cancel')assert.equal(held,'fixture retained installation');else assert.equal(JSON.parse(held).operation,'respond_native_dialog');
+      calls.push({id,label});state.session.notifications.dialogs.shift();}};
+  const vortex={actions:{},selectors:{activeGameId:()=> 'cyberpunk2077',activeProfileId:()=> 'p',knownGames:()=>[{id:'cyberpunk2077'}],
+    activeProfile:()=>state.persistent.profiles.p,installPathForGame:()=>modelDir,downloadPathForGame:()=>modelDir},
+    util:{getVortexPath:name=>{assert.equal(name,'userData');return modelDir;},getGame:()=>({getModPaths:()=>({'':modelDir})}),renderModName:mod=>mod.id},fs:{},log(){}};
+  const fakeHttp={...http,createServer:fn=>{listener=http.createServer(fn);const listen=listener.listen.bind(listener);listener.listen=()=>listen(0,'127.0.0.1');return listener;}};
+  const child=realRequire('node:child_process'),refuseProcess=()=>{throw Error('NO_NATIVE_PROCESS_IN_HTTP_MODEL');};
+  const fakeChild={...child,spawn:refuseProcess,exec:refuseProcess,execFile:refuseProcess,execSync:refuseProcess,execFileSync:refuseProcess,
+    spawnSync:(file,args)=>{assert.match(file,/WindowsPowerShell[\\/]v1\.0[\\/]powershell\.exe$/i);assert.ok(args.includes('-EncodedCommand'));
+      return{status:0,signal:null,stderr:'',stdout:JSON.stringify({schema:1,complete:true,count:1,names:['Vortex.exe']})};}};
+  const module={exports:{}},workspace=process.env.NEXUS_WORKSPACE,creation=Object.getOwnPropertyDescriptor(process,'getCreationTime');
+  try{
+    process.env.NEXUS_WORKSPACE=modelDir;Object.defineProperty(process,'getCreationTime',{configurable:true,value:()=>12345});
+    const sandboxRequire=id=>id==='@nexusmods/vortex-api'?vortex:['node:http','http'].includes(id)?fakeHttp:
+      ['node:child_process','child_process'].includes(id)?fakeChild:realRequire(id);
+    vm.runInThisContext('(function(require,module,exports,__dirname,__filename){'+await fs.readFile(artifact,'utf8')+'\n})')(sandboxRequire,module,module.exports,path.dirname(artifact),artifact);
+    if(workspace===undefined)delete process.env.NEXUS_WORKSPACE;else process.env.NEXUS_WORKSPACE=workspace;
+    module.exports.start(api,0,{tokenProvider:async()=>token});
+    await new Promise(resolve=>listener.listening?resolve():listener.once('listening',resolve));
+    const endpoint=`http://127.0.0.1:${listener.address().port}/mcp`,localFetch=(_url,options)=>fetch(endpoint,options);
+    const call=(name,args={})=>remote('tools/call',{name,arguments:args},localFetch,async()=>token);
+    const health=JSON.parse((await call('health')).content[0].text),pins=Object.fromEntries(['gameId','profileId','gamePath','stagingPath','downloadPath','filesystemIds'].map(k=>[k,health[k]]));
+    await fs.mkdir(receiptDir,{recursive:true});await fs.writeFile(receiptDir+'/unresolved.json','fixture retained installation');
+    for(const [index,action]of ['cancel','ignore_dependencies','update_current_profile'].entries()){
+      const observed=await call('read_native_dialog',{gameId:'cyberpunk2077',profileId:'p'});assert.notEqual(observed.isError,true,JSON.stringify(observed));
+      const ready=JSON.parse(observed.content[0].text);assert.equal(ready.queueSize,3-index);
+      token=index%2?'7'.repeat(64):'8'.repeat(64);
+      const requestId='native_http_request_'+index,args={...pins,requestId,dialogId:ready.dialogId,fingerprint:ready.fingerprint,action};
+      const response=await call('respond_native_dialog',args);assert.notEqual(response.isError,true,JSON.stringify(response));
+      const result=JSON.parse(response.content[0].text);assert.equal(result.nativeDialogDismissalVerified,true);assert.equal(result.installationCompleted,false);
+      assert.equal(result.abortOnly,index===0);assert.equal(calls.length,index+1);
+      const ledger=await call('read_native_dialog_operation',{requestId});assert.equal(JSON.parse(ledger.content[0].text).status,'complete');
+      if(index===0){assert.equal(await fs.readFile(receiptDir+'/unresolved.json','utf8'),'fixture retained installation');await fs.unlink(receiptDir+'/unresolved.json');}
+      else await assert.rejects(fs.access(receiptDir+'/unresolved.json'),{code:'ENOENT'});
+    }
+    assert.deepEqual(calls.map(x=>x.label),['Cancel','Ignore','Update current profile']);
+  }finally{
+    if(workspace===undefined)delete process.env.NEXUS_WORKSPACE;else process.env.NEXUS_WORKSPACE=workspace;
+    if(creation)Object.defineProperty(process,'getCreationTime',creation);else delete process.getCreationTime;
+    if(listener?.listening)await new Promise(resolve=>listener.close(resolve));
+  }
+});
 test('built extension wire: allowlist, SDK2 HTTP, legacy bridge, schemas and browser protection', async () => {
   let listener;
   const token = '7'.repeat(64);
