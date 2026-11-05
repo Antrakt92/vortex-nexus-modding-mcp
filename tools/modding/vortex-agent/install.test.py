@@ -86,6 +86,147 @@ class UpgradeTests(unittest.TestCase):
         self.assertEqual(upgrade.receipt_pins(), before)
         self.assertEqual(record.read_bytes(), b'{"synthetic":"immutable plan"}')
 
+    def test_native_dialog_receipt_tree_survives_upgrade_with_empty_directories(self):
+        directory = self.receipts / 'native-dialog-control'
+        directory.mkdir()
+        (directory / 'empty').mkdir()
+        (directory / 'request.attempt.json').write_bytes(b'{"synthetic":"attempt"}')
+        (directory / 'request.completion.json').write_bytes(b'{"synthetic":"completion"}')
+        before = upgrade.receipt_pins()
+        self.assertEqual(before['.']['type'], 'directory')
+        self.assertEqual(before['native-dialog-control/empty']['children'], [])
+        self.assertIn('generation', before['native-dialog-control/request.attempt.json'])
+        upgrade.install(self.new, self.old)
+        self.assertEqual(upgrade.receipt_pins(), before)
+
+    def test_nested_receipt_file_change_add_remove_and_replacement_change_pins(self):
+        directory = self.receipts / 'native-dialog-control'
+        directory.mkdir()
+        receipt = directory / 'request.json'
+        receipt.write_bytes(b'original')
+        before = upgrade.receipt_pins()
+        receipt.write_bytes(b'changed!')
+        self.assertNotEqual(upgrade.receipt_pins(), before)
+        before = upgrade.receipt_pins()
+        added = directory / 'new.json'
+        added.write_bytes(b'new')
+        self.assertNotEqual(upgrade.receipt_pins(), before)
+        before = upgrade.receipt_pins()
+        added.unlink()
+        self.assertNotEqual(upgrade.receipt_pins(), before)
+        before = upgrade.receipt_pins()
+        replacement = directory / 'replacement'
+        replacement.write_bytes(receipt.read_bytes())
+        replacement.replace(receipt)
+        self.assertNotEqual(upgrade.receipt_pins(), before)
+
+    def test_nested_receipt_mutation_during_hash_refuses_snapshot(self):
+        directory = self.receipts / 'native-dialog-control'
+        directory.mkdir()
+        receipt = directory / 'request.json'
+        receipt.write_bytes(b'original')
+        real_hash, changed = hashlib.sha256, False
+
+        def digest():
+            inner = real_hash()
+
+            class MutatingDigest:
+                def update(self, value):
+                    nonlocal changed
+                    inner.update(value)
+                    if not changed:
+                        changed = True
+                        receipt.write_bytes(b'changed during snapshot')
+
+                def hexdigest(self):
+                    return inner.hexdigest()
+
+            return MutatingDigest()
+
+        with patch.object(upgrade.hashlib, 'sha256', digest):
+            with self.assertRaisesRegex(RuntimeError, 'Receipt .*changed'):
+                upgrade.receipt_pins()
+
+    def test_receipt_child_added_after_enumeration_refuses_snapshot(self):
+        real_iterdir, changed = Path.iterdir, False
+
+        def changed_iterdir(directory):
+            nonlocal changed
+            children = list(real_iterdir(directory))
+            if directory == self.receipts and not changed:
+                changed = True
+                (self.receipts / 'late.json').write_bytes(b'late')
+            return iter(children)
+
+        with patch.object(Path, 'iterdir', changed_iterdir):
+            with self.assertRaisesRegex(RuntimeError, 'Receipt tree changed'):
+                upgrade.receipt_pins()
+
+    def test_receipt_hardlink_alias_refused(self):
+        alias = self.receipts / 'alias.json'
+        alias.hardlink_to(self.marker)
+        with self.assertRaisesRegex(RuntimeError, 'Receipt .*alias|unaliased'):
+            upgrade.receipt_pins()
+
+    def test_receipt_root_file_and_excessive_depth_refused(self):
+        file = self.root / 'not-a-receipt-directory'
+        file.write_bytes(b'file')
+        with patch.object(upgrade, 'RECEIPTS', file):
+            with self.assertRaisesRegex(RuntimeError, 'Receipt root is not a directory'):
+                upgrade.receipt_pins()
+        directory = self.receipts
+        for _ in range(33):
+            directory = directory / 'd'
+            directory.mkdir()
+        with self.assertRaisesRegex(RuntimeError, 'Receipt tree limit exceeded'):
+            upgrade.receipt_pins()
+
+    def test_receipt_directory_symlink_refused(self):
+        target = self.root / 'outside-receipts'
+        target.mkdir()
+        try:
+            (self.receipts / 'linked').symlink_to(target, target_is_directory=True)
+        except OSError as error:
+            self.skipTest('Symlink creation is unavailable: ' + str(error.winerror or error.errno))
+        with self.assertRaisesRegex(RuntimeError, 'Reparse'):
+            upgrade.receipt_pins()
+
+    def test_nested_receipt_added_before_swap_refuses_upgrade(self):
+        directory = self.receipts / 'native-dialog-control'
+        directory.mkdir()
+        calls = 0
+
+        def stopped():
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                (directory / 'new.json').write_bytes(b'new independent receipt')
+
+        with patch.object(upgrade, 'stopped', stopped):
+            with self.assertRaisesRegex(RuntimeError, 'Receipt pins changed before swap'):
+                upgrade.install(self.new, self.old)
+        self.assertEqual(upgrade.sha(self.plugins / 'vortex-agent/index.js'), self.old)
+        self.assertTrue((directory / 'new.json').exists())
+
+    def test_nested_receipt_changed_after_swap_rolls_back_only_owned_bundle(self):
+        directory = self.receipts / 'native-dialog-control'
+        directory.mkdir()
+        receipt = directory / 'new.json'
+        receipt.write_bytes(b'original')
+        real_package = upgrade.package
+
+        def changed_package(target, expected, *args, **kwargs):
+            result = real_package(target, expected, *args, **kwargs)
+            if target == self.plugins / 'vortex-agent' and expected == self.new:
+                receipt.write_bytes(b'independent receipt changed')
+            return result
+
+        with patch.object(upgrade, 'package', changed_package):
+            with self.assertRaisesRegex(RuntimeError, 'Receipt pins changed during upgrade'):
+                upgrade.install(self.new, self.old)
+        self.assertEqual(upgrade.sha(self.plugins / 'vortex-agent/index.js'), self.old)
+        self.assertEqual(receipt.read_bytes(), b'independent receipt changed')
+
     def test_wrong_runtime_workspace_refuses_before_swap_and_preserves_receipts(self):
         metadata = self.source / 'provenance.json'
         value = json.loads(metadata.read_text())
