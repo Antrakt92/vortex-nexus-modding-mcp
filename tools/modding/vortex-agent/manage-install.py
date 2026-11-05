@@ -215,10 +215,14 @@ def receipt_pins():
                 opened = os.fstat(stream.fileno())
                 if generation(opened) != observed[entry]:
                     raise RuntimeError('Receipt generation changed')
+                read_bytes = 0
                 for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                    read_bytes += len(chunk)
+                    if read_bytes > before.st_size:
+                        raise RuntimeError('Receipt size changed during snapshot')
                     digest.update(chunk)
                 after = os.fstat(stream.fileno())
-                if generation(after) != observed[entry] or after.st_ctime_ns != opened.st_ctime_ns:
+                if read_bytes != before.st_size or generation(after) != observed[entry] or after.st_ctime_ns != opened.st_ctime_ns:
                     raise RuntimeError('Receipt generation changed')
             # Windows path/handle APIs can expose different ctime values; compare
             # creation identity across APIs and change time only on open handles.

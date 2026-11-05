@@ -1140,7 +1140,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/manage-install.py",
-      "sha256_lf": "b48d1b5388fdc38bd0bacd60914b92c40c08ca00c5a379244c01dbb02aa7a93d"
+      "sha256_lf": "146a374d1274210367cbad0a97a2f129d6ed055f4f897c8e982fe696300ab7d6"
     },
     {
       "path": "tools/modding/vortex-agent/mod-record-fingerprint-serialization.test.cjs",
