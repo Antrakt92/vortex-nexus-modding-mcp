@@ -98,7 +98,7 @@ test('completion schema retains old operations and includes exact wizard transit
   const f=fixture(); f.extension.register(f.server,f.api);
   const status=f.tools.get('advance_collection_wizard').config.outputSchema;
   assert.equal(status.kind,'strictObject');
-  assert.deepEqual(Array.from(status.value.operation.value),['install_download','install_local_archive','set_mods_enabled','deploy_mods','download_nexus','advance_collection_wizard','respond_collection_dialog','advance_collection_update_prompt']);
+  assert.deepEqual(Array.from(status.value.operation.value),['install_download','install_local_archive','set_mods_enabled','deploy_mods','download_nexus','advance_collection_wizard','respond_collection_dialog','advance_collection_update_prompt','respond_native_dialog']);
   for(const key of ['archiveId','collectionId','revisionId','revisionNumber','action','transition','nativeTransitionVerified']) {
     assert.equal(status.value[key].constraints.optional,true,key);
   }
