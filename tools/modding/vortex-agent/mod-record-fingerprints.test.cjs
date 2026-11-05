@@ -32,3 +32,33 @@ test('baseline order vectors enforce exact duplicate multiplicity, requested sub
  for(const rows of[[{modId:'foreign',ruleElementDigests:[sha]}],[{modId:'mod',ruleElementDigests:[sha]},{modId:'mod',ruleElementDigests:[sha]}],[{modId:'mod',ruleElementDigests:['BAD']}],[{modId:'mod',ruleElementDigests:Array(4097).fill(sha)}],[{modId:'mod',ruleElementDigests:[],path:'no'}]])assert.throws(()=>f.run({...args,ruleOrderBaselines:rows}),/BASELINE_/);
  const absent=fixture().run({...args,ruleOrderBaselines:[{modId:'mod',ruleElementDigests:[]}]}).records[0];assert.deepEqual(absent.baselineRuleOrder,{matched:false});assert.equal(f.run().records[0].baselineRuleOrder,undefined);
 });
+
+
+test('fresh installed record accepts only native installTime Date with exact origin encoding and no raw output',()=>{
+ const milliseconds=Date.parse('2026-11-05T03:04:05.006Z'),record={state:'installed',attributes:{installTime:new Date(milliseconds),own:undefined,zero:-0},rules:[]},out=fixture(record).run(),r=out.records[0];
+ const expected=obj([['attributes',obj([['installTime',['native-install-date',String(milliseconds)]],['own',['undefined']],['zero',['number','-0']]])],['rules',arr([])],['state',str('installed')]]);
+ assert.equal(r.recordDigest,H(expected));assert.equal(r.attributeFields[0].valueDigest,H(['native-install-date',String(milliseconds)]));assert.equal(r.rules.permutationInvariantRecordDigest,H(expected));
+ for(const value of ['installTime','native-install-date',String(milliseconds),'2026-11-05'])assert(!JSON.stringify(out).includes(value));assert.equal(out.nativeEffects,false);
+ const persisted={...record,attributes:{...record.attributes,installTime:new Date(milliseconds).toISOString()}},expectedPersisted=obj([['attributes',obj([['installTime',str(persisted.attributes.installTime)],['own',['undefined']],['zero',['number','-0']]])],['rules',arr([])],['state',str('installed')]]);
+ assert.equal(fixture(persisted).run().records[0].recordDigest,H(expectedPersisted));assert.notEqual(r.recordDigest,H(expectedPersisted));
+});
+
+test('native Date remains binding through rules permutation and baseline reconstruction',()=>{
+ const rules=[{tag:'one'},{tag:'two'}],record={state:'installed',attributes:{installTime:new Date(1000)},rules},original=fixture(record).run().records[0],reversed=fixture({...record,rules:rules.slice().reverse()}).run({...args,ruleOrderBaselines:[{modId:'mod',ruleElementDigests:original.rules.orderedElementDigests}]}).records[0];
+ assert.notEqual(original.recordDigest,reversed.recordDigest);assert.equal(original.rules.permutationInvariantRecordDigest,reversed.rules.permutationInvariantRecordDigest);assert.deepEqual(reversed.baselineRuleOrder,{matched:true,recordDigest:original.recordDigest});
+ const changed=fixture({...record,attributes:{installTime:new Date(1001)}}).run().records[0];assert.notEqual(original.recordDigest,changed.recordDigest);assert.notEqual(original.rules.permutationInvariantRecordDigest,changed.rules.permutationInvariantRecordDigest);
+});
+
+test('Date arguments, foreign paths, invalid/decorated dates, proxies and Date accessors refuse without traps',()=>{
+ for(const record of [{state:'installed',installTime:new Date()},{state:'installed',attributes:{other:new Date()}},{state:'installed',attributes:[new Date()]},{state:'installed',rules:[{attributes:{installTime:new Date()}}]}])assert.throws(()=>fixture(record).run(),/MOD_RECORD_FINGERPRINTS_RAW_/);
+ const invalid=new Date(NaN),decorated=new Date(1000);decorated.extra='not-native';for(const value of [invalid,decorated])assert.throws(()=>fixture({state:'installed',attributes:{installTime:value}}).run(),/MOD_RECORD_FINGERPRINTS_RAW_/);
+ let calls=0;const proxied=new Proxy(new Date(1000),{getPrototypeOf(){calls++;throw Error('TRAP');},ownKeys(){calls++;throw Error('TRAP');}});assert.throws(()=>fixture({state:'installed',attributes:{installTime:proxied}}).run(),/RAW_INVALID/);assert.equal(calls,0);
+ const attributes={};Object.defineProperty(attributes,'installTime',{enumerable:true,get(){calls++;throw Error('GETTER');}});assert.throws(()=>fixture({state:'installed',attributes}).run(),/RAW_DESCRIPTOR/);assert.equal(calls,0);
+ assert.throws(()=>fixture().run({...args,unexpected:new Date()}),/RAW_/);
+});
+
+
+test('pinned own native-origin oracle matches fresh Date and persisted-string record hashes', {skip:!process.env.VORTEX_NATIVE_DATE_ORACLE},()=>{
+ const file=process.env.VORTEX_NATIVE_DATE_ORACLE;assert.equal(crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'),'3631755b1d41f49c41aab5b4ff1405fc14e2b2af3460a015b39f02f0ce757cf9');const Native=require(file);
+ for(const installTime of [new Date(1762304645006),'2025-11-05T00:00:00.000Z']){const record={state:'installed',attributes:{installTime,own:undefined,zero:-0},rules:[{type:'requires',own:undefined}]};assert.equal(fixture(record).run().records[0].recordDigest,Native.digest(record));}
+});

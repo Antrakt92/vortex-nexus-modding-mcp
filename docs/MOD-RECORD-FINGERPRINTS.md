@@ -25,3 +25,11 @@ changed, and a matching hash grants no permission to clear an operation hold.
 The hashing format preserves own `undefined` properties, array indices and
 negative zero. It uses descriptor-only snapshots and SHA-256 over the tagged
 encoding; ordinary `JSON.stringify(record)` is not interchangeable.
+
+Freshly installed Vortex records can contain a native `Date` at
+`attributes.installTime`. That exact field uses the native-origin tag
+`["native-install-date", "<milliseconds>"]` internally. It is hashed, never
+returned as a value. Dates elsewhere, invalid or decorated dates, proxies and
+accessors refuse. Persisted string timestamps keep their existing raw515
+encoding and hashes; this read does not convert dates to strings or equate the
+two representations.
