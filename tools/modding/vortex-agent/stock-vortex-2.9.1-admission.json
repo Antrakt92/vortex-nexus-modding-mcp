@@ -10,6 +10,15 @@
     "scope": "Reuses the previously reviewed source ledger for the official host and known extension sources; current hashes must still match before installation.",
     "limitations": "Executable source inventory excludes node_modules and .git. Admission requires the reviewed source closure and actual loaded identities; hashes alone do not approve unknown code.",
     "excludedOwnAdapter": "vortex-agent is admitted separately using verified installation provenance.",
+    "cyberpunkSupport0132Review": {
+      "reviewedAtUTC": "2026-11-05",
+      "author": "Black Tree Gaming Ltd.",
+      "version": "0.13.2",
+      "executableClosure": ["index.js"],
+      "comparison": "Compared to the retained 0.13.1 executable matching its existing admission pin. Installer, layout and filetree modules are unchanged; compiled installer differences are path alias renumbering. One registerInstaller and no registerExtractor or registerModType hooks in both versions.",
+      "externalImports": "Host-provided imports are unchanged except for the built-in node:fs/promises. No relative require or dynamic import adds another executable file.",
+      "hostScope": "Vortex 2.9.1 only. New named archive-order behavior is gated off on this host. Source admission does not establish installation or gameplay acceptance."
+    },
     "externalExtractorReview": [
       {
         "folder": "game-pillarsofeternity2",
@@ -1269,6 +1278,16 @@
         {
           "path": "index.js",
           "sha256": "59d7d12179f30b2e77cab28bb5d417479e5f39269e9ce71e49ea5fac5782269a"
+        }
+      ]
+    },
+    {
+      "kind": "user",
+      "folder": "Cyberpunk 2077 Support for Vortex 196 0.13.2 2026-11-04T06-36Z nTOxfVeWH",
+      "files": [
+        {
+          "path": "index.js",
+          "sha256": "3111d15de0b5ac564319839ef9044e95b37f6d0cc83de4ac28f2d531f23277ae"
         }
       ]
     },
