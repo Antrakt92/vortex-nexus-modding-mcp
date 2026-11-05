@@ -21,6 +21,10 @@ embedded Vortex adapter's compatibility label.
 
 ## Unreleased
 
+- Admit the reviewed Cyberpunk Support 0.13.2 executable on official Vortex
+  2.9.1, alongside the existing 0.13.1 source pin. Unknown versions and changed
+  executable bytes still refuse local installation.
+
 - Extend `read_native_preflight` with bounded extension state and loaded effective
   IDs, including queued removals. Missing, malformed, oversized or changing data
   is explicitly incomplete; no filesystem census or restart permission is implied.

@@ -50,6 +50,19 @@ test('unknown loaded extension cannot become admitted by discovery alone', async
   assert.equal(f.calls.length, 0);
 });
 
+test('reviewed Cyberpunk Support 0.13.2 binds its executable pin while another version still refuses', async () => {
+  const folder = 'Cyberpunk 2077 Support for Vortex 196 0.13.2 2026-11-04T06-36Z nTOxfVeWH';
+  const f = fixture();
+  f.loaded.push({ dynamic: true, path: path.resolve('fixture-user/plugins', folder) });
+  await f.read()();
+  assert.deepEqual(f.calls[0].expected.dynamic.at(-1).files, [{ path: 'index.js',
+    sha256: '3111d15de0b5ac564319839ef9044e95b37f6d0cc83de4ac28f2d531f23277ae' }]);
+  const unknown = fixture();
+  unknown.loaded.push({ dynamic: true, path: path.resolve('fixture-user/plugins', folder.replace('0.13.2', '0.13.3')) });
+  await assert.rejects(unknown.read()(), /LOCAL_INSTALL_HOST_UNKNOWN_EXTENSION/);
+  assert.equal(unknown.calls.length, 0);
+});
+
 test('authentic host hash from another path cannot attest the running package', async () => {
   const f = fixture();
   await assert.rejects(f.read({ packagePath: path.resolve('retained-copy/app.asar'), expected: {
