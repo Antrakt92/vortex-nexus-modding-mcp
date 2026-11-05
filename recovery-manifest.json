@@ -40,7 +40,7 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256_lf": "22c99e18ac50c9d10a59705dae10efbf51d7321aec9d8bbaf2a40c2613cf46c9"
+      "sha256_lf": "0eaff261eb8e1edc924910656534766e1b92d1f68fee27e47a3e427fdc476388"
     },
     {
       "path": "CONTRIBUTING.md",
@@ -296,7 +296,7 @@
     },
     {
       "path": "docs/MOD-RECORD-FINGERPRINTS.md",
-      "sha256_lf": "ad43bfa735dbc1641d5e9aa8f3af5f8bc2429dd286ed3d225472674afae9c7a8"
+      "sha256_lf": "3dab4c11b539601ba95388d4fc7db8fee1eaa269927001e99b5eed3146c87455"
     },
     {
       "path": "docs/NATIVE-ACTIVITY-PATCH.md",
@@ -1144,15 +1144,15 @@
     },
     {
       "path": "tools/modding/vortex-agent/mod-record-fingerprint-serialization.test.cjs",
-      "sha256_lf": "65e7544dd1c050ae149c44ce3bfe569ebc752033f1206b96c8233b41f63f53bd"
+      "sha256_lf": "f2cca82212696c1cf48cef4ecd8200793e9d79443a424fdf9f3e8c9ace10e1e2"
     },
     {
       "path": "tools/modding/vortex-agent/mod-record-fingerprints.cjs",
-      "sha256_lf": "20f176c091048df0fd9ce3dec55804faadf3408737ef3648d2e136e5296aae5a"
+      "sha256_lf": "08ef68359573f727a90b37294cbad5a06bd8ae046f13a51405573ecdfce00b69"
     },
     {
       "path": "tools/modding/vortex-agent/mod-record-fingerprints.test.cjs",
-      "sha256_lf": "54d17263c532b0b464751cbd6cfbaf30e62a4214c8c72faa89db7fb81b11e0ab"
+      "sha256_lf": "3478792ae02fe9e0162f6c3783a7b70b78b5b228e2ffdcb4d6baabfc478c9c2a"
     },
     {
       "path": "tools/modding/vortex-agent/native-activity-patch.test.mjs",
@@ -3240,7 +3240,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/wire.test.mjs",
-      "sha256_lf": "995c0cb7023df886973e5789070f58e36c38675a6bd8f80f3c9b95ec921ca932"
+      "sha256_lf": "fcf48f839ba5d5f06894e54651160f9d6811ab44c3e1074601f2fba59a3e1813"
     },
     {
       "path": "tools/modding/workspace_paths.py",

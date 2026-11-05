@@ -146,7 +146,7 @@ test('built extension wire: allowlist, SDK2 HTTP, legacy bridge, schemas and bro
     assert.equal(fingerprints.inputSchema.properties.modIds.maxItems,20);
     state.settings.profiles.nextProfileId='p';
     state.persistent.mods.cyberpunk2077.fingerprint_model={state:'installed',
-      attributes:{note:'raw-metadata-must-not-leak'},rules:[{type:'after',reference:{id:'a'}},{type:'after',reference:{id:'b'}}]};
+      attributes:{note:'raw-metadata-must-not-leak',installTime:new Date('2026-11-05T03:04:05.006Z')},rules:[{type:'after',reference:{id:'a'}},{type:'after',reference:{id:'b'}}]};
     try {
       const raw=await call('tools/call',{name:'read_mod_record_fingerprints',arguments:{gameId:'cyberpunk2077',profileId:'p',modIds:['fingerprint_model']}});
       assert.notEqual(raw.isError,true,JSON.stringify(raw));
@@ -159,6 +159,10 @@ test('built extension wire: allowlist, SDK2 HTTP, legacy bridge, schemas and bro
       assert.notEqual(reconstructed.isError,true,JSON.stringify(reconstructed));
       const comparison=JSON.parse(reconstructed.content[0].text).records[0].baselineRuleOrder;
       assert.equal(comparison.matched,true);assert.notEqual(comparison.recordDigest,result.records[0].recordDigest);
+      assert.ok(!raw.content[0].text.includes('2026-11-05'));
+      state.persistent.mods.cyberpunk2077.fingerprint_model.attributes.installTime='2026-11-05T03:04:05.006Z';
+      const persisted=await call('tools/call',{name:'read_mod_record_fingerprints',arguments:{gameId:'cyberpunk2077',profileId:'p',modIds:['fingerprint_model']}});
+      assert.notEqual(persisted.isError,true,JSON.stringify(persisted));assert.notEqual(JSON.parse(persisted.content[0].text).records[0].recordDigest,result.records[0].recordDigest);
     } finally { delete state.persistent.mods.cyberpunk2077.fingerprint_model;delete state.settings.profiles.nextProfileId; }
     const localInstallTool = list.tools.find(tool => tool.name === 'install_local_archive');
     assert.equal(localInstallTool.inputSchema.additionalProperties, false);

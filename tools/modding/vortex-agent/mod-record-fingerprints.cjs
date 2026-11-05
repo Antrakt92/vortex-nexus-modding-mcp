@@ -1,25 +1,29 @@
 'use strict';
-const {isProxy}=require('node:util/types'),crypto=require('node:crypto');
+const {isProxy,isDate}=require('node:util/types'),crypto=require('node:crypto');
 const need=(v,c)=>{if(!v)throw Error('MOD_RECORD_FINGERPRINTS_'+c);};
 const id=v=>typeof v==='string'&&v.length>0&&v.length<=512&&!/[\x00-\x1f\x7f]/.test(v);
 // Exact tagged encoding domain of our collection raw-state.cjs (R3): numbers
 // are strings, object keys and array index keys are sorted lexicographically.
 // Additional bounded-input refusals do not alter the encoded accepted values.
-function encode(input){let nodes=0;const ancestors=new Set();function copy(v,depth){
+function encode(input,nativeRecord=false){let nodes=0;const ancestors=new Set();function copy(v,depth,at){
  need(++nodes<=1000000&&depth<=40,'RAW_LIMIT');if(v===undefined)return['undefined'];if(v===null)return['null'];
  if(typeof v==='boolean'||typeof v==='string'){if(typeof v==='string')need(v.length<=1048576,'RAW_LIMIT');return[typeof v,v];}
  if(typeof v==='number'){need(Number.isFinite(v),'RAW_NUMBER');return['number',Object.is(v,-0)?'-0':String(v)];}
- need(typeof v==='object'&&!isProxy(v)&&!ancestors.has(v),'RAW_INVALID');const array=Array.isArray(v),proto=Object.getPrototypeOf(v),keys=Reflect.ownKeys(v);
+ need(typeof v==='object'&&!isProxy(v)&&!ancestors.has(v),'RAW_INVALID');
+ // WHY: a freshly installed native record carries this one Date until persistence.
+ // Keep the reviewed native-origin tag; all other fields/arguments remain raw515.
+ if(nativeRecord&&isDate(v)){need(at.length===2&&at[0]==='attributes'&&at[1]==='installTime'&&Reflect.ownKeys(v).length===0,'RAW_DATE_PATH');const milliseconds=Date.prototype.getTime.call(v);need(Number.isFinite(milliseconds),'RAW_DATE_INVALID');return['native-install-date',String(milliseconds)];}
+ const array=Array.isArray(v),proto=Object.getPrototypeOf(v),keys=Reflect.ownKeys(v);
  need(array?proto===Array.prototype:proto===Object.prototype||proto===null,'RAW_PROTO');need(keys.length<=100001,'RAW_LIMIT');need(keys.every(k=>typeof k==='string'),'RAW_SYMBOL');
  if(array)need(keys.length===v.length+1&&keys.every(k=>k==='length'||/^(0|[1-9][0-9]*)$/.test(k)&&Number(k)<v.length),'RAW_ARRAY');
- ancestors.add(v);const rows=[];for(const key of keys.filter(k=>!array||k!=='length').sort()){const d=Object.getOwnPropertyDescriptor(v,key);need(d&&Object.hasOwn(d,'value')&&d.enumerable,'RAW_DESCRIPTOR');rows.push([key,copy(d.value,depth+1)]);}ancestors.delete(v);return[array?'array':'object',rows];
- }return copy(input,0);}
+ ancestors.add(v);const rows=[];for(const key of keys.filter(k=>!array||k!=='length').sort()){const d=Object.getOwnPropertyDescriptor(v,key);need(d&&Object.hasOwn(d,'value')&&d.enumerable,'RAW_DESCRIPTOR');rows.push([key,copy(d.value,depth+1,at.concat(key))]);}ancestors.delete(v);return[array?'array':'object',rows];
+ }return copy(input,0,[]);}
 const hashEncoded=v=>crypto.createHash('sha256').update(JSON.stringify(v)).digest('hex'),digest=v=>hashEncoded(encode(v));
 function field(o,k){need(o&&typeof o==='object'&&!Array.isArray(o)&&!isProxy(o)&&[Object.prototype,null].includes(Object.getPrototypeOf(o)),'RECORD_INVALID');const d=Object.getOwnPropertyDescriptor(o,k);need(!d||d.enumerable&&Object.hasOwn(d,'value'),'ACCESSOR_REFUSED');return d?.value;}
 function encodedField(encoded,key){return encoded[1].find(row=>row[0]===key)?.[1];}
 const fields=encoded=>encoded?.[0]==='object'?encoded[1].map(([key,value])=>({keyDigest:digest(key),valueDigest:hashEncoded(value)})):[];
 function project(modId,record,baselineOrder){
- const encoded=encode(record),recordDigest=hashEncoded(encoded),rulesValue=encodedField(encoded,'rules'),attributes=encodedField(encoded,'attributes');
+ const encoded=encode(record,true),recordDigest=hashEncoded(encoded),rulesValue=encodedField(encoded,'rules'),attributes=encodedField(encoded,'attributes');
  const rules={present:rulesValue!==undefined,type:rulesValue===undefined?'absent':rulesValue[0]};let baselineRuleOrder=baselineOrder?{matched:false}:undefined;
  if(rulesValue?.[0]==='array'){
   const count=rulesValue[1].length;need(count<=4096,'RULE_LIMIT');const byIndex=new Map(rulesValue[1]);

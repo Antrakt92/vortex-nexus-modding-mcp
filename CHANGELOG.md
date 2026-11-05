@@ -21,6 +21,10 @@ embedded Vortex adapter's compatibility label.
 
 ## Unreleased
 
+- Fix `read_mod_record_fingerprints` rejecting newly installed mods whose
+  `attributes.installTime` is a native Date. Existing persisted timestamp hashes
+  remain unchanged; the tool still returns hashes only.
+
 - Refresh the reviewed Far Cry 6 extension source pins from 1.2.2 to 1.2.3.
   This admits its browser popup change without disabling support for other games
   or relaxing source checks for Cyberpunk installation.
