@@ -190,6 +190,8 @@ function createOperations(api, actions, selectors, options = {}) {
   const sanitize = (value, kind) => safe(value, api, kind, options.credentials || []);
   const check = args => assertContext(api, selectors, args, options.stopped || stopped);
   const catalog = options.catalog;
+  // The facade captures this request's guard; its controller/observations are
+  // retained per native API + receipts path inside native-dialog-operations.
   let nativeDialogs;
   const dialogs = () => nativeDialogs ||= require('./native-dialog-operations.cjs').createNativeDialogOperations(api, selectors, {
     receipts: dir, checkContext: check, commitCompletion,

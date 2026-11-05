@@ -15,6 +15,12 @@ never choose Update all profiles or remember an answer.
    `read_native_dialog_operation` with the original request ID before considering
    another operation.
 
+The observed question survives separate MCP HTTP requests within the same Vortex
+process and receipts workspace. Each request still uses fresh source/context
+checks and its current mutation guard. Concurrent reads/responses refuse while a
+dialog action is pending. Restarting Vortex requires a new observation; existing
+attempts and control receipts still prevent replay.
+
 Cancel is an abort-only control. It uses its own control journal and can answer a
 question while an earlier operation's global interlock is retained. It does not
 remove that interlock or claim the failed installation has been reconciled.
