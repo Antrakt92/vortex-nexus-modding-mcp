@@ -10,6 +10,13 @@
     "scope": "Reuses the previously reviewed source ledger for the official host and known extension sources; current hashes must still match before installation.",
     "limitations": "Executable source inventory excludes node_modules and .git. Admission requires the reviewed source closure and actual loaded identities; hashes alone do not approve unknown code.",
     "excludedOwnAdapter": "vortex-agent is admitted separately using verified installation provenance.",
+    "farcry6123Review": {
+      "reviewedAtUTC": "2026-11-05",
+      "version": "1.2.3",
+      "comparison": "Compared retained 1.2.2 sources matching the old admission pins to installed 1.2.3 and its retained archive. index.js changes only its version/date header. base_browser.js changes browser popup routing to notify before opening offsite pages. Installer and extractor behavior is unchanged.",
+      "executableClosure": ["index.js", "base_browser.js", "fcmodding_browser.js", "fcmodding_downloader.js"],
+      "externalImports": "Unchanged host-provided imports. No new executable import or cross-game lifecycle hook. Exact source hashes remain mandatory."
+    },
     "cyberpunkSupport0132Review": {
       "reviewedAtUTC": "2026-11-05",
       "author": "Black Tree Gaming Ltd.",
@@ -1311,7 +1318,7 @@
       "files": [
         {
           "path": "base_browser.js",
-          "sha256": "7a2c7d1c99a829e2bc421dbcc1f54917009e8cb0529775b20cb3a5757d830eb7"
+          "sha256": "5687de8e84348ee4e2a23dfbc3b8371bf13b53c641422ec5456aa2e9d3a785cf"
         },
         {
           "path": "fcmodding_browser.js",
@@ -1323,7 +1330,7 @@
         },
         {
           "path": "index.js",
-          "sha256": "16af0f94ae2a57ee7fe0cd3eef13278fbfd5b2d13a9c40b8c4b0f37dedf6dd09"
+          "sha256": "656c1216a98c5fa2a06b999b4f509b980d879e6c1f06e4c57c18e45dc9407121"
         }
       ]
     }

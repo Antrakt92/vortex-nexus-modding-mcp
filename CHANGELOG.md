@@ -21,6 +21,10 @@ embedded Vortex adapter's compatibility label.
 
 ## Unreleased
 
+- Refresh the reviewed Far Cry 6 extension source pins from 1.2.2 to 1.2.3.
+  This admits its browser popup change without disabling support for other games
+  or relaxing source checks for Cyberpunk installation.
+
 - Admit the reviewed Cyberpunk Support 0.13.2 executable on official Vortex
   2.9.1, alongside the existing 0.13.1 source pin. Unknown versions and changed
   executable bytes still refuse local installation.

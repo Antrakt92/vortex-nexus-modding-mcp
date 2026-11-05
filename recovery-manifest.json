@@ -40,7 +40,7 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256_lf": "d7c2348d0d81f6b9e2cdbe9335ff8f2c451354cfd4f6dedfc0d9a6689b42c63d"
+      "sha256_lf": "22c99e18ac50c9d10a59705dae10efbf51d7321aec9d8bbaf2a40c2613cf46c9"
     },
     {
       "path": "CONTRIBUTING.md",
@@ -1124,7 +1124,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/local-install-binding.test.mjs",
-      "sha256_lf": "30503e19b1f688fedd461fcb4305bcc9b32e336b8518e6fbd99a87e5cd3fdaf4"
+      "sha256_lf": "bab0df759b8b2dbb30c2abb52e14553fa9a24676031dfb7efdaa39f6753214f8"
     },
     {
       "path": "tools/modding/vortex-agent/local-install-host.cjs",
@@ -3196,7 +3196,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/stock-vortex-2.9.1-admission.json",
-      "sha256_lf": "acba5452348ea6c31c02444b35a7c8d2ef081e343abc3536ff556c1384d90c86"
+      "sha256_lf": "5d602e903ed38dd492418a6ac91eb71d1ae1eb86d59d2a6a8fdd4382d5d25001"
     },
     {
       "path": "tools/modding/vortex-agent/strict-json.cjs",

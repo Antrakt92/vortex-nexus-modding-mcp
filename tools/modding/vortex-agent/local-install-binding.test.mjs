@@ -70,6 +70,18 @@ test('authentic host hash from another path cannot attest the running package', 
   assert.equal(f.calls.length, 0);
 });
 
+test('reviewed Far Cry 6 1.2.3 retains its complete executable closure', async () => {
+  const f = fixture();
+  f.loaded.push({ dynamic: true, path: path.resolve('fixture-user/plugins/farcry6') });
+  await f.read()();
+  assert.deepEqual(f.calls[0].expected.dynamic.at(-1).files, [
+    { path: 'base_browser.js', sha256: '5687de8e84348ee4e2a23dfbc3b8371bf13b53c641422ec5456aa2e9d3a785cf' },
+    { path: 'fcmodding_browser.js', sha256: 'c3bf2888cfc23979c40e29c09c1fb93cd5cfbdd92aa78bb35e36adb7b7b85066' },
+    { path: 'fcmodding_downloader.js', sha256: '28fff91b8fa4577d1ebbae5b27bbe466d3686559c4392f729879248484be818c' },
+    { path: 'index.js', sha256: '656c1216a98c5fa2a06b999b4f509b980d879e6c1f06e4c57c18e45dc9407121' },
+  ]);
+});
+
 test('internal binding cannot authorize an unreviewed official-host generation', async () => {
   const f = fixture();
   await assert.rejects(f.read({ packagePath: path.join(path.dirname(f.app), 'resources/app.asar'), expected: {
