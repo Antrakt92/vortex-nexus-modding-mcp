@@ -912,7 +912,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/extension-collection-wizard.test.cjs",
-      "sha256_lf": "0d347969474167481d3c1312bf6791d2ee9352bf28160832634a9801b835169d"
+      "sha256_lf": "e281ddf7031110f67caec7a3e2db50df135dddf6f7ce313462ca71d145bfd1f0"
     },
     {
       "path": "tools/modding/vortex-agent/extension.cjs",
