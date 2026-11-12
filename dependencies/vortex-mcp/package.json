@@ -33,15 +33,15 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
-    "@nexusmods/vortex-api": "2.9.1",
+    "@nexusmods/vortex-api": "2.10.1",
     "@types/node": "24.19.2",
-    "oxfmt": "0.75.0",
-    "oxlint": "1.90.0",
+    "oxfmt": "0.77.0",
+    "oxlint": "1.92.0",
     "redux": "4.2.1",
     "tsup": "9.0.0",
     "typescript": "7.0.2",
-    "vite": "8.3.5",
-    "vitest": "5.0.5"
+    "vite": "8.3.6",
+    "vitest": "5.1.0"
   },
   "engines": {
     "node": "^24.11.0 || >=26.0.0"
