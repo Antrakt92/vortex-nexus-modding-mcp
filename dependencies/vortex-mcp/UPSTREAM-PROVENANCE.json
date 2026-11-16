@@ -49,7 +49,7 @@
     },
     {
       "path": "pnpm-lock.yaml",
-      "reason": "Regenerate with pnpm9.15, patched packages and no automatic host-peer installation."
+      "reason": "Generate with pinned pnpm, reviewed dependency updates and no automatic host-peer installation."
     },
     {
       "path": "src/mcpServer.ts",
@@ -87,14 +87,14 @@
     ".releaserc.json": "07080d1c204b83d925980f26c4388f2e6d96668b9da6ce16cc07426f1ffa952c",
     "ARCHITECTURE.md": "ab9c7c948da5346b0216ed6d2c2c1c34b60213c6dd06d2c1d039727a219e5edc",
     "LICENSE.md": "3c61a4b99007718626612c474991852b9428a3d4ed27a77e46b42fdfb80f896f",
-    "LOCAL-CHANGES.md": "c48bfa3e05904fb3f7b3c7866529838be237a776b9a5e00199f9cd45dc27ae50",
+    "LOCAL-CHANGES.md": "4990fb1571cec6499f01c57719458f18891497ec48913c60c5b4558eb0e5e221",
     "NEXUS_DESCRIPTION.bbcode": "caddcb4c08e56f90105b137eaa67ba4d626702f7a949c278ee47d218c3ede318",
     "PNPM-BOOTSTRAP.json": "4a2d8f2bb0fb70755b4f0ff8e684c6a108da526177a45e6b3f5aa7c19e8c1205",
     "README.md": "85cd1d093053bdc2d87310ddbbb2654c1ea1e4d97a42be43e2e5ec4861276e38",
     "THIRD-PARTY-NOTICES.md": "3ca358fc0e142317b9458f9dc7614cb9696918d26de2ce37b8c53fe0fe4c52ba",
     "info.json": "1f5248540d472cab8a5db09b00b7b8f727b737c9401e3c9fbcb2e45206611441",
-    "package.json": "6f1e7b4394815d489a4a0b6ef1b1e666903443836df36967c90290b9dad2d44c",
-    "pnpm-lock.yaml": "d078d4166b753571ffc6f751be28f91a8008b258edfb291a5b2ac444d993436f",
+    "package.json": "cab651b2f52dfd3025e6582dddcf829004a33f038c2eea238c7f907694bc2323",
+    "pnpm-lock.yaml": "51b134acf93dc58227b9e60f8ebdac254a4d3822c5514b2d568ca32a16796ade",
     "scripts/generate-readme-tools-table.mjs": "5b21e96b2e1a7f075df71efb5e90d17e6745175f4f4e394ba7120d65bc638c18",
     "scripts/install-local.mjs": "8f22ee0d9f55c7f4c526149a9ff9a6ec5594554612e3313d5c8af0e43955e634",
     "src/index.ts": "1fe71d6b654b7fb2da70052ba73998e157be219874fb2fe1c3a7257962fc10e7",
@@ -144,7 +144,7 @@
     "vitest.config.ts",
     "scripts/check-source.mjs"
   ],
-  "acceptedSourceTreeSHA256": "f5d6ca3065dabd097e954ec1f718bfbaec275611de0a9c2857100a39ed0ce5af",
+  "acceptedSourceTreeSHA256": "0b23b5b5010e76fd05980eb8479f10e88da6cee80f6b9068958898a8a5af2177",
   "runtimeLicenses": {
     "zod@4.6.7": "MIT",
     "@modelcontextprotocol/server@2.4.0": "Apache-2.0",

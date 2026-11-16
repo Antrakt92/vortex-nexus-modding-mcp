@@ -17,6 +17,10 @@ extension is not the installed product.
   than exposing Node 26 APIs. The Vortex API declarations remain 2.9.1, with
   Redux 4.2.1 retained to satisfy that package's exact peer requirement.
   Tinypool's override advances to 2.2.0, the formatter's own required version.
+- The 16 November development refresh sets oxfmt 0.78.0, oxlint 1.93.0,
+  Vite 8.3.8 and Vitest 5.1.0. Vite now uses Rolldown 1.2.19. The optional
+  WASI binding and its beta dependencies are outside the Windows x64 build.
+  The guarded adapter's runtime dependency pins are unchanged.
 - The new `scripts/check-source.mjs` passes the reviewed inventory as explicit
   file arguments to Oxc. Newer directory traversal respects parent Git ignores,
   which otherwise skips the entire isolated build under `local-state/`.
