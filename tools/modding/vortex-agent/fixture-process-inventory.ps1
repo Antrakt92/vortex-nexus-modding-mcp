@@ -1,4 +1,5 @@
 # Read-only: no WMI, command lines, windows, messages, or process termination.
+param([switch]$AllowEmpty, [uint32]$ExpectedMainPid = 0)
 $ErrorActionPreference = 'Stop'
 if (-not ('FixtureProcessInventory.NativeInventory' -as [type])) {
   Add-Type -TypeDefinition @'
@@ -23,6 +24,41 @@ namespace FixtureProcessInventory {
     public ProcessIdentity[] Processes;
   }
   public static class NativeInventory {
+    public sealed class OwnedCohortChanged : Exception { }
+    static void VerifyOwnedCohort(Dictionary<uint, uint> cohort, uint expectedMainPid) {
+      if (expectedMainPid == 0) return;
+      foreach (uint id in cohort.Keys) {
+        uint current = id, parent;
+        var visited = new HashSet<uint>();
+        while (current != expectedMainPid) {
+          if (!visited.Add(current) || !cohort.TryGetValue(current, out parent))
+            throw new InvalidOperationException("Unexpected Vortex cohort root");
+          current = parent;
+        }
+      }
+      if (cohort.ContainsKey(expectedMainPid) && cohort.ContainsKey(cohort[expectedMainPid]))
+        throw new InvalidOperationException("Unexpected fixture parent");
+    }
+    static bool SameCohort(Dictionary<uint, uint> first, Dictionary<uint, uint> second) {
+      if (first.Count != second.Count) return false;
+      foreach (var pair in first) {
+        uint parent;
+        if (!second.TryGetValue(pair.Key, out parent) || parent != pair.Value) return false;
+      }
+      return true;
+    }
+    static void RequireCohort(Dictionary<uint, uint> first, uint expectedMainPid) {
+      var current = Cohort();
+      VerifyOwnedCohort(current, expectedMainPid);
+      if (SameCohort(first, current)) return;
+      if (expectedMainPid != 0) throw new OwnedCohortChanged();
+      throw new InvalidOperationException("Vortex cohort changed");
+    }
+    static void VerifyProcessPresent(Process process, Dictionary<uint, uint> first, uint expectedMainPid) {
+      if (!process.HasExited) return;
+      RequireCohort(first, expectedMainPid);
+      throw new InvalidOperationException("Vortex process exited");
+    }
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     struct Entry {
       public uint dwSize, cntUsage, th32ProcessID;
@@ -57,51 +93,75 @@ namespace FixtureProcessInventory {
       }
       return result;
     }
-    public static Inventory Read() {
+    public static Inventory Read(bool allowEmpty, uint expectedMainPid) {
       const string expected = @"C:\Program Files\Vortex\Vortex.exe";
       var first = Cohort();
-      if (first.Count == 0) throw new InvalidOperationException("No Vortex cohort observed");
+      VerifyOwnedCohort(first, expectedMainPid);
+      if (first.Count == 0 && !allowEmpty) throw new InvalidOperationException("No Vortex cohort observed");
       var held = new List<Process>();
       var rows = new List<ProcessIdentity>();
       try {
         foreach (var pair in first) {
-          var process = Process.GetProcessById(checked((int)pair.Key)); held.Add(process);
-          var handle = process.Handle; // Retain native generation until all validation finishes.
-          if (process.HasExited) throw new InvalidOperationException("Vortex cohort changed");
-          string executable = process.MainModule.FileName;
+          Process process;
+          string executable, startTicks;
+          try {
+            process = Process.GetProcessById(checked((int)pair.Key)); held.Add(process);
+            var handle = process.Handle; // Retain native generation until all validation finishes.
+            VerifyProcessPresent(process, first, expectedMainPid);
+            executable = process.MainModule.FileName;
+            startTicks = process.StartTime.ToUniversalTime().Ticks.ToString();
+          } catch (Exception error) {
+            // A failed open/read by itself provides no exit proof.
+            if (expectedMainPid != 0 && (error is ArgumentException || error is InvalidOperationException || error is Win32Exception)) {
+              var current = Cohort();
+              VerifyOwnedCohort(current, expectedMainPid);
+              if (!current.ContainsKey(pair.Key)) throw new OwnedCohortChanged();
+            }
+            throw;
+          }
           if (!String.Equals(executable, expected, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Unexpected Vortex executable");
           rows.Add(new ProcessIdentity { ProcessId = pair.Key, ParentProcessId = pair.Value,
-            ExecutablePath = executable, StartTicks = process.StartTime.ToUniversalTime().Ticks.ToString(),
-            IsMain = !first.ContainsKey(pair.Value) });
+            ExecutablePath = executable, StartTicks = startTicks, IsMain = !first.ContainsKey(pair.Value) });
         }
-        var second = Cohort();
-        if (first.Count != second.Count) throw new InvalidOperationException("Vortex cohort changed");
-        foreach (var pair in first) {
-          uint parent;
-          if (!second.TryGetValue(pair.Key, out parent) || parent != pair.Value)
-            throw new InvalidOperationException("Vortex parent cohort changed");
-        }
+        RequireCohort(first, expectedMainPid);
         // Independently enumerate .NET cohort; do not accept disagreement.
         var dotnet = Process.GetProcessesByName("Vortex");
         try {
-          if (dotnet.Length != first.Count) throw new InvalidOperationException("Vortex enumeration disagreement");
-          foreach (var process in dotnet) if (!first.ContainsKey(checked((uint)process.Id)))
+          var dotnetIds = new HashSet<uint>();
+          foreach (var process in dotnet) dotnetIds.Add(checked((uint)process.Id));
+          if (!dotnetIds.SetEquals(first.Keys)) {
+            if (expectedMainPid != 0) {
+              var current = Cohort();
+              VerifyOwnedCohort(current, expectedMainPid);
+              bool known = true;
+              foreach (var id in dotnetIds) if (!first.ContainsKey(id) && !current.ContainsKey(id)) known = false;
+              if (known && !SameCohort(first, current)) throw new OwnedCohortChanged();
+            }
             throw new InvalidOperationException("Vortex enumeration disagreement");
+          }
         } finally { foreach (var process in dotnet) process.Dispose(); }
         uint main = 0; int mains = 0;
         foreach (var row in rows) {
           if (row.IsMain) { main = row.ProcessId; mains++; }
           var process = held.Find(p => p.Id == row.ProcessId);
           process.Refresh();
-          if (process.HasExited || process.StartTime.ToUniversalTime().Ticks.ToString() != row.StartTicks
-            || !String.Equals(process.MainModule.FileName, row.ExecutablePath, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Vortex generation changed");
+          try {
+            VerifyProcessPresent(process, first, expectedMainPid);
+            if (process.StartTime.ToUniversalTime().Ticks.ToString() != row.StartTicks
+              || !String.Equals(process.MainModule.FileName, row.ExecutablePath, StringComparison.OrdinalIgnoreCase))
+              throw new InvalidOperationException("Vortex generation changed");
+          } catch (Win32Exception) {
+            RequireCohort(first, expectedMainPid);
+            throw;
+          }
           ProcessIdentity parent = rows.Find(p => p.ProcessId == row.ParentProcessId);
           if (parent != null && Int64.Parse(parent.StartTicks) > Int64.Parse(row.StartTicks))
             throw new InvalidOperationException("Vortex parent generation changed");
         }
-        if (mains < 1) throw new InvalidOperationException("Vortex root unavailable");
+        if (expectedMainPid != 0 && rows.Count > 0 && (mains != 1 || main != expectedMainPid))
+          throw new OwnedCohortChanged();
+        if (mains < 1 && (!allowEmpty || rows.Count != 0)) throw new InvalidOperationException("Vortex root unavailable");
         rows.Sort((a, b) => a.ProcessId.CompareTo(b.ProcessId));
         return new Inventory { Count = rows.Count, Processes = rows.ToArray() };
       } finally { foreach (var process in held) process.Dispose(); }
@@ -111,6 +171,14 @@ namespace FixtureProcessInventory {
 '@
 }
 # Only emit after the complete snapshot and independent generation checks succeed.
-$inventory = [FixtureProcessInventory.NativeInventory]::Read()
+try {
+  $inventory = [FixtureProcessInventory.NativeInventory]::Read($AllowEmpty.IsPresent, $ExpectedMainPid)
+} catch {
+  if ($_.Exception.InnerException -is [FixtureProcessInventory.NativeInventory+OwnedCohortChanged]) {
+    [Console]::Error.WriteLine('FIXTURE_PROCESS_COHORT_CHANGED')
+    exit 75
+  }
+  throw
+}
 Import-Module ($PSHOME + '\Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1') -ErrorAction Stop
 $inventory | Microsoft.PowerShell.Utility\ConvertTo-Json -Compress -Depth 5

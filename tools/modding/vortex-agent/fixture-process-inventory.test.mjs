@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const source = fs.readFileSync(new URL('./native-fixture.mjs', import.meta.url), 'utf8');
-const reader = source.slice(source.indexOf('function processes()'), source.indexOf('function crc32('));
+const reader = source.slice(source.indexOf('function processes('), source.indexOf('function crc32('));
 const row = (ProcessId = 100, ParentProcessId = 20, IsMain = true, StartTicks = '639000000000000000') =>
   ({ ProcessId, ParentProcessId, ExecutablePath: 'C:\\Program Files\\Vortex\\Vortex.exe', StartTicks, IsMain });
 const envelope = rows => ({ Schema: 'fixture-process-inventory/1', Complete: true, Count: rows.length, Processes: rows });
@@ -77,4 +77,51 @@ test('opt-in actual read-only stock Vortex inventory', {skip: process.platform !
   const f = fixture(spawnSync, process.env), rows = f.processes();
   assert.ok(rows.some(row => row.type === ''));
   assert.ok(rows.every(row => Object.keys(row).sort().join(',') === 'exe,generation,parent,pid,type'));
+});
+
+test('complete zero-process inventory requires explicit stopped-ordinary admission', () => {
+  const f = fixture(() => good([]));
+  assert.throws(() => f.processes(), /FIXTURE_PROCESS_LIST_UNVERIFIABLE/);
+  assert.equal(f.processes(true).length, 0);
+  assert.equal(f.calls.at(-1)[1].at(-1), '-AllowEmpty');
+});
+
+test('only exact owned-cohort churn status is eligible for a bounded resample', () => {
+  const churn = { ...good([]), status: 75, stdout: '', stderr: 'FIXTURE_PROCESS_COHORT_CHANGED\r\n' };
+  const f = fixture(() => churn);
+  assert.throws(() => f.processes(true), /FIXTURE_PROCESS_LIST_UNVERIFIABLE/);
+  assert.throws(() => f.processes(true, 100), /FIXTURE_PROCESS_COHORT_CHANGED/);
+  assert.deepEqual(Array.from(f.calls.at(-1)[1]).slice(-3), ['-AllowEmpty', '-ExpectedMainPid', '100']);
+  for (const result of [{ ...churn, stderr: 'access denied' }, { ...churn, stdout: '{}' }, { ...churn, status: 1 }]) {
+    assert.throws(() => fixture(() => result).processes(true, 100), /FIXTURE_PROCESS_LIST_UNVERIFIABLE/);
+  }
+});
+
+test('resampling is capped at three and never retries a foreign or unverified cohort', async () => {
+  const observeSource = source.slice(source.indexOf('async function observeFixtureCohort('),
+    source.indexOf('async function stoppedSnapshot('));
+  const run = failures => {
+    let count = 0;
+    const observe = vm.runInNewContext(observeSource + '; observeFixtureCohort', {
+      setTimeout: resolve => resolve(),
+      processes: (allowEmpty, expectedPid) => {
+        assert.equal(allowEmpty, true);
+        assert.equal(expectedPid, 100);
+        const failure = failures[count++];
+        if (failure) throw Error(failure);
+        return [];
+      },
+    });
+    return { outcome: observe(100), calls: () => count };
+  };
+  const churn = 'FIXTURE_PROCESS_COHORT_CHANGED';
+  const settles = run([churn, churn]);
+  assert.equal((await settles.outcome).length, 0);
+  assert.equal(settles.calls(), 3);
+  const exhausts = run([churn, churn, churn]);
+  await assert.rejects(exhausts.outcome, /FIXTURE_PROCESS_COHORT_CHANGED/);
+  assert.equal(exhausts.calls(), 3);
+  const refuses = run(['FIXTURE_PROCESS_LIST_UNVERIFIABLE', churn]);
+  await assert.rejects(refuses.outcome, /FIXTURE_PROCESS_LIST_UNVERIFIABLE/);
+  assert.equal(refuses.calls(), 1);
 });

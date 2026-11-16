@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import path from 'node:path';
-import { ORDINARY_MOD_LIMIT, assertOrdinaryModSnapshot, ordinaryProcessesPreserved } from './native-fixture-snapshot.mjs';
+import { ORDINARY_MOD_LIMIT, assertOrdinaryModSnapshot, ordinaryProcessesPreserved, stoppedOrdinaryCohort } from './native-fixture-snapshot.mjs';
 
 test('ordinary process preservation rejects PID reuse, missing generations and changed identities', () => {
   const row = {pid:123,parent:1,exe:'C:/Vortex.exe',type:'',generation:'639000000000000000'};
@@ -60,4 +60,17 @@ test('a capped legacy receipt is also refused by the independent verifier', () =
         mods: Array.from({ length: ORDINARY_MOD_LIMIT }, (_, index) => ({ id: 'mod_' + index })) } : complete };
     assert.throws(() => vm.runInNewContext(code, context), /ORDINARY_MOD_INVENTORY_INCOMPLETE/);
   }
+});
+
+test('stopped ordinary admits only no host or the separately spawned fixture cohort', () => {
+  const main = { pid: 100, type: '' };
+  const helper = { pid: 101, type: 'helper' };
+  const unexpected = { pid: 200, type: '' };
+  assert.equal(stoppedOrdinaryCohort([]), true);
+  assert.equal(stoppedOrdinaryCohort([], 100), false);
+  assert.equal(stoppedOrdinaryCohort([main]), false);
+  assert.equal(stoppedOrdinaryCohort([main, helper], 100), true);
+  assert.equal(stoppedOrdinaryCohort([main, unexpected], 100), false);
+  assert.equal(stoppedOrdinaryCohort([unexpected], 100), false);
+  assert.equal(stoppedOrdinaryCohort(null), false);
 });

@@ -180,7 +180,7 @@ async function run(api) {
       dynamic: [
         ...(input.dynamicSources || []).filter(e => ![__dirname, path.join(input.userData, 'plugins/fixture-cyberpunk-support')].includes(e.path)),
         { path: __dirname, files: [{ path: 'index.js', sha256: sha(__filename) }, { path: 'runtime.cjs', sha256: input.runtimeSourceSha256 }] },
-        { path: path.join(input.userData, 'plugins/fixture-cyberpunk-support'), files: [{ path: 'index.js', sha256: '59d7d12179f30b2e77cab28bb5d417479e5f39269e9ce71e49ea5fac5782269a' }] },
+        { path: path.join(input.userData, 'plugins/fixture-cyberpunk-support'), files: [{ path: 'index.js', sha256: input.supportIndexSha256 || '59d7d12179f30b2e77cab28bb5d417479e5f39269e9ce71e49ea5fac5782269a' }] },
       ],
     } };
     listener = bundle.start(api, 3702, { tokenProvider: async () => token, localInstallHostBinding: sourceBinding });
@@ -188,6 +188,16 @@ async function run(api) {
     const health = await rpc(token, 'health');
     must(health.extensionVersion === input.runtimeVersion, 'FIXTURE_RUNTIME_VERSION_MISMATCH');
     note('authenticated-native-health', { health, listenerPort: 3702 });
+    if (input.installRoute === 'mcp-local-archive' && input.supportIndexSha256) {
+      const readiness = await rpc(token, 'read_local_install_readiness');
+      must(readiness.localArchiveInstallSupported === true && readiness.sourceAdmissionVerified === true
+        && readiness.hostVersion === '2.9.1', 'FIXTURE_INSTALL_READINESS_NOT_VERIFIED');
+      note('authenticated-local-install-readiness', { readiness });
+      const collectionHealth = await rpc(token, 'read_collection_health');
+      must(health.gameId === G && health.profileId === P && collectionHealth.collectionSession?.available === true
+        && collectionHealth.collectionSession.present === false, 'FIXTURE_COLLECTION_CONTEXT_MISMATCH');
+      note('authenticated-collection-health', { collectionHealth });
+    }
     const target = contained(path.join(input.game, input.payloadPath));
     must(sha(target) === input.sentinelSha256, 'SENTINEL_BASELINE_MISMATCH');
     let existingBaseline;

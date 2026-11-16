@@ -21,3 +21,13 @@ export function assertOrdinaryModSnapshot(mods) {
   if (mods.length >= ORDINARY_MOD_LIMIT)
     throw Error('ORDINARY_MOD_INVENTORY_INCOMPLETE');
 }
+
+
+// The empty inventory is admitted explicitly by the complete native process reader.
+export function stoppedOrdinaryCohort(rows, fixturePid) {
+  if (!Array.isArray(rows)) return false;
+  if (!rows.length) return fixturePid === undefined;
+  return Number.isSafeInteger(fixturePid) && fixturePid > 0
+    && rows.filter(row => row.type === '').length === 1
+    && rows.some(row => row.type === '' && row.pid === fixturePid);
+}
