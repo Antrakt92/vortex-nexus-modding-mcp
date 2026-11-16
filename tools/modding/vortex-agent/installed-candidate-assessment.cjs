@@ -192,9 +192,12 @@ function capture(api, selectors, args) {
     snapshot.profiles.push(row);
   }
   const collection = snapshot.mods[args.collectionModId];
-  need(collection?.state === 'installed' && collection.type === 'collection'
-    && positive(collection.attributes.collectionId) && positive(collection.attributes.revisionId)
-    && (collection.attributes.revisionNumber === undefined || positive(collection.attributes.revisionNumber)), 'COLLECTION_INVALID');
+  need(collection?.state === 'installed' && collection.type === 'collection', 'COLLECTION_INVALID');
+  const {collectionId, revisionId, revisionNumber} = collection.attributes;
+  const hasNoRevision = collectionId === undefined && revisionId === undefined && revisionNumber === undefined;
+  const hasNexusRevision = positive(collectionId) && positive(revisionId)
+    && (revisionNumber === undefined || positive(revisionNumber));
+  need(hasNoRevision || hasNexusRevision, 'COLLECTION_INVALID');
   return snapshot;
 }
 
@@ -356,7 +359,7 @@ function runAssessment(api, selectors, util, args) {
     status: comparisons.some(row => row.status === 'insufficient_evidence' || row.reasons.some(reason =>
       !['TARGET_TYPE_MISMATCH', 'CANDIDATE_IDENTITY_CONFLICT', 'CANDIDATE_INSTALL_SPEC_CONFLICT'].includes(reason))) ? 'partial' : 'ok',
     gameId: args.gameId, profileId: args.profileId, collection: {modId: args.collectionModId,
-      collectionId: collection.attributes.collectionId, revisionId: collection.attributes.revisionId,
+      collectionId: collection.attributes.collectionId ?? null, revisionId: collection.attributes.revisionId ?? null,
       revisionNumber: collection.attributes.revisionNumber ?? null}, metadataOnly: true, effectsAllowed: false,
     migrationReady: false, diskDeploymentVerified: false, limits: {...LIMITS}, counts, comparisons};
   need(Buffer.byteLength(JSON.stringify(result)) <= LIMITS.responseBytes, 'READ_LIMIT');

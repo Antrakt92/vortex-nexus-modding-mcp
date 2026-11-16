@@ -168,7 +168,7 @@ if (input.candidateAssessment) {
   assert.equal(provenance.sources['installed-candidate-assessment.cjs'], input.candidateAssessmentSourceSha256);
   assert.equal(provenance.pluginSha256, input.runtimeSourceSha256);
   assert.equal(hash(path.join(root, 'userdata/plugins/native-agent-fixture/runtime.cjs')), input.runtimeSourceSha256);
-  assert.equal(setup.records.length, 8); assert.deepEqual(finished.records, setup.records);
+  assert.equal(setup.records.length, 9); assert.deepEqual(finished.records, setup.records);
   assert.deepEqual(finished.preserved, setup.preserved);
   assert.deepEqual(finished.secondProfile, { ...setup.secondProfile, pendingRemove: true });
   assert.equal(setup.secondProfile.modState['native-assessment-old-vanilla'].enabled, true);
@@ -192,15 +192,19 @@ if (input.candidateAssessment) {
   for (const record of setup.records) assert.equal(fs.existsSync(path.join(input.stage, record.installationPath)), false,
     'Metadata fixture must not masquerade as installed disk payload');
   const rows = {};
-  for (const name of ['vanilla', 'exact-conflict', 'choices', 'ignored', 'pending-profile']) {
+  for (const name of ['vanilla', 'local-collection', 'exact-conflict', 'choices', 'ignored', 'pending-profile']) {
     const observed = event('candidate-assessment-' + name), value = observed.result;
     assert.equal(observed.before, observed.after); assert.match(observed.before, /^[a-f0-9]{64}$/);
     assert.equal(observed.dispatches, 0); assert.equal(observed.nativeEffects, 0);
     assert.equal(observed.args.gameId, 'cyberpunk2077'); assert.equal(observed.args.profileId, 'native-agent-fixture');
-    assert.equal(observed.args.collectionModId, setup.collectionModId); assert.equal(observed.args.expectedRevisionId, 900002);
+    const local = name === 'local-collection';
+    assert.equal(observed.args.collectionModId, local ? setup.localCollectionId : setup.collectionModId);
+    assert.equal(observed.args.expectedRevisionId, local ? undefined : 900002);
     assert.equal(value.schema, 'installed-candidate-assessment/1'); assert.equal(value.protocol, 'vortex-agent/1');
     assert.equal(value.gameId, observed.args.gameId); assert.equal(value.profileId, observed.args.profileId);
-    assert.equal(value.collection.modId, setup.collectionModId); assert.equal(value.collection.revisionId, 900002);
+    assert.equal(value.collection.modId, observed.args.collectionModId);
+    assert.equal(value.collection.revisionId, local ? null : 900002);
+    assert.equal(value.collection.collectionId, local ? null : 900001);
     assert.equal(value.metadataOnly, true); assert.equal(value.effectsAllowed, false);
     assert.equal(value.migrationReady, false); assert.equal(value.diskDeploymentVerified, false);
     assert.ok(value.counts.matcherChecks > 0); assert.equal(value.comparisons.length, 1);
@@ -221,6 +225,8 @@ if (input.candidateAssessment) {
   assert.ok(rows.choices.incomingRequires.some(r => r.oldInstallSpecMatches === true && r.installSpecMatches === false));
   assert.equal(rows.ignored.status, 'insufficient_evidence'); assert.ok(rows.ignored.reasons.includes('IGNORED_REQUIREMENT_REVIEW_REQUIRED'));
   assert.equal(rows['pending-profile'].status, 'insufficient_evidence'); assert.ok(rows['pending-profile'].reasons.includes('PROFILE_PENDING_REMOVE'));
+  assert.equal(rows['local-collection'].status, 'insufficient_evidence');
+  assert.deepEqual(rows['local-collection'].reasons, rows['pending-profile'].reasons);
   assert.ok(rows['pending-profile'].profiles.old.some(p => p.id === setup.secondProfileId && p.pendingRemove));
   const setupIndex = receipt.events.indexOf(setup);
   assert.ok(setupIndex > receipt.events.indexOf(event('existing-mod-preserved-after-rollback')));

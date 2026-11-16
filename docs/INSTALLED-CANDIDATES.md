@@ -19,8 +19,11 @@ Start with fresh `health`, then use exact installed IDs from `list_mods`:
 ```
 
 Pass this JSON to `assess_installed_candidates` through MCP or the maintained
-bridge CLI. The active game/profile must match. The result records the observed
-collection and revision IDs; optional `expectedRevisionId` checks a known pin.
+bridge CLI. The active game/profile must match. Nexus collection and revision IDs
+are returned when present. An installed collection without revision metadata is
+identified by its exact Vortex mod ID and returns `null` for the Nexus fields.
+If a caller supplies `expectedRevisionId`, a missing or different revision
+reports `COLLECTION_REVISION_MISMATCH`.
 The candidate must already have an installed record. A downloaded archive alone
 does not establish its installer choices or installed variant.
 
