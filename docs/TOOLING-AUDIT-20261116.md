@@ -1,0 +1,17 @@
+# Tooling audit, 16 November 2026
+
+The audit started at Git commit `eb353e224b1d6bf76b5f43ea508ed5f107c96ffe`. Three independent reviews covered the Vortex adapter and its native lifecycle, Nexus research and publication, and the Windows installer, build and recovery tools. Follow-up passes reproduced changes against the old behavior, reviewed other reviewers’ fixes, and ran broader suites with the original Vortex source pins.
+
+| Area | Confirmed fixes |
+| --- | --- |
+| Bridge and plans | Reject Windows receipt ID aliases before applying a new plan, while keeping old journals readable. Stop accepting requests when the output pipe closes. Direct agents to reconcile the original request when an install response is lost or unusable. Parse SSE replies independently of packet boundaries. |
+| Vortex operations | Bound archive and installed-file verification by the observed byte count. Reuse the application source proof within the same renderer for native dialog operations and refuse drift. Reject linked or invalid receipt bytes as terminal evidence. |
+| Windows install and recovery | Publish DPAPI credentials only after a complete durable write. Refuse upgrades when the intended target has disappeared or changed, and check whether Vortex is stopped immediately before swapping. Check build inputs before rewriting package output, refuse linked outputs and confine the legacy backup. Derive recovery pins from staged Git objects and reject checkout drift and paths that alias on Windows. |
+| Nexus tools | Restrict the publication guard to the approved upload, file, version, mod and changelog, with one dispatch per reservation, finalisation, and publish step. Validate CLI paths before following them and cap local reads. Report the exact failed pristine-cache slot. |
+| Source capture and dependencies | Ignore unrelated sibling changes above the SDK source root, retaining actual directory identity and full source pins. Update only the two affected Hono dependencies and verify their licenses and provenance. |
+
+Exact upstream-source checks use the Vortex 2.9.1 Git object and independently pinned inputs. All 133 source patches applied to the 26 pinned originals. Historical startup fixtures now isolate changes by parallel tests above the owned workspace, while still checking real parent directory identity and workspace and SDK file changes. Maintained behavior was tested through the built MCP HTTP and stdio entrypoints and the unchanged Nexus upload action with modeled network replies. The native Rust process probe was built with its locked toolchain and checked against the independent JavaScript decoder.
+
+The final MCP suite passed 2,755 tests with zero failures and 131 explicit skips. The Python suites passed 316 tests, including 42 opted-in Windows custody, lease and extractor checks. The Nexus publisher's JavaScript suite passed 25 tests. The upstream dependency checkout passed its 144 tests, build, type check and lint. The isolated Rust probe passed six unit tests and two native smoke checks. Production and full registry audits returned zero known advisories for the updated dependency graph.
+
+The native source and SDK tests run against pinned source or isolated processes. Live Vortex, collection deployment, gameplay and public Nexus upload require separate acceptance. Optional scenarios that require separately built capsules, capture artifacts or other pinned fixtures are reported as skipped.

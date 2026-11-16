@@ -18,6 +18,26 @@ const levelStages=['new-mod-conflict-query','backend-write-admission','native-ba
 const mainStages=['batch-acknowledgement','target-reservation','acknowledged-packet','backend-reservation-admission','legacy-rollback-primary','native-main-sql-admission','native-main-mod-registration','native-main-tracked-mod-registration','native-main-registration-release','native-main-executor-anchor','native-main-executor-hold','native-main-executor-target','native-main-executor-terminal-window'];
 const stages=['native-query-owner-binding','native-main-readiness','native-main-anchor-binding','native-main-executor-startup','native-main-executor-genesis','native-main-executor-pending','native-main-executor-transport'];
 const integration=(name,fn)=>test(name,{timeout:15000,skip:repo?false:'Set VORTEX_EXTENSION_ADMISSION_REPO'},fn);
+
+function isolateHistoricalAncestry(io, workspace) {
+  const sharedParents = new Set();
+  for (let parent = path.dirname(workspace); !sharedParents.has(parent); parent = path.dirname(parent)) {
+    sharedParents.add(parent);
+  }
+  const fixtureIO = Object.create(io);
+  fixtureIO.lstatSync = (file, options) => {
+    const stat = io.lstatSync(file, options);
+    if (!options?.bigint || !sharedParents.has(file) || !stat.isDirectory()) return stat;
+    // Earlier Main source stages pinned mutable metadata all the way to the
+    // drive root. Unrelated writes there must stay outside this owned fixture.
+    // Keep real volume, inode and kind, and pass every owned path through.
+    return Object.create(stat, {
+      size: { value: 0n }, mtimeNs: { value: 0n }, ctimeNs: { value: 0n }, nlink: { value: 1n },
+    });
+  };
+  return fixtureIO;
+}
+
 /** Actual main/Level/Registry/pool source. SQL is an owned transactional facade;
  * Database/watcher/invalidator are initialization-only facades, not host objects. */
 export async function createTransportMainFixture(t,options={}){
@@ -85,7 +105,7 @@ export async function createTransportMainFixture(t,options={}){
     holdNativeExecutorFrame:owner=>options.frameAPI?options.frameAPI.holdNativeExecutorFrame(owner):frame.hold(owner),DuckDBSingleton:base.Singleton,QueryRegistry:base.Registry,
     QueryInvalidator:class{notifyDirtyTables(){}setWatcher(){}},Database:class{},QueryWatcher:class{},
     parseAllQueries:dir=>parsed(dir),getVortexPath:()=>workspace,setupPersistenceIPC(){},getErrorMessageOrDefault:()=>'',
-    nativeStartupFS:options.nativeFS??fs,nativeStartupHash:crypto.createHash,nativeStartupTypes:nativeRegistrationTypes,createRequire:()=>loader,
+    nativeStartupFS:isolateHistoricalAncestry(options.nativeFS??fs,workspace),nativeStartupHash:crypto.createHash,nativeStartupTypes:nativeRegistrationTypes,createRequire:()=>loader,
     __filename:fileURLToPath(import.meta.url),__NEXUS_NATIVE_RUNTIME_BINDING__:binding});
   const startup=await wiring.verifyNativeExecutorStartup(level);
   const mainBackend=options.differentBackend?new types.LevelPersist(base.backend,'db'):level;
@@ -159,6 +179,26 @@ integration('reservation uses actual captured Main prototype, never caller DTO o
  f.main.reserveNativeModPersistence=()=>assert.fail('shadow reserve');f.main.getNativeModPersistenceReservation=()=>assert.fail('diagnostic DTO');
  await f.wiring.reserveNativeExecutorTransport(ticket);f.wiring.checkNativeExecutorTransport(ticket);
  const record=f.main.mNativeModPersistenceReservation;assert.equal(record.gameId,'cyberpunk2077');assert.equal(record.modId,'own');assert.equal(record.phase,'reserved');sourceOnly(f);
+});
+integration('historical fixture ignores shared-parent timestamps but retains physical and workspace pins', async t => {
+ for (const drift of ['shared-time', 'shared-inode', 'workspace-time', 'sdk-time']) {
+  let changedPath;
+  const io = Object.create(fs);
+  io.lstatSync = (file, options) => {
+   const stat = fs.lstatSync(file, options);
+   if (file === changedPath) {
+    if (drift === 'shared-inode') stat.ino++;
+    else stat.mtimeNs++;
+   }
+   return stat;
+  };
+  const f = await createTransportMainFixture(t, { nativeFS: io });
+  const ticket = f.preflight();
+  changedPath = drift === 'sdk-time' ? f.sdk : drift === 'workspace-time' ? f.workspace : path.dirname(f.workspace);
+  if (drift === 'shared-time') assert.doesNotThrow(() => f.wiring.checkNativeExecutorTransport(ticket));
+  else assert.throws(() => f.wiring.checkNativeExecutorTransport(ticket), /NATIVE_EXECUTOR_STARTUP_HOLD/);
+  sourceOnly(f);
+ }
 });
 integration('held pending reservation retains and poisons its genuine late owner without refund or history',async t=>{
  const gate=deferred(),f=await createTransportMainFixture(t,{beforeRead:sql=>sql.includes('SELECT 1 FROM keys')?gate.promise:undefined}),ticket=f.preflight();

@@ -111,6 +111,36 @@ test('source directory junction cannot redirect capture to otherwise valid bytes
   assert.throws(() => captureNativeSDKSources(link, f.pins), /DIRECTORY/);
 });
 
+test('unrelated ancestor membership changes do not invalidate the pinned source tree', t => {
+  const f = fixture(t);
+  const unrelated = path.join(f.root, 'independent-sibling');
+  patched('readSync', (original, ...args) => {
+    if (!fs.existsSync(unrelated)) fs.writeFileSync(unrelated, 'unrelated');
+    return original(...args);
+  }, () => {
+    const capture = captureNativeSDKSources(f.sdk, f.pins);
+    assert.deepEqual(readCapturedNativeSDKSource(capture, names[0]), f.bytes.get(names[0]));
+  });
+  assert.equal(fs.readFileSync(unrelated, 'utf8'), 'unrelated');
+});
+
+test('replacing an ancestor directory invalidates capture even with identical source bytes', t => {
+  const f = fixture(t);
+  const old = f.root + '-old';
+  t.after(() => fs.rmSync(old, {recursive: true, force: true}));
+  const before = fs.lstatSync(f.root, {bigint: true});
+  patched('openSync', (original, file, ...args) => {
+    if (file === path.join(f.sdk, names[1])) {
+      fs.renameSync(f.root, old);
+      fs.mkdirSync(f.root);
+      fs.renameSync(path.join(old, 'sdk'), f.sdk);
+    }
+    return original(file, ...args);
+  }, () => assert.throws(() => captureNativeSDKSources(f.sdk, f.pins), /NATIVE_SDK_CAPTURE_CHANGED/));
+  assert.notEqual(fs.lstatSync(f.root, {bigint: true}).ino, before.ino);
+  for (const name of names) assert.deepEqual(fs.readFileSync(path.join(f.sdk, name)), f.bytes.get(name));
+});
+
 test('unselected on-disk files never join the captured namespace', t => {
   const f = fixture(t), extra = 'not-admitted.cjs';
   fs.writeFileSync(path.join(f.sdk, extra), 'throw Error("must never execute");');

@@ -8,8 +8,127 @@ const part = 'https://fixture.s3.eu-west-1.amazonaws.com/object?partNumber=1&upl
 const complete = 'https://fixture.s3.eu-west-1.amazonaws.com/object?uploadId=fixture';
 const headers = { apikey: key };
 const create = { method: 'POST', headers, body: JSON.stringify({ filename: 'fixture.zip', size_bytes: '4' }) };
-const plan = (size = 4, urls = [part]) => ({ data: { id: '11111111-1111-1111-1111-111111111111',
+const uploadId = '11111111-1111-1111-1111-111111111111';
+const finalise = `https://api.nexusmods.com/v3/uploads/${uploadId}/finalise`;
+const versions = 'https://api.nexusmods.com/v3/mod-files/123/versions';
+const plan = (size = 4, urls = [part]) => ({ data: { id: uploadId,
   part_size_bytes: size, part_presigned_urls: urls, complete_presigned_url: complete } });
+const post = { method: 'POST', headers };
+const versionRequest = (id = uploadId) => ({ ...post, body: JSON.stringify({ upload_id: id, version: '1.2.3' }) });
+
+async function completeFixtureStorage(guard) {
+  await guard(api, create);
+  await guard(part, { method: 'PUT', headers: { 'content-length': '4' }, body: Buffer.alloc(4) });
+  await guard(complete, { method: 'POST',
+    body: '<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>fixture-etag</ETag></Part></CompleteMultipartUpload>' });
+}
+
+function storageFixture(url) {
+  if (url === api) return Response.json(plan());
+  if (url === part) return new Response(null, { headers: { ETag: 'fixture-etag' } });
+  assert.equal(url, complete);
+  return new Response('<CompleteMultipartUploadResult><Bucket>fixture</Bucket><Key>object</Key><ETag>fixture-etag</ETag></CompleteMultipartUploadResult>');
+}
+
+test('only one multipart reservation reaches transport even with a pending response', async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let calls = 0;
+  const guard = installFetchGuard(async () => {
+    calls++;
+    await gate;
+    return Response.json(plan());
+  }, key, { archiveBytes: 4 });
+
+  const first = guard(api, create);
+  const second = assert.rejects(guard(api, create), /Network boundary/);
+  release();
+  assert.deepEqual(await (await first).json(), plan());
+  await second;
+  assert.equal(calls, 1);
+});
+
+test('a sent reservation cannot be repeated after an unusable response', async () => {
+  for (const response of [Response.json(plan(0)), new Response(null, { status: 503 })]) {
+    let calls = 0;
+    const guard = installFetchGuard(async () => {
+      calls++;
+      return calls === 1 ? response : Response.json(plan());
+    }, key, { archiveBytes: 4 });
+    if (response.ok) await assert.rejects(guard(api, create), /Network boundary/);
+    else assert.equal((await guard(api, create)).status, 503);
+    await assert.rejects(guard(api, create), /Network boundary/);
+    assert.equal(calls, 1);
+  }
+});
+
+test('finalise is admitted once while a matching request is in flight', async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let finaliseCalls = 0;
+  const guard = installFetchGuard(async url => {
+    if (url !== finalise) return storageFixture(url);
+    finaliseCalls++;
+    await gate;
+    return Response.json({ data: { id: uploadId } });
+  }, key, { archiveBytes: 4, fileId: '123', version: '1.2.3' });
+
+  await completeFixtureStorage(guard);
+  const first = guard(finalise, post);
+  const duplicate = assert.rejects(guard(finalise, post), /Network boundary/);
+  release();
+  assert.equal((await first).ok, true);
+  await duplicate;
+  await assert.rejects(guard(finalise, post), /Network boundary/);
+  assert.equal(finaliseCalls, 1);
+});
+
+test('version creation is single-use and tied to the finalised upload and approved file', async () => {
+  const writes = [];
+  const guard = installFetchGuard(async url => {
+    if (url === finalise || url.includes('/versions')) {
+      writes.push(url);
+      return Response.json({ data: {} });
+    }
+    return storageFixture(url);
+  }, key, { archiveBytes: 4, fileId: '123', version: '1.2.3' });
+
+  await completeFixtureStorage(guard);
+  await assert.rejects(guard(versions, versionRequest()), /Network boundary/);
+  await guard(finalise, post);
+  await assert.rejects(guard(versions, versionRequest('22222222-2222-2222-2222-222222222222')), /Network boundary/);
+  await assert.rejects(guard(versions.replace('/123/', '/321/'), versionRequest()), /Network boundary/);
+  await assert.rejects(guard(versions + '?force=true', versionRequest()), /Network boundary/);
+  await assert.rejects(guard(versions + '/', versionRequest()), /Network boundary/);
+  await assert.rejects(guard(versions, { ...post, body: `{"upload_id":"foreign","upload_id":"${uploadId}"}` }), /Network boundary/);
+  assert.equal((await guard(versions, versionRequest())).ok, true);
+  await assert.rejects(guard(versions, versionRequest()), /Network boundary/);
+  assert.deepEqual(writes, [finalise, versions]);
+});
+
+test('changelog stays bound to the created version, approved mod and exact text', async () => {
+  const changelogUrl = 'https://api.nexusmods.com/v3/mods/456/changelogs';
+  const calls = [];
+  const accepted = {...post, body: JSON.stringify({version: '1.2.3', changelog: 'Reviewed changes'})};
+  const guard = installFetchGuard(async url => {
+    if (url === finalise || url === versions || url.endsWith('/changelogs')) {
+      calls.push(url);
+      return Response.json({data: {}});
+    }
+    return storageFixture(url);
+  }, key, {archiveBytes: 4, fileId: '123', modId: '456', version: '1.2.3', changelog: 'Reviewed changes'});
+
+  await assert.rejects(guard(changelogUrl, accepted), /Network boundary/);
+  await completeFixtureStorage(guard);
+  await guard(finalise, post);
+  await assert.rejects(guard(versions, {...post, body: JSON.stringify({upload_id: uploadId, version: '2.0'})}), /Network boundary/);
+  await guard(versions, {...post, body: JSON.stringify({upload_id: uploadId, version: '1.2.3'})});
+  await assert.rejects(guard(changelogUrl.replace('/456/', '/654/'), accepted), /Network boundary/);
+  await assert.rejects(guard(changelogUrl, {...accepted, body: JSON.stringify({version: '1.2.3', changelog: 'Other text'})}), /Network boundary/);
+  await guard(changelogUrl, accepted);
+  await assert.rejects(guard(changelogUrl, accepted), /Network boundary/);
+  assert.deepEqual(calls, [finalise, versions, changelogUrl]);
+});
 
 test('Nexus-issued canonical Cloudflare R2 plan transfers without the Nexus key', async () => {
   const origin = 'https://test-bucket.0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com';

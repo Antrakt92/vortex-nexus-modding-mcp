@@ -36,7 +36,8 @@ function inspectOwnZip(bytes) {
   need(bytes.readUInt16LE(end + 4) === 0 && bytes.readUInt16LE(end + 6) === 0
     && bytes.readUInt16LE(end + 8) === count && count > 0 && count <= LIMITS.entries
     && central + centralBytes === end, 'OWN_BINDER_UNSUPPORTED_ZIP');
-  let cursor = central, total = 0; const output = Object.create(null), names = new Map(), prefixes = new Map(), ranges = [];
+  let cursor = central, total = 0;
+  const output = Object.create(null), sizes = Object.create(null), names = new Map(), prefixes = new Map(), ranges = [];
   for (let n = 0; n < count; n++) {
     need(cursor + 46 <= end && bytes.readUInt32LE(cursor) === 0x02014b50, 'OWN_BINDER_UNSUPPORTED_ZIP');
     const flags = bytes.readUInt16LE(cursor + 8), method = bytes.readUInt16LE(cursor + 10), crc = bytes.readUInt32LE(cursor + 16);
@@ -78,7 +79,7 @@ function inspectOwnZip(bytes) {
     catch { throw Error('OWN_BINDER_ZIP_CONTENT_INVALID'); }
     need(content.length === unpacked && crc32(content) === crc, 'OWN_BINDER_ZIP_CONTENT_INVALID');
     if (directory) need(unpacked === 0 && packed === 0, 'OWN_BINDER_UNSUPPORTED_ZIP');
-    else output[clean] = sha(content);
+    else { output[clean] = sha(content); sizes[clean] = unpacked; }
     cursor = next;
   }
   need(cursor === end && Object.keys(output).length > 0, 'OWN_BINDER_UNSUPPORTED_ZIP');
@@ -90,7 +91,8 @@ function inspectOwnZip(bytes) {
     for (let n = 1; n < parts.length; n++) need(names.get(parts.slice(0, n).join('/')) !== false, 'OWN_BINDER_DUPLICATE_ZIP_PATH');
   }
   return { bytes: bytes.length, sha256: sha(bytes), md5: crypto.createHash('md5').update(bytes).digest('hex'),
-    expectedUncompressedBytes: total, payload: output, crcVerified: true, payloadFiles: Object.keys(output).length };
+    expectedUncompressedBytes: total, payload: output, payloadSizes: sizes,
+    crcVerified: true, payloadFiles: Object.keys(output).length };
 }
 
 

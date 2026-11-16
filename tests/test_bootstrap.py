@@ -75,6 +75,49 @@ class BootstrapTests(unittest.TestCase):
                         b.bootstrap()
             self.assertFalse((root / 'outside').exists())
 
+    def test_supplied_archive_is_read_only_to_the_pinned_size_plus_one(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            vendor = root / 'dependencies/vortex-mcp'
+            vendor.mkdir(parents=True)
+            data, pins = fixture()
+            version = '10.34.9'
+            lock = {**pins, 'package': 'pnpm', 'version': version,
+                    'registryMetadata': f'https://registry.npmjs.org/pnpm/{version}',
+                    'tarball': f'https://registry.npmjs.org/pnpm/-/pnpm-{version}.tgz',
+                    'retainedUnderIgnored': f'.tooling/pnpm-{version}'}
+            (vendor / 'PNPM-BOOTSTRAP.json').write_text(json.dumps(lock))
+            (vendor / 'package.json').write_text(json.dumps({'packageManager': f'pnpm@{version}'}))
+            archive = root / 'supplied.tgz'
+            oversized = data + b'oversized'
+            archive.write_bytes(oversized)
+            original_open = Path.open
+            read_sizes = []
+
+            class ObservedArchive(io.BytesIO):
+                def read(self, size=-1):
+                    read_sizes.append(size)
+                    return super().read(size)
+
+            def tracked_open(path, *args, **kwargs):
+                if path == archive:
+                    return ObservedArchive(oversized)
+                return original_open(path, *args, **kwargs)
+
+            with mock.patch.object(b, 'ROOT', root), mock.patch.object(Path, 'open', tracked_open), \
+                    mock.patch.object(b.urllib.request, 'urlopen') as network:
+                with self.assertRaisesRegex(ValueError, 'archive size differs'):
+                    b.bootstrap(apply=True, archive_path=archive)
+                network.assert_not_called()
+            self.assertEqual(read_sizes, [pins['archiveBytes'] + 1])
+            self.assertFalse((vendor / '.tooling').exists())
+
+            archive.write_bytes(data)
+            with mock.patch.object(b, 'ROOT', root), mock.patch.object(b.urllib.request, 'urlopen') as network:
+                self.assertEqual(b.bootstrap(apply=True, archive_path=archive)['state'], 'unpacked')
+                network.assert_not_called()
+            self.assertEqual((vendor / lock['retainedUnderIgnored'] / 'bin/tool.cjs').read_bytes(), b'example')
+
     def test_pinned_content(self):
         data, lock = fixture()
         self.assertEqual(b.entries(data, lock), {'bin/tool.cjs': b'example'})

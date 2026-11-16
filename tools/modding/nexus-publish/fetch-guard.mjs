@@ -7,9 +7,18 @@ const API_ORIGIN = 'https://api.nexusmods.com';
 // canonical Cloudflare R2 endpoints (verified 2026-10-04); custom domains stay refused.
 const S3_HOST = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)?s3(?:[.-][a-z]{2}(?:-[a-z]+)+-\d+)?\.amazonaws\.com$/;
 const R2_HOST = /^(?:[a-z0-9][a-z0-9-]{1,61}[a-z0-9]\.)?[0-9a-f]{32}\.r2\.cloudflarestorage\.com$/;
+const NEXUS_ID = /^(?:[1-9][0-9]{0,19}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/;
 const forbiddenHeaders = ['authorization', 'proxy-authorization', 'cookie', 'cookie2', 'host'];
 
 function denied() { throw new Error('Network boundary refused request or upload destination.'); }
+
+function writeBody(value) {
+  if (typeof value !== 'string' || Buffer.byteLength(value) > 256_000) denied();
+  let parsed;
+  try { parsed = JSON.parse(value); } catch { denied(); }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || JSON.stringify(parsed) !== value) denied();
+  return parsed;
+}
 
 function approvedURL(value, key) {
   if (typeof value !== 'string') denied();
@@ -66,8 +75,11 @@ function completionXML(request, response, parts) {
 }
 
 export function installFetchGuard(nativeFetch = globalThis.fetch, apiKey = process.env.INPUT_API_KEY?.trim(),
-  { archiveBytes = Number(process.env.NEXUS_ARCHIVE_BYTES), dispatcher } = {}) {
+  { archiveBytes = Number(process.env.NEXUS_ARCHIVE_BYTES), fileId = process.env.INPUT_FILE_ID?.trim(),
+    modId = process.env.INPUT_MOD_ID?.trim(), version = process.env.INPUT_VERSION?.trim(),
+    changelog = process.env.INPUT_CHANGELOG?.trim(), dispatcher } = {}) {
   let plan = null;
+  let reservationSent = false;
   let failed = false;
   async function guardedFetch(input, init = {}) {
     if (failed) denied();
@@ -77,18 +89,40 @@ export function installFetchGuard(nativeFetch = globalThis.fetch, apiKey = proce
     const method = String(init.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
     const credentials = init.credentials ?? (input instanceof Request ? input.credentials : undefined);
     if (forbiddenHeaders.some(name => headers.has(name)) || credentials === 'include' || init.dispatcher) denied();
+    let finalising = false, creatingVersion = false;
     if (url.origin === API_ORIGIN) {
       if (!apiKey || headers.get('apikey') !== apiKey || !url.pathname.startsWith('/v3/')) denied();
       headers.set('Application-Name', 'Nexus-Agent-Publication');
       headers.set('Application-Version', '1.0');
-      if (url.pathname === '/v3/uploads/multipart' && method === 'POST') {
-        let requested;
-        try { requested = JSON.parse(init.body); } catch { denied(); }
-        if (plan || !Number.isSafeInteger(archiveBytes) || archiveBytes <= 0
-          || !/^[1-9][0-9]*$/.test(String(requested.size_bytes)) || Number(requested.size_bytes) !== archiveBytes) denied();
-      }
-      if (/^\/v3\/uploads\/[^/]+\/finalise$/.test(url.pathname)) {
-        if (!plan?.completed || url.pathname !== `/v3/uploads/${plan.id}/finalise`) denied();
+      if (method !== 'GET') {
+        if (method !== 'POST' || url.search) denied();
+        if (url.pathname === '/v3/uploads/multipart') {
+          let requested;
+          try { requested = JSON.parse(init.body); } catch { denied(); }
+          if (reservationSent || !Number.isSafeInteger(archiveBytes) || archiveBytes <= 0
+            || !/^[1-9][0-9]*$/.test(String(requested?.size_bytes)) || Number(requested.size_bytes) !== archiveBytes) denied();
+          // Claim before awaiting transport. An unusable response does not rule out a remote write.
+          reservationSent = true;
+        } else if (/^\/v3\/uploads\/[^/]+\/finalise$/.test(url.pathname)) {
+          if (!plan?.completed || plan.finaliseSent || url.pathname !== `/v3/uploads/${plan.id}/finalise`) denied();
+          plan.finaliseSent = true;
+          finalising = true;
+        } else if (/^\/v3\/mod-files\/[^/]+\/versions$/.test(url.pathname)) {
+          if (!plan?.finalised || plan.versionSent || !NEXUS_ID.test(fileId) || !version
+            || url.pathname !== `/v3/mod-files/${fileId}/versions`) denied();
+          const requested = writeBody(init.body);
+          if (requested.upload_id !== plan.id || requested.version !== version) denied();
+          plan.versionSent = true;
+          creatingVersion = true;
+        } else if (/^\/v3\/mods\/[^/]+\/changelogs$/.test(url.pathname)) {
+          if (!plan?.versionCreated || plan.changelogSent || !NEXUS_ID.test(modId)
+            || url.pathname !== `/v3/mods/${modId}/changelogs` || !changelog) denied();
+          const requested = writeBody(init.body);
+          if (Object.keys(requested).length !== 2 || requested.version !== version || requested.changelog !== changelog) denied();
+          plan.changelogSent = true;
+        } else {
+          denied();
+        }
       }
     } else {
       if (headers.has('apikey') || headers.has('api_key')) denied();
@@ -122,6 +156,8 @@ export function installFetchGuard(nativeFetch = globalThis.fetch, apiKey = proce
     } catch { failed = true; denied(); }
     // Also fail closed for injected transports that return a redirect instead of honoring redirect:error.
     if (response.status >= 300 && response.status < 400) denied();
+    if (finalising && response.ok) plan.finalised = true;
+    if (creatingVersion && response.ok) plan.versionCreated = true;
     if (url.origin === API_ORIGIN && url.pathname === '/v3/uploads/multipart' && method === 'POST' && response.ok) {
       let data, text;
       // A cloned response tees the stream. Cancelling only the inspected branch
@@ -147,6 +183,7 @@ export function installFetchGuard(nativeFetch = globalThis.fetch, apiKey = proce
           || part.searchParams.getAll('partNumber').length !== 1 || part.searchParams.get('partNumber') !== String(index + 1)) denied();
       }
       plan = { id: data.id, complete, completing: false, completed: false,
+        finaliseSent: false, finalised: false, versionSent: false, versionCreated: false, changelogSent: false,
         parts: parts.map((url, index) => ({ url, bytes: Math.min(data.part_size_bytes, archiveBytes - index * data.part_size_bytes), state: 'pending', etag: null })) };
       response = new Response(text, { status: response.status, statusText: response.statusText, headers: response.headers });
     } else if (url.origin !== API_ORIGIN && plan) {

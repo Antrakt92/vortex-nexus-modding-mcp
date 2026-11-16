@@ -16,6 +16,10 @@ const captures = new WeakMap();
 const need = (ok, code) => {if (!ok) throw Error('NATIVE_SDK_CAPTURE_' + code);};
 const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const generation = stat => ['dev', 'ino', 'size', 'mtimeNs', 'ctimeNs', 'nlink'].map(k => String(stat[k])).join(':');
+function directoryStamp(stat, sourceRoot) {
+  // Ancestor membership can change while the same source directory remains bound.
+  return sourceRoot || stat.ino === 0n ? generation(stat) : `${stat.dev}:${stat.ino}`;
+}
 
 function pinsSnapshot(input) {
   need(input !== null && typeof input === 'object' && !isProxy(input), 'PINS');
@@ -45,7 +49,7 @@ export function captureNativeSDKSources(sourceDirectory, expectedSourceSHA256) {
     need(++depth <= 128, 'DEPTH');
     const s = fs.lstatSync(current, {bigint: true});
     need(s.isDirectory() && !s.isSymbolicLink(), 'DIRECTORY');
-    directories.set(current, generation(s));
+    directories.set(current, directoryStamp(s, current === root));
     if (current === path.dirname(current)) break;
   }
   let totalBytes = 0;
@@ -80,7 +84,7 @@ export function captureNativeSDKSources(sourceDirectory, expectedSourceSHA256) {
   }
   for (const [directory, stamp] of directories) {
     const s = fs.lstatSync(directory, {bigint: true});
-    need(s.isDirectory() && !s.isSymbolicLink() && generation(s) === stamp, 'CHANGED');
+    need(s.isDirectory() && !s.isSymbolicLink() && directoryStamp(s, directory === root) === stamp, 'CHANGED');
   }
   const receipt = Object.freeze({schema: 'native-sdk-source-capture/1', sourceSHA256: pins,
     totalBytes, sourceCount: 15, javascriptSourceCount: 12, pythonSourceCount: 3,

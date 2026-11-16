@@ -273,9 +273,9 @@ export async function inspectPlan(planId, {call = createToolCaller(), journal} =
     const store = journal ?? createPlanJournal(), stored = synchronousJournal(store.read(planId));
     if (stored === null) return {...base, status: 'not_observed', journalObserved: false,
       instruction: 'No journal was observed in this configured workspace. This does not establish that another client or workspace performed no effects.'};
-    const plan = validatePlan(stored.plan);
+    const plan = validatePlan(stored.plan, {historical: true});
     insist(canonicalPlanId(plan) === planId, 'PLAN_JOURNAL_ID_MISMATCH');
-    const queue = planQueue(plan), intents = stored.events.filter(event => event.kind === 'intent');
+    const queue = planQueue(plan, {historical: true}), intents = stored.events.filter(event => event.kind === 'intent');
     const reads = await readPool(intents.map(event => async () => {
       const item = queue[event.index];
       const value = await call('reconcile_operation', {requestId: item.args.requestId});

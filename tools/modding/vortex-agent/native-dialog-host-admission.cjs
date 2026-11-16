@@ -12,8 +12,15 @@ function hashFile(io, file, expected) {
   const fd = io.openSync(file, 'r'), hash = crypto.createHash('sha256'), bytes = Buffer.alloc(1024 * 1024);
   let failed = false;
   try {
-    need(stamp(io.fstatSync(fd,{bigint:true})) === expected, 'SOURCE_CHANGED_DURING_HASH');
-    let n; while ((n = io.readSync(fd, bytes, 0, bytes.length, null)) !== 0) hash.update(bytes.subarray(0, n));
+    const before = io.fstatSync(fd,{bigint:true});
+    need(stamp(before) === expected, 'SOURCE_CHANGED_DURING_HASH');
+    for (let remaining = before.size; remaining > 0n;) {
+      const length = remaining < BigInt(bytes.length) ? Number(remaining) : bytes.length;
+      const count = io.readSync(fd, bytes, 0, length, null);
+      need(count > 0 && count <= length, 'SOURCE_CHANGED_DURING_HASH');
+      hash.update(bytes.subarray(0, count));
+      remaining -= BigInt(count);
+    }
     need(stamp(io.fstatSync(fd,{bigint:true})) === expected, 'SOURCE_CHANGED_DURING_HASH');
     return hash.digest('hex');
   }

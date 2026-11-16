@@ -52,3 +52,19 @@ test('SSE refuses malformed UTF-8 even when split between data fragments', async
     Buffer.from([0xc3, 0x28]), Buffer.from('"}}\r\r')]);
   await assert.rejects(remote('tools/call', {}, async () => response(bytes), token), /Invalid Vortex MCP response/);
 });
+
+test('SSE returns the same first matching reply whether the next event shares a chunk or not', async () => {
+  const wire = Buffer.from('data: {"jsonrpc":"2.0","id":1,"result":"first"}\n\ndata: {"jsonrpc":"2.0","id":1,"result":"second"}\n\n');
+  for (const chunkBytes of [1, wire.length]) {
+    const result = await remote('tools/call', {}, async () => response(wire, chunkBytes), token);
+    assert.equal(result, 'first');
+  }
+});
+
+test('SSE does not decode bytes after a complete matching response', async () => {
+  const reply = Buffer.from('data: {"jsonrpc":"2.0","id":1,"result":"ok"}\n\n');
+  const bytes = Buffer.concat([reply, Buffer.from([0xff])]);
+  for (const chunkBytes of [reply.length, bytes.length]) {
+    assert.equal(await remote('tools/call', {}, async () => response(bytes, chunkBytes), token), 'ok');
+  }
+});

@@ -24,16 +24,16 @@ function encoded(value) {
   const bytes = Buffer.from(JSON.stringify(canonical(value)) + '\n');
   need(bytes.length <= MAX_BYTES, 'PLAN_JOURNAL_LIMIT'); return bytes;
 }
-function frozenPlan(value) {
+function frozenPlan(value, options) {
   try {
     // Revalidate the detached semantic form as well (e.g. sparse arrays become null).
-    const plan = validatePlan(validatePlan(value)); encoded(plan); return plan;
+    const plan = validatePlan(validatePlan(value, options), options); encoded(plan); return plan;
   } catch (error) {
     throw Error(error?.message === 'PLAN_JOURNAL_LIMIT' ? error.message : 'PLAN_JOURNAL_INVALID_PLAN');
   }
 }
 export function canonicalPlanId(value) {
-  return crypto.createHash('sha256').update(encoded(frozenPlan(value))).digest('hex');
+  return crypto.createHash('sha256').update(encoded(frozenPlan(value, {historical: true}))).digest('hex');
 }
 const {ancestry, sameAncestry, readJSON, publish} = createImmutableRecordIO({maxBytes: MAX_BYTES, prefix: 'PLAN_JOURNAL_'});
 const eventName = number => String(number).padStart(6, '0') + '.json';
@@ -90,7 +90,7 @@ export function createPlanJournal(options = {}) {
       need(exact(record, ['schema', 'planId', 'at', 'rootId', 'directoryId', 'plan']) && record.schema === 'mod-plan-journal/1'
         && record.planId === planId && at(record.at) && record.rootId === rootPins.get(root)
         && record.directoryId === identity(directory), 'PLAN_JOURNAL_CORRUPT');
-      const plan = frozenPlan(record.plan), queue = planQueue(plan);
+      const plan = frozenPlan(record.plan, {historical: true}), queue = planQueue(plan, {historical: true});
       need(canonicalPlanId(plan) === planId && queue.length <= 101, 'PLAN_JOURNAL_CORRUPT');
       const files = names.filter(n => n !== 'plan.json');
       need(files.every((name, n) => name === eventName(n + 1)), 'PLAN_JOURNAL_CORRUPT');

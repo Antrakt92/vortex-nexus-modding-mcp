@@ -35,6 +35,7 @@
 
 Each report lists what was checked and what still needs testing.
 
+- [16 November tooling audit](TOOLING-AUDIT-20261116.md).
 - [30 October tooling and performance audit](TOOLING-AUDIT-20261030.md).
 - [Lifecycle implementation](LIFECYCLE-IMPLEMENTATION.md): verified stages and remaining native/provenance gates.
 - [Local installation continuation](LOCAL-INSTALL-IMPLEMENTATION.md): bounded job model, native ownership/terminal prerequisites and separate new-ZIP contracts.

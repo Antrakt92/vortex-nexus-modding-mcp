@@ -102,6 +102,32 @@ class PristineCacheTests(unittest.TestCase):
             self.assertFalse(m.inspect_cache(self.work, self.game, self.digest)['cacheReusable'])
         self.assertEqual(self.calls, 0)
 
+    def test_held_status_uses_the_modern_attempt_log_when_legacy_slot_is_valid(self):
+        s = self.snap()
+        s['legacy'].mkdir(parents=True)
+        output = s['legacy'] / 'vanilla.reds'
+        output.write_bytes(b'class ItemModeGridView {}\nclass InventoryItemModeLogicController {}')
+        (s['legacy'] / 'receipt.json').write_text(json.dumps({
+            'input': str(self.source), 'inputSHA256': self.digest, 'toolSHA256': m.sha(self.tool),
+            'outputSHA256': m.sha(output), 'outputBytes': output.stat().st_size, 'exitCode': 0, 'scope': m.SCOPE,
+        }))
+        self.assertTrue(m.inspect_cache(self.work, self.game, self.digest)['cacheReusable'])
+
+        s['slot'].mkdir()
+        (s['slot'] / 'intent.json').write_bytes(m.encode({
+            'schema': 'pristine-cache-attempt/1', 'binding': s['binding'],
+        }))
+        (s['slot'] / 'decompile.log').write_bytes(
+            b'Failed to load the script cache\nfailed to fill whole buffer\n'
+        )
+        before = self.tree()
+        value = m.inspect_cache(self.work, self.game, self.digest)
+        self.assertEqual((value['state'], value['code']), ('held', 'CACHE_ATTEMPT_HELD'))
+        self.assertEqual(value['failureClass'], 'decoder_input_failure')
+        self.assertFalse(value['generationAllowed'])
+        self.assertFalse(value['cacheReusable'])
+        self.assertEqual(self.tree(), before)
+
     def test_failed_timeout_and_interrupted_runs_hold_attempt_without_log_overwrite(self):
         for failure in ['exit', 'timeout', 'exception']:
             with self.subTest(failure=failure):

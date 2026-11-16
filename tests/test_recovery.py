@@ -134,7 +134,8 @@ class RecoveryTests(unittest.TestCase):
                         r.verify(root)
 
     def test_path_escape_rejected(self):
-        for value in ['../outside', '/absolute', 'C:/absolute', 'a\\b', 'a/../b', 'a//b', 'a:stream']:
+        for value in ['../outside', '/absolute', 'C:/absolute', 'a\\b', 'a/../b', 'a//b', 'a:stream',
+                      'a/CON.txt', 'a/COM1.log', 'a/trailing.', 'a/trailing ', 'a/?', 'a/.. ']:
             with self.assertRaises(ValueError):
                 r.relative(value)
 
@@ -215,6 +216,20 @@ class RecoveryTests(unittest.TestCase):
                 r.restore_skills(snapshot, dest, True)
             self.assertFalse((dest / 'example/first.md').exists())
             self.assertEqual((dest / 'example/second.md').read_text(), 'existing')
+
+    def test_skill_restore_refuses_case_aliases_before_writing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            snapshot, destination = root / 'snapshot', root / 'destination'
+            (snapshot / 'skills/example').mkdir(parents=True)
+            data = b'example skill'
+            (snapshot / 'skills/example/guide.md').write_bytes(data)
+            rows = [{'path': f'skills/example/{name}', 'sha256': r.digest(data)}
+                    for name in ('guide.md', 'GUIDE.MD')]
+            (snapshot / 'manifest.json').write_text(json.dumps({'skills': rows}))
+            with self.assertRaisesRegex(ValueError, 'Conflicting skill snapshot paths'):
+                r.restore_skills(snapshot, destination, apply=True)
+            self.assertFalse(destination.exists())
 
     def test_skill_parent_file_conflict_is_rejected_before_any_restore(self):
         with tempfile.TemporaryDirectory() as tmp:

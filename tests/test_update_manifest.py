@@ -17,6 +17,11 @@ spec.loader.exec_module(u)
 
 
 class UpdateManifestTests(unittest.TestCase):
+    def stage_sources(self, root):
+        paths = [part.name for part in root.iterdir()]
+        for args in [('init', '--quiet'), ('add', '--', *paths)]:
+            subprocess.run(['git', *args], cwd=root, check=True, capture_output=True)
+
     def test_rust_source_and_cargo_lock_require_utf8_but_binary_is_not_normalized_as_text(self):
         for name in ['tools/native/src/main.rs', 'tools/native/Cargo.lock']:
             with self.subTest(name=name):
@@ -31,7 +36,8 @@ class UpdateManifestTests(unittest.TestCase):
             source = root / 'tools' / 'scope.cjs'
             source.parent.mkdir()
             source.write_bytes(b"const value = 'COM\xb9';\n")
-            with mock.patch.object(u, 'ROOT', root), mock.patch.object(u.subprocess, 'check_output', side_effect=[b'', b'tools/scope.cjs\0']):
+            self.stage_sources(root)
+            with mock.patch.object(u, 'ROOT', root):
                 with self.assertRaisesRegex(ValueError, 'not valid UTF-8: tools/scope.cjs'):
                     u.content()
             self.assertEqual(source.read_bytes(), b"const value = 'COM\xb9';\n")
@@ -45,10 +51,40 @@ class UpdateManifestTests(unittest.TestCase):
             upstream.parent.mkdir()
             maintained.write_bytes("const value = 'COM\u00b9';\n".encode('utf-8'))
             upstream.write_bytes(b'opaque pinned upstream \xb9\r\n')
-            with mock.patch.object(u, 'ROOT', root), mock.patch.object(u.subprocess, 'check_output', side_effect=[b'', b'tools/scope.cjs\0dependencies/pinned.cjs\0']):
+            self.stage_sources(root)
+            with mock.patch.object(u, 'ROOT', root):
                 result = json.loads(u.content())
             self.assertEqual(len(result['files']), 2)
             self.assertEqual(upstream.read_bytes(), b'opaque pinned upstream \xb9\r\n')
+
+    def test_manifest_refuses_unstaged_bytes_hidden_by_assume_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / 'source.txt'
+            source.write_bytes(b'reviewed\n')
+            for args in [('init', '--quiet'), ('add', 'source.txt'),
+                         ('update-index', '--assume-unchanged', 'source.txt')]:
+                subprocess.run(['git', *args], cwd=root, check=True, capture_output=True)
+            source.write_bytes(b'unreviewed\n')
+            with mock.patch.object(u, 'ROOT', root):
+                with self.assertRaisesRegex(ValueError, 'differs from the staged source'):
+                    u.content()
+
+    def test_manifest_refuses_replacement_blobs_in_place_of_staged_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / 'source.txt'
+            source.write_bytes(b'reviewed\n')
+            self.stage_sources(root)
+            indexed = subprocess.check_output(['git', 'rev-parse', ':source.txt'], cwd=root).strip().decode()
+            source.write_bytes(b'unreviewed\n')
+            replacement = subprocess.check_output(['git', 'hash-object', '-w', 'source.txt'], cwd=root).strip().decode()
+            subprocess.run(['git', 'replace', indexed, replacement], cwd=root, check=True, capture_output=True)
+            subprocess.run(['git', 'update-index', '--assume-unchanged', 'source.txt'],
+                           cwd=root, check=True, capture_output=True)
+            with mock.patch.object(u, 'ROOT', root):
+                with self.assertRaisesRegex(ValueError, 'differs from the staged source'):
+                    u.content()
 
     def test_manifest_symlink_cannot_redirect_write_or_check(self):
         with tempfile.TemporaryDirectory() as tmp:

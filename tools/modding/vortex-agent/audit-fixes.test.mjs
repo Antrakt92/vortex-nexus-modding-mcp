@@ -132,6 +132,24 @@ test('audit: foreign, scalar, unsuccessful and conflicting receipts never verify
     const result = await f.ops.reconcile_operation({ requestId: f.args.requestId }); assert.equal(result.terminalOperationVerified, false, corrupt);
   }
 });
+test('audit: malformed UTF-8 in an otherwise matching receipt cannot verify completion', async () => {
+  const f = await fixture();
+  await f.ops.set_mods_enabled({ ...f.args, modIds: ['m'], enabled: true });
+  const file = path.join(f.dir, 'receipts', f.args.requestId + '.attempt.json');
+  const bytes = await fs.readFile(file);
+  const field = Buffer.from('"gamePath":"');
+  const start = bytes.indexOf(field);
+  assert.ok(start >= 0);
+  const end = bytes.indexOf(34, start + field.length);
+  assert.ok(end > start + field.length);
+  bytes[end - 1] = 0xff;
+  await fs.writeFile(file, bytes);
+  const result = await f.ops.reconcile_operation({requestId: f.args.requestId});
+  assert.equal(result.terminalOperationVerified, false);
+  assert.equal(result.attempt, null);
+  assert.ok(result.receiptIssues.includes('INVALID_RECEIPT'));
+});
+
 test('audit: failed completion fsync never publishes a completion', async () => {
   const f = await fixture(async file => { if (file.includes('.completion.json')) throw Error('SYNTHETIC_FSYNC_FAILURE'); });
   await assert.rejects(f.ops.set_mods_enabled({ ...f.args, modIds: ['m'], enabled: true }));

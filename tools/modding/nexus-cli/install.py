@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import stat
 import sys
 import urllib.request
 import zipfile
@@ -11,7 +12,7 @@ import zipfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from workspace_paths import workspace_root
 
-ROOT = workspace_root() / 'local-state/nexus-cli'
+ROOT = workspace_root(canonicalize=False) / 'local-state/nexus-cli'
 VERSION = '1.1.1'
 SHA256 = '4790715ab94847757eb405c6442dae8dcc73c2f656ec43c367038b7b79c5812d'
 SIZE = 377388
@@ -19,23 +20,31 @@ URL = f'https://github.com/vadimtrifonov/nexusmods-cli/releases/download/v{VERSI
 
 
 def no_reparse(file):
-    for parent in [file, *file.parents]:
+    for parent in (*reversed(file.parents), file):
         try:
-            attributes = getattr(parent.lstat(), 'st_file_attributes', 0)
+            info = parent.lstat()
         except FileNotFoundError:
             continue
-        if parent.is_symlink() or attributes & 0x400:
+        if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
             raise RuntimeError('Reparse installation path refused')
 
 
+def verify_existing_file(target, expected):
+    with target.open('rb') as source:
+        if source.read(len(expected) + 1) != expected:
+            raise RuntimeError('Existing installation differs; refusing overwrite')
+
+
 def install():
+    # Examine the configured path before normalization can remove a junction.
     no_reparse(ROOT)
-    destination = ROOT / VERSION
-    receipt_path = ROOT / 'installation.json'
+    root = Path(os.path.abspath(ROOT))
+    destination = root / VERSION
+    receipt_path = root / 'installation.json'
     no_reparse(destination)
     no_reparse(receipt_path)
-    ROOT.mkdir(parents=True, exist_ok=True)
-    archive = ROOT / f'nexusmods-{VERSION}-win-x64.zip'
+    root.mkdir(parents=True, exist_ok=True)
+    archive = root / f'nexusmods-{VERSION}-win-x64.zip'
     no_reparse(archive)
     if not archive.exists():
         request = urllib.request.Request(URL, headers={'User-Agent': 'Nexus-Agent-Setup/1'})
@@ -45,7 +54,8 @@ def install():
             raise RuntimeError('Release size/SHA256 mismatch')
         with archive.open('xb') as output:
             output.write(data)
-    data = archive.read_bytes()
+    with archive.open('rb') as source:
+        data = source.read(SIZE + 1)
     if len(data) != SIZE or hashlib.sha256(data).hexdigest() != SHA256:
         raise RuntimeError('Cached release size/SHA256 mismatch')
     # Extract the exact bytes whose frozen pin was checked, without reopening a
@@ -66,8 +76,7 @@ def install():
                 raise RuntimeError('Duplicate release installation path')
             files[target] = expected
             if target.exists():
-                if target.read_bytes() != expected:
-                    raise RuntimeError('Existing installation differs; refusing overwrite')
+                verify_existing_file(target, expected)
     executables = {file for file in files if file.name.lower() == 'nexusmods.exe'} | set(destination.rglob('nexusmods.exe'))
     if len(executables) != 1:
         raise RuntimeError('Expected one CLI executable')
@@ -85,8 +94,7 @@ def install():
         no_reparse(target)
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists():
-            if target.read_bytes() != expected:
-                raise RuntimeError('Existing installation differs; refusing overwrite')
+            verify_existing_file(target, expected)
         else:
             with target.open('xb') as output:
                 output.write(expected)

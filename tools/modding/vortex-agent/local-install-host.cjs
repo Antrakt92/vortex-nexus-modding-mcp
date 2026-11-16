@@ -81,10 +81,12 @@ function createLocalInstallHostAdmission({ packagePath, expected, api, fsImpl = 
         'LOCAL_INSTALL_HOST_SOURCE_CHANGED');
       hash = crypto.createHash('sha256');
       const buffer = Buffer.alloc(256 * 1024);
-      for (;;) {
-        const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
-        if (!bytesRead) break;
+      for (let remaining = before.size; remaining > 0n;) {
+        const length = remaining < BigInt(buffer.length) ? Number(remaining) : buffer.length;
+        const { bytesRead } = await handle.read(buffer, 0, length, null);
+        need(bytesRead > 0 && bytesRead <= length, 'LOCAL_INSTALL_HOST_SOURCE_CHANGED');
         hash.update(buffer.subarray(0, bytesRead));
+        remaining -= BigInt(bytesRead);
       }
       need(generation(await handle.stat({ bigint: true })) === stamp,
         'LOCAL_INSTALL_HOST_SOURCE_CHANGED');

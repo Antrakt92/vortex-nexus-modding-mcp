@@ -167,14 +167,19 @@ function createNativeDialogSession(api, selectors, {receipts,controllerOptions={
     },
   };
 }
-// One native API object is one renderer session. HTTP request guards remain
-// separate: only observation/replay state is cached, never credentials or the
-// ordinary mutation closure belonging to the request that performed the read.
+// One native API object is one renderer session. Retain the host source proof
+// so later requests can detect drift in that renderer without rehashing it.
+// Request-specific context, credentials and mutation guards remain separate.
 const sessions=new WeakMap();
+const hostAdmissions=new WeakMap();
+function defaultHostAdmission(api) {
+  if(!hostAdmissions.has(api)) hostAdmissions.set(api,createNativeDialogHostAdmission(api));
+  return hostAdmissions.get(api);
+}
 function createNativeDialogOperations(api,selectors,options) {
   need(api&&typeof api==='object'&&options&&typeof options.receipts==='string','SESSION_REQUIRED');
   const hooks={checkContext:options.checkContext,ordinaryMutation:options.ordinaryMutation,commitCompletion:options.commitCompletion,
-    assertHost:options.assertHost||createNativeDialogHostAdmission(api)};
+    assertHost:options.assertHost||defaultHostAdmission(api)};
   need(['checkContext','commitCompletion','assertHost'].every(k=>typeof hooks[k]==='function'),'CURRENT_GUARD_REQUIRED');
   let paths=sessions.get(api);if(!paths){paths=new Map();sessions.set(api,paths);}
   const resolved=path.resolve(options.receipts),key=process.platform==='win32'?resolved.toLowerCase():resolved;
