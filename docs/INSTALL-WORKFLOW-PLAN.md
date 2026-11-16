@@ -31,6 +31,17 @@ collection work remains deferred. This plan does not authorize new live effects.
    dismissal while another question is open. No automatic replay or manual
    deletion of the original receipt.
 
+5. **Watch for questions throughout a collection run.** Start the observer before
+   dispatching the install or resume event. Report each newly actionable question
+   immediately with its collection, revision, profile and, where stock Vortex
+   exposes them, archive and affected rules. Apply only decisions frozen for that
+   run. Keep one response in flight and verify each dismissal before responding to
+   the next question. Emit an actionable hold as soon as a question falls outside
+   the plan, and stop answering when the native run times out or ends, even if
+   stale dialogs remain visible. Verify on a real resume with newly prepended
+   questions, and measure question-to-response latency independently from install
+   and deployment time.
+
 ## Boundaries and evidence
 
 - Use official Vortex and its reviewed extension/event APIs only. No Core or
