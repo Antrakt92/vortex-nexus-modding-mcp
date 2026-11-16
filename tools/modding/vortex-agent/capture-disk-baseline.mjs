@@ -156,7 +156,8 @@ function validateInput(value, at) {
     ? Date.parse(value.observedAtUTC) : NaN;
   need(Number.isFinite(observed) && at - observed >= 0 && at - observed <= LIMITS.freshnessMs, 'DISK_BASELINE_INPUT_STALE');
   const h = value.health;
-  need(exact(h, ['gameId','profileId',...roots,'filesystemIds']) && h.gameId === 'cyberpunk2077' && h.profileId === 'ptndev1016'
+  need(exact(h, ['gameId','profileId',...roots,'filesystemIds']) && h.gameId === 'cyberpunk2077'
+    && typeof h.profileId === 'string' && /^[A-Za-z0-9_-]{1,200}$/.test(h.profileId)
     && exact(h.filesystemIds, roots), 'DISK_BASELINE_INVALID_CONTEXT');
   for (const key of roots) {
     absolute(h[key]); need(typeof h.filesystemIds[key] === 'string' && /^\d+:\d+$/.test(h.filesystemIds[key]), 'DISK_BASELINE_INVALID_CONTEXT');
@@ -245,7 +246,7 @@ export function captureDiskBaseline({input, inputSHA256, output, apply = false})
     for (const observation of observations.values()) checkObservation(observation);
     for (const root of observedRoots) checkObservation(root);
   };
-  const summary = {status: apply ? 'captured' : 'plan', manifestPairs: pairs.length, settings: settings.size,
+  const summary = {status: apply ? 'captured' : 'plan', health: structuredClone(health), manifestPairs: pairs.length, settings: settings.size,
     uniquePhysicalFiles: unique.size, plannedBytesHashed: plannedBytes, output: output ?? null,
     nativeContextVerified: false, sourceAdmissionVerified: false, effectsAllowed: false, noManagedWrites: true};
   if (!apply) {assertCurrent(); return summary;}
@@ -270,7 +271,7 @@ export function captureDiskBaseline({input, inputSHA256, output, apply = false})
   assertCurrent();
   const reread = readStable(manifestPath, LIMITS.manifestBytes);
   need(sha(reread.bytes) === value.manifestSHA256, 'DISK_BASELINE_MANIFEST_SHA_DIFFERS');
-  const ledger = {schema: 'root-current-physical-ledger/1', atUTC: new Date().toISOString(), manifestSHA256: value.manifestSHA256,
+  const ledger = {schema: 'root-current-physical-ledger/1', atUTC: new Date().toISOString(), health: structuredClone(health), manifestSHA256: value.manifestSHA256,
     records, settings: preferences, preferenceDiscovery: initial.proof, physicalProofMetrics: physical.metrics(),
     sourceProof: input, sourceProofSHA256: inputSHA256, observedAtUTC: value.observedAtUTC,
     nativeContextVerified: false, sourceAdmissionVerified: false, effectsAllowed: false, noManagedWrites: true};

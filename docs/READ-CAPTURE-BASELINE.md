@@ -1,7 +1,8 @@
 # External disk baseline for a read capture
 
 `capture-disk-baseline.mjs` reads the current hardlink deployment manifest and
-protected preference files for Cyberpunk/profile `ptndev1016`. It writes no game,
+protected preference files for Cyberpunk with an explicit profile ID from the
+SHA-pinned input `health`. It writes no game,
 staging or download files, does not contact Vortex, and grants no source admission
 or installation authority. Native context/freshness review remains external.
 
@@ -34,6 +35,13 @@ native context. Long hashing does not require that age to remain below 120
 seconds at completion. The roots must still match their filesystem identities
 and metadata at the final checkpoint. IDs use Node `dev:ino`, not native Win32
 128-bit file identity.
+
+The profile ID is an opaque string of 1–200 ASCII letters, digits, underscores
+or hyphens (`^[A-Za-z0-9_-]{1,200}$`), for example `ihUVbd-eX`. It is mandatory.
+Plans and ledgers retain the exact input `health`, including that profile ID and
+filesystem pins. This caller-supplied context is bound by the input SHA. Check
+its existence and active status separately through Vortex before managed effects.
+The game remains restricted to `cyberpunk2077`.
 
 Required explicit candidates must exist. They may be inside the supplied game
 or staging roots, or exactly these two paths relative to this process's
@@ -70,7 +78,7 @@ all protected leaf generations, roots and discovery directory generations/file
 sets are checked again before publication and after writing the ledger. This is
 a sampled read proof, not an OS ownership lock or an atomic filesystem snapshot.
 
-Output uses `root-current-physical-ledger/1` with `manifestSHA256`, deployment
+Output uses `root-current-physical-ledger/1` with the input `health`, `manifestSHA256`, deployment
 `records[{game,stage,nodeId,bytes,links,sha256}]` and
 `settings[{path,nodeId,bytes,links,sha256}]`; bytes are numbers. It adds
 `preferenceDiscovery` with schema `read-capture-preference-discovery/1`, the two

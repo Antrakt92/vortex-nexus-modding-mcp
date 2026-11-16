@@ -25,7 +25,8 @@ These routes are independent; the publication runner is not needed to inspect Vo
 | Community CLI, optional | .NET 10 for the pinned Windows x64 executable |
 | AI client, optional | An MCP client that can launch a local stdio command; terminal commands work without one |
 
-The tools were tested with Vortex 2.9.1 and Cyberpunk 2077. Process checks also
+The tools were tested with official Vortex 2.9.1 and 2.10.1 for Cyberpunk 2077.
+See [the host verification](STOCK-LOCAL-INSTALL.md#verify-official-vortex-2101). Process checks also
 exist for Assassin's Creed Unity, Skyrim SE, Skyrim VR and Fallout 4, but full
 installation and deployment have not been tested for every game. Unsupported
 writes stop with
@@ -33,9 +34,9 @@ writes stop with
 
 ## Install the adapter
 
-1. Download the source ZIP and `SHA256SUMS` from the
+1. Download the source ZIP and its adjacent `.zip.sha256` file from the
    [latest release](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/latest).
-   Compare the ZIP's `Get-FileHash -Algorithm SHA256` result with `SHA256SUMS`,
+   Compare the ZIP's `Get-FileHash -Algorithm SHA256` result with that checksum,
    then extract it to your chosen source directory. A development checkout of
    `main` can contain changes not yet in a release.
 2. Open PowerShell in that source directory. Follow [RESTORE.md](RESTORE.md):
