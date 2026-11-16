@@ -256,7 +256,7 @@
     },
     {
       "path": "docs/INSTALL-WORKFLOW-PLAN.md",
-      "sha256_lf": "a4ea5d0a2dd4aa36161d984e6557b455855bd109052a12f76cfd33782e73f20c"
+      "sha256_lf": "73cd18b2bc7a3085eb55debfcb2dcd6f479414317454c03e651dbe77cf08807e"
     },
     {
       "path": "docs/INSTALLED-CANDIDATES.md",
@@ -1252,11 +1252,11 @@
     },
     {
       "path": "tools/modding/vortex-agent/native-dialog-controller.cjs",
-      "sha256_lf": "024b1a4c1a9754b136c250e5ce6cdb600440ff458fe65ac2caa0ecad25b1860e"
+      "sha256_lf": "3c14b370835dd7f8f0608ba809ad26fdbbf1eafb65a320ae3eb25f42da154b0f"
     },
     {
       "path": "tools/modding/vortex-agent/native-dialog-controller.test.cjs",
-      "sha256_lf": "8ed2614101e142ec45db4251ce850bf7961bd6c0cf8c1c10fb4e48d025d8f395"
+      "sha256_lf": "bf8eafda1157934874d2f99a09a02b2be0c29cd2f183554edcaa3ea398213233"
     },
     {
       "path": "tools/modding/vortex-agent/native-dialog-host-admission.cjs",

@@ -21,6 +21,21 @@ test('asynchronous admission cannot permit a changed front; no blind replay afte
 test('dismissal is bounded and verifies retained tail; timeout never repeats a callback',async()=>{const f=fixture({close(){}}),r=await f.read();await assert.rejects(f.controller.respond(f.args(r,'cancel'),'owned'),/EFFECT_UNCERTAIN/);assert.equal(f.calls.length,1);const q=await f.read();await assert.rejects(f.controller.respond(f.args(q,'cancel'),'owned'),/REPLAY_REFUSED/);assert.equal(f.calls.length,1);
  const g=fixture({queue:[dialog(),dialog('dependency','tail')],close(s){s.session.notifications.dialogs=[];}}),v=await g.read();await assert.rejects(g.controller.respond(g.args(v,'cancel'),'owned'),/EFFECT_UNCERTAIN/);assert.equal(g.calls.length,1);});
 test('source qualification is mandatory and a read never authorizes native effects',async()=>{assert.throws(()=>createNativeDialogController({getState(){},closeDialog(){}},{selectors:{activeGameId(){},activeProfileId(){}}}),/ADMISSION_REQUIRED/);const f=fixture();await f.read();assert.equal(f.calls.length,0);await assert.rejects(f.controller.respond({gameId:'game',profileId:'profile',dialogId:'first',fingerprint:'a'.repeat(64),action:'cancel'},'owned'),/OBSERVATION/);});
+test('dismissal accepts a new follow-up ahead of the retained queue',async()=>{
+ const tail=[dialog('dependency','second'),dialog('version','third')];
+ const close=s=>{s.session.notifications.dialogs=[dialog('version','follow-up'),...tail];};
+ const f=fixture({queue:[dialog(),...tail],close}),r=await f.read();
+ const response=await f.controller.respond(f.args(r,'ignore_dependencies'),'owned');
+ assert.equal(response.nativeDialogDismissalVerified,true);
+ assert.equal(response.remember,false);
+ assert.equal((await f.read()).dialogId,'follow-up');
+ assert.equal(f.calls.length,1);
+ const reordered=fixture({queue:[dialog(),...tail],close:s=>{
+  s.session.notifications.dialogs=[dialog('version','follow-up'),...tail.slice().reverse()];
+ }});
+ await assert.rejects(reordered.controller.respond(reordered.args(await reordered.read(),'ignore_dependencies'),'owned'),/EFFECT_UNCERTAIN/);
+});
+
 test('empty queue does not create a usable observed target',async()=>{const f=fixture({queue:[]}),r=await f.read();assert.equal(r.status,'empty');assert.deepEqual(r.eligibleActions,[]);assert.equal(f.calls.length,0);});
 
 test('pinned native question expressions and actual notification callbacks resolve each typed action',
