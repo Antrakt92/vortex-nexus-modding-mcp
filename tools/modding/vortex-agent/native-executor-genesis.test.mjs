@@ -10,6 +10,7 @@ import {repo,prepared,execute,original,stage,sha,parsed,deferred,tick} from './n
 import {registrationBackend} from './native-owned-mod-registration.test.mjs';
 import {createNativeExecutorJournal} from './native-executor-journal.mjs';
 import {RELAY_SOURCE_NAMES} from './owned-zip-relay-client.mjs';
+import {isolateHistoricalAncestry} from './native-historical-ancestry-test-fixture.mjs';
 const HERE=path.dirname(fileURLToPath(import.meta.url)),K='nativeExecutorAnchorV1';
 const levelStages=['new-mod-conflict-query','backend-write-admission','native-backend-sql-admission','native-owned-mod-registration','native-tracked-mod-registration','native-backend-registration-release','native-executor-anchor-storage'];
 const mainStages=['batch-acknowledgement','target-reservation','acknowledged-packet','backend-reservation-admission','legacy-rollback-primary','native-main-sql-admission','native-main-mod-registration','native-main-tracked-mod-registration','native-main-registration-release','native-main-executor-anchor','native-main-executor-hold'];
@@ -56,7 +57,7 @@ export async function createGenesisFixture(t,options={}){
     ...types,ReduxPersistorIPC:Main,SubPersistor,DuckDBSingleton:base.Singleton,QueryRegistry:base.Registry,
     QueryInvalidator:class{notifyDirtyTables(){}setWatcher(){}},Database:class{},QueryWatcher:class{},
     parseAllQueries:dir=>parsed(dir),getVortexPath:()=>workspace,setupPersistenceIPC(){},getErrorMessageOrDefault:()=>'',
-    nativeStartupFS:fs,nativeStartupHash:crypto.createHash,nativeStartupTypes:nativeRegistrationTypes,createRequire:()=>loader,
+    nativeStartupFS:isolateHistoricalAncestry(fs,workspace),nativeStartupHash:crypto.createHash,nativeStartupTypes:nativeRegistrationTypes,createRequire:()=>loader,
     __filename:fileURLToPath(import.meta.url),__NEXUS_NATIVE_RUNTIME_BINDING__:binding});
   const startup=await wiring.verifyNativeExecutorStartup(level);
   const mainBackend=options.differentBackend?new types.LevelPersist(base.backend,'db'):level;

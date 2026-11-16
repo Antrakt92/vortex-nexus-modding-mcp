@@ -10,6 +10,7 @@ import {repo,prepared,execute,original,stage,sha,parsed,deferred,tick} from './n
 import {registrationBackend} from './native-owned-mod-registration.test.mjs';
 import {createNativeExecutorJournal} from './native-executor-journal.mjs';
 import {RELAY_SOURCE_NAMES} from './owned-zip-relay-client.mjs';
+import {isolateHistoricalAncestry} from './native-historical-ancestry-test-fixture.mjs';
 import job from './install-job-contract.cjs';
 import dispatch from './native-dispatch-contract.cjs';
 import {frameFixture} from './native-executor-frame-owner.test.mjs';
@@ -18,25 +19,6 @@ const levelStages=['new-mod-conflict-query','backend-write-admission','native-ba
 const mainStages=['batch-acknowledgement','target-reservation','acknowledged-packet','backend-reservation-admission','legacy-rollback-primary','native-main-sql-admission','native-main-mod-registration','native-main-tracked-mod-registration','native-main-registration-release','native-main-executor-anchor','native-main-executor-hold','native-main-executor-target','native-main-executor-terminal-window'];
 const stages=['native-query-owner-binding','native-main-readiness','native-main-anchor-binding','native-main-executor-startup','native-main-executor-genesis','native-main-executor-pending','native-main-executor-transport'];
 const integration=(name,fn)=>test(name,{timeout:15000,skip:repo?false:'Set VORTEX_EXTENSION_ADMISSION_REPO'},fn);
-
-function isolateHistoricalAncestry(io, workspace) {
-  const sharedParents = new Set();
-  for (let parent = path.dirname(workspace); !sharedParents.has(parent); parent = path.dirname(parent)) {
-    sharedParents.add(parent);
-  }
-  const fixtureIO = Object.create(io);
-  fixtureIO.lstatSync = (file, options) => {
-    const stat = io.lstatSync(file, options);
-    if (!options?.bigint || !sharedParents.has(file) || !stat.isDirectory()) return stat;
-    // Earlier Main source stages pinned mutable metadata all the way to the
-    // drive root. Unrelated writes there must stay outside this owned fixture.
-    // Keep real volume, inode and kind, and pass every owned path through.
-    return Object.create(stat, {
-      size: { value: 0n }, mtimeNs: { value: 0n }, ctimeNs: { value: 0n }, nlink: { value: 1n },
-    });
-  };
-  return fixtureIO;
-}
 
 /** Actual main/Level/Registry/pool source. SQL is an owned transactional facade;
  * Database/watcher/invalidator are initialization-only facades, not host objects. */
