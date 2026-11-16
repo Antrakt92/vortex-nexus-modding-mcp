@@ -130,6 +130,60 @@ pre-effect refusal can be corrected without pretending a native attempt ran.
 Coordinate other chats and manual Vortex work during managed operations; this
 tool does not claim atomic protection against arbitrary outside writers.
 
+## Verify while the ordinary Vortex host is stopped
+
+Use the native fixture when an unresolved collection operation makes launching
+the ordinary profile unsuitable. The fixture starts the official Vortex
+executable with isolated user data, a synthetic game and a separate authenticated
+MCP listener on port 3702. The game executable in the fixture is a text
+placeholder. The runner never opens the ordinary profile.
+
+Start from the already verified adapter build in a separate workspace. Set
+`NEXUS_WORKSPACE` to that build workspace and obtain the exact official Vortex
+executable SHA-256 and installed Cyberpunk Support folder and index digest from
+the reviewed local package and admission records. Then run:
+
+```powershell
+node tools/modding/vortex-agent/native-fixture.mjs --run --stopped-ordinary `
+  --ordinary-workspace $ordinaryWorkspace --ordinary-manifest $ordinaryManifest `
+  --vortex-exe-sha256 $vortexExeSha256 --support-extension $supportExtension `
+  --support-index-sha256 $supportIndexSha256 --mcp-local-archive --with-existing-mod
+node tools/modding/vortex-agent/native-fixture-verify.mjs $fixtureRoot
+```
+
+Supply the absolute ordinary deployment-manifest path and the workspace holding
+the unresolved operation. Keep the fixture and ordinary workspaces disjoint.
+The runner checks the admitted app.asar and support source, confirmed stopped
+state and inactive ordinary MCP port before and after launch. It samples the
+fixture process identity during the run and compares the ordinary unresolved
+operation and deployment manifest against their initial file pins. Leave any
+failure receipt in place for inspection and close a remaining fixture only
+through its verified native shutdown path.
+
+For a coordinated own-archive plan, add `--own-local-plan`. For modeled
+collection candidate assessment on the stock host, use
+`--candidate-assessment` instead. These exercise disposable fixture data. They
+do not establish installation, deployment or Done acceptance for the user's
+collection.
+
+On 2026-11-16 the adapter bundled for source release 0.9.0 passed the
+stopped-ordinary fixture on official Vortex 2.9.1 with Cyberpunk Support 0.13.2.
+Authenticated health, local install readiness and collection-session readback
+succeeded. One ZIP was installed disabled, enabled and deployed, then disabled
+and restored. A separate two-ZIP plan installed both disabled and used one final
+deployment. The independent verifier checked the deployed owners, hashes,
+hardlink identities, rollback, eleven durable completion records and clean
+fixture shutdown. The ordinary deployment manifest and unresolved R13 marker
+retained their file identity and bytes. The single tiny ZIP took 5.6 seconds
+inside the guarded installer. The ordinary collection and Nexus downloads were
+outside this run.
+
+A separate run passed candidate assessment for compatible records, exact
+conflicts, installer choices, ignored conflicts and pending profile changes.
+The verifier confirmed the assessment preserved fixture state. During the run,
+the process monitor resamples only a proven change within the owned fixture
+process tree. Unrecognized processes or unverifiable identities fail the check.
+
 ## Verification boundary
 
 On 2026-11-03, an isolated instance of official Vortex 2.9.1 passed:

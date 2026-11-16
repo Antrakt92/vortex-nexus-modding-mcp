@@ -302,10 +302,23 @@ if (input.ownLocalPlan) {
   }
 }
 const before = read('ordinary-before.json'), after = read('ordinary-after.json');
-assertOrdinaryModSnapshot(before.mods); assertOrdinaryModSnapshot(after.mods);
-assert.deepEqual(before.health, after.health); assert.deepEqual(before.profiles, after.profiles); assert.deepEqual(before.mods, after.mods);
-assert.equal(before.manifestSha256, after.manifestSha256);
-assert.equal(ordinaryProcessesPreserved(before.processes, after.processes), true, 'Ordinary process generations changed or unavailable');
+if (before.mode === 'stopped') {
+  assert.equal(result.ordinaryMode, 'stopped');
+  assert.equal(result.fixtureObserved, true);
+  assert.equal(result.stoppedObservationFailure, undefined);
+  assert.deepEqual(before.processes, []);
+  assert.deepEqual(after, before);
+  for (const pin of [before.executable, before.appAsar, before.manifest, before.hold]) assert.equal(hash(pin.file), pin.sha256);
+  if (input.installRoute === 'mcp-local-archive') {
+    assert.equal(event('authenticated-local-install-readiness').readiness.sourceAdmissionVerified, true);
+    assert.equal(event('authenticated-collection-health').collectionHealth.collectionSession.present, false);
+  }
+} else {
+  assertOrdinaryModSnapshot(before.mods); assertOrdinaryModSnapshot(after.mods);
+  assert.deepEqual(before.health, after.health); assert.deepEqual(before.profiles, after.profiles); assert.deepEqual(before.mods, after.mods);
+  assert.equal(before.manifestSha256, after.manifestSha256);
+  assert.equal(ordinaryProcessesPreserved(before.processes, after.processes), true, 'Ordinary process generations changed or unavailable');
+}
 const log = fs.readFileSync(path.join(root, 'userdata/vortex.log'), 'utf8');
 assert.match(log, /clean application end/);
 const proof = { passed: true, root, checks: ['native import/install', 'authenticated compiled agent enable/deploy/disable/restore', 'manifest ownership', 'deployed hardlink identity', 'original hash and filesystem identity restored', 'post-shutdown game/staging hashes', 'ZIP size/SHA-256/CRC',
@@ -314,6 +327,10 @@ const proof = { passed: true, root, checks: ['native import/install', 'authentic
   ...(input.installRoute === 'mcp-local-archive' ? ['live bounded install diagnostics and retained sidecar bound to original attempt'] : []),
   ...(input.ownLocalPlan ? ['actual two-ZIP runPlan with disabled installation checkpoints, strict receipts/journal, one final deployment and independent restoration'] : []),
   ...(input.candidateAssessment ? ['built native candidate assessment: compatible/conflict/choices/ignored/pending-profile, immutable state and no payload authority'] : []),
-  'ordinary health/profile/mod inventory/manifest/process preservation', 'clean native shutdown'], nexusReuse: receipt.nexusReuse, at: new Date().toISOString() };
+  ...(before.mode === 'stopped'
+    ? ['ordinary host stayed stopped at observation checkpoints', 'ordinary deployment manifest and unresolved operation preserved',
+      ...(input.installRoute === 'mcp-local-archive' ? ['authenticated local install readiness and inactive fixture collection session'] : [])]
+    : ['ordinary health/profile/mod inventory/manifest/process preservation']),
+  'clean native shutdown'], nexusReuse: receipt.nexusReuse, at: new Date().toISOString() };
 fs.writeFileSync(path.join(root, 'independent-verification.json'), JSON.stringify(proof, null, 2), { flag: 'wx' });
 console.log(JSON.stringify(proof));
