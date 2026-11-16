@@ -59,6 +59,31 @@ test('simple installed candidate checks all incoming metadata without migration 
   assert(STATUSES.includes(row.status)); assert(row.reasons.every(r => REASONS.includes(r)));
 });
 
+test('local collections without Nexus coordinates retain native checks and cannot satisfy a revision pin', () => {
+  const f = fixture();
+  f.mods.collection.attributes = {};
+  const before = structuredClone(f.state), result = f.run();
+  assert.deepEqual(result.collection, {modId: 'collection', collectionId: null, revisionId: null, revisionNumber: null});
+  assert.equal(result.comparisons[0].status, 'compatible_installed_variant');
+  assert.equal(result.effectsAllowed, false);
+  assert.equal(result.migrationReady, false);
+  assert.deepEqual(f.state, before);
+
+  f.args.expectedRevisionId = 33;
+  assert.equal(f.row().status, 'insufficient_evidence');
+  assert.deepEqual(f.row().reasons, ['COLLECTION_REVISION_MISMATCH']);
+});
+
+test('partial or malformed Nexus coordinates do not masquerade as a local collection', () => {
+  for (const attributes of [{collectionId: 22}, {revisionId: 33}, {revisionNumber: 2},
+    {collectionId: 22, revisionId: 0}, {collectionId: 22, revisionId: 33, revisionNumber: '2'}]) {
+    const f = fixture();
+    f.mods.collection.attributes = attributes;
+    assert.throws(() => f.run(), /ASSESSMENT_COLLECTION_INVALID/);
+    assert.equal(f.calls.length, 0);
+  }
+});
+
 test('map keys override stored IDs and each helper receives fresh detached objects', () => {
   const f = fixture(); f.mods.old.id = 'foreign-old'; f.mods.candidate.id = 'foreign-candidate';
   const before = structuredClone(f.state), original = {...f.util};

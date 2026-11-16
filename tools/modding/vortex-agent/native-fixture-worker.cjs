@@ -657,6 +657,7 @@ async function run(api) {
       must(sha(__filename) === input.fixtureWorkerSha256, 'ASSESSMENT_DRIVER_SOURCE_MISMATCH');
       const digest = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
       const collectionId = 'native-assessment-collection', secondProfileId = 'native-assessment-second';
+      const localCollectionId = 'native-assessment-local-collection';
       const id = suffix => 'native-assessment-' + suffix;
       const md5 = text => crypto.createHash('md5').update('fixture metadata only:' + text).digest('hex');
       const choices = selected => ({ type: 'fomod', options: [{ name: 'fixture-step',
@@ -675,7 +676,9 @@ async function run(api) {
         { id: collectionId, state: 'installed', type: 'collection', installationPath: collectionId,
           attributes: { collectionId: 900001, collectionSlug: 'private-fixture-metadata',
             revisionId: 900002, revisionNumber: 1, downloadGame: G },
-          rules: [rule(md5('vanilla')), rule(md5('choices'), { installerChoices: choices('old') }), rule(md5('ignored'), { ignored: true })] }];
+          rules: [rule(md5('vanilla')), rule(md5('choices'), { installerChoices: choices('old') }), rule(md5('ignored'), { ignored: true })] },
+        { id: localCollectionId, state: 'installed', type: 'collection', installationPath: localCollectionId,
+          attributes: {}, rules: [rule(md5('vanilla'))] }];
       for (const value of records) {
         must(!api.getState().persistent.mods[G][value.id] && !fs.existsSync(contained(path.join(input.stage, value.id))), 'ASSESSMENT_SETUP_COLLISION');
         api.store.dispatch(actions.addMod(G, value));
@@ -765,12 +768,13 @@ async function run(api) {
         targetProfile: structuredClone(api.getState().persistent.profiles[P]),
         original: diskProof(target), staging: diskProof(staged), existingStaging: diskProof(existingBaseline.staged.path) };
       note('candidate-assessment-fixture-setup', { metadataRecordsOnly: true, payloadVerified: false,
-        collectionModId: collectionId, secondProfileId, records, secondProfile: second, preserved,
+        collectionModId: collectionId, localCollectionId, secondProfileId, records, secondProfile: second, preserved,
         fixtureWorkerSha256: input.fixtureWorkerSha256, candidateAssessmentSourceSha256: input.candidateAssessmentSourceSha256 });
-      async function assessmentCase(name, oldSuffix, candidateSuffix, expected) {
+      async function assessmentCase(name, oldSuffix, candidateSuffix, expected, targetCollection = collectionId) {
         boundary();
         must(lateSetupDispatches === 0, 'ASSESSMENT_LATE_SETUP_DISPATCH');
-        const args = { gameId: G, profileId: P, collectionModId: collectionId, expectedRevisionId: 900002,
+        const expectedRevisionId = targetCollection === collectionId ? 900002 : undefined;
+        const args = { gameId: G, profileId: P, collectionModId: targetCollection, expectedRevisionId,
           comparisons: [{ oldModId: id(oldSuffix), candidateModId: id(candidateSuffix) }] };
         const beforeState = structuredClone(stateProjection()), before = digest(beforeState), dispatch = api.store.dispatch;
         const actionTypes = []; let actionTypesTruncated = false;
@@ -804,7 +808,7 @@ async function run(api) {
         }
         must(before === after && dispatches === 0 && nativeEffects === 0 && lateSetupDispatches === 0, 'ASSESSMENT_RPC_CHANGED_STATE');
         must(result.schema === 'installed-candidate-assessment/1' && result.gameId === G && result.profileId === P
-          && result.collection?.modId === collectionId && result.collection.revisionId === 900002
+          && result.collection?.modId === targetCollection && result.collection.revisionId === (expectedRevisionId ?? null)
           && result.metadataOnly === true && result.effectsAllowed === false && result.migrationReady === false
           && result.diskDeploymentVerified === false && result.comparisons?.length === 1, 'ASSESSMENT_RESPONSE_INVALID');
         const row = result.comparisons[0];
@@ -831,6 +835,8 @@ async function run(api) {
       const pending = await assessmentCase('pending-profile', 'old-vanilla', 'candidate-vanilla', ['insufficient_evidence']);
       must(pending.reasons.includes('PROFILE_PENDING_REMOVE')
         && pending.profiles.old.some(p => p.id === secondProfileId && p.pendingRemove === true), 'ASSESSMENT_PENDING_PROFILE_UNPROVEN');
+      const local = await assessmentCase('local-collection', 'old-vanilla', 'candidate-vanilla', ['insufficient_evidence'], localCollectionId);
+      must(isDeepStrictEqual(local.reasons, pending.reasons), 'ASSESSMENT_LOCAL_COLLECTION_NATIVE_GATE_MISMATCH');
       const state = api.getState();
       must(isDeepStrictEqual(state.persistent.mods[G][modId], preserved.nativeMod)
         && isDeepStrictEqual(state.persistent.mods[G][existingBaseline.modId], preserved.existingMod)
