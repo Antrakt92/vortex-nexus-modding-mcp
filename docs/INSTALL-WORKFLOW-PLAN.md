@@ -42,6 +42,17 @@ collection work remains deferred. This plan does not authorize new live effects.
    questions, and measure question-to-response latency independently from install
    and deployment time.
 
+6. **Detect misleading collection progress after completion.** Stock Vortex
+   2.10.1 can bind a page row to the first mod matching a reference tag or
+   archive hash, even if that record is disabled and the patched matching
+   record is enabled. A real completed run showed nine Disabled rows and 96%
+   despite 244 enabled selected files and an exact deployment. Report both
+   the active install session and installed coverage for the exact collection
+   owner and profile. For the Vortex UI, reproduce the duplicate case and
+   prefer the enabled record that matches the rule and expected install
+   specification. Verify that real missing and disabled members are still
+   reported, including after a profile switch.
+
 ## Boundaries and evidence
 
 - Use official Vortex and its reviewed extension/event APIs only. No Core or
