@@ -10,6 +10,7 @@ import {repo,prepared,execute,original,stage,sha,parsed,deferred,tick} from './n
 import {registrationBackend} from './native-owned-mod-registration.test.mjs';
 import {createNativeExecutorJournal} from './native-executor-journal.mjs';
 import {RELAY_SOURCE_NAMES} from './owned-zip-relay-client.mjs';
+import {isolateHistoricalAncestry} from './native-historical-ancestry-test-fixture.mjs';
 import job from './install-job-contract.cjs';
 import dispatch from './native-dispatch-contract.cjs';
 import {frameFixture} from './native-executor-frame-owner.test.mjs';
@@ -81,7 +82,7 @@ export async function createPendingFixture(t,options={}){
     ...types,ReduxPersistorIPC:Main,SubPersistor,checkNativeExecutorFrame:owner=>frame.check(owner),holdNativeExecutorFrame:owner=>frame.hold(owner),DuckDBSingleton:base.Singleton,QueryRegistry:base.Registry,
     QueryInvalidator:class{notifyDirtyTables(){}setWatcher(){}},Database:class{},QueryWatcher:class{},
     parseAllQueries:dir=>parsed(dir),getVortexPath:()=>workspace,setupPersistenceIPC(){},getErrorMessageOrDefault:()=>'',
-    nativeStartupFS:fs,nativeStartupHash:crypto.createHash,nativeStartupTypes:nativeRegistrationTypes,createRequire:()=>loader,
+    nativeStartupFS:isolateHistoricalAncestry(options.nativeFS??fs,workspace),nativeStartupHash:crypto.createHash,nativeStartupTypes:nativeRegistrationTypes,createRequire:()=>loader,
     __filename:fileURLToPath(import.meta.url),__NEXUS_NATIVE_RUNTIME_BINDING__:binding});
   const startup=await wiring.verifyNativeExecutorStartup(level);
   const mainBackend=options.differentBackend?new types.LevelPersist(base.backend,'db'):level;
@@ -129,6 +130,21 @@ integration('initialized startup and existing READY genesis reuse the same journ
   for(const existing of [false,true]){const f=await createPendingFixture(t,{initialized:true});if(existing)await f.initialize();
     const out=await f.pending();assert.equal(out.schema,'native-executor-pending-preparation/1');assert.equal(f.calls.filter(c=>c.sql==='COMMIT').length,1);
     assert.equal(f.loads(),4);assert.equal(f.counts().startCalls,0);}
+});
+integration('initialized pending startup tolerates unrelated shared-parent metadata drift', async t => {
+  const io = Object.create(fs);
+  let sharedParent, changed = 0;
+  io.lstatSync = (file, options) => {
+    const stat = fs.lstatSync(file, options);
+    if (file === sharedParent && options?.bigint) stat.mtimeNs += BigInt(++changed);
+    return stat;
+  };
+  const f = await createPendingFixture(t, { initialized: true, nativeFS: io });
+  sharedParent = path.dirname(f.workspace);
+  const result = await f.pending();
+  assert.equal(result.schema, 'native-executor-pending-preparation/1');
+  assert.ok(changed >= 2, 'historical startup resampled the shared ancestor');
+  assert.equal(f.counts().startCalls, 0);
 });
 integration('invalid archive or request refuses before genesis root, anchor write or relay construction',async t=>{
   for(const mode of ['archive','parent','request','BOM']){const f=await createPendingFixture(t);let r=f.requestBytes,a=f.archiveBytes;
