@@ -65,7 +65,14 @@ function createNativeDialogController(api,{selectors,assertRead,assertRespond,pe
    try{await performResponse(invoke,eligible,context,scope);}finally{delegateOpen=false;}
    need(invokeCalls===1&&attempted,'RESPONSE_NOT_INVOKED');
    const deadline=now()+transitionTimeoutMs;while(true){await bounded(()=>assertRead({gameId:a.gameId,profileId:a.profileId}),deadline);const current=capture(a);need(digest(current.context)===digest(r.context),'CONTEXT_CHANGED');
-    if(!current.ids.includes(a.dialogId)){const tail=r.ids.slice(1);need(current.ids.length>=tail.length&&tail.every((id,i)=>current.ids[i]===id),'OTHER_DIALOG_CHANGED');return{schema:'native-dialog-response/1',action:a.action,dialogId:a.dialogId,nativeDialogDismissalVerified:true,remember:false,abortOnly:scope.abortOnly,...evidence()};}
+    if(!current.ids.includes(a.dialogId)){
+     // Resolving a question can synchronously enqueue the next question before
+     // the retained tail. Prove the untouched dialogs survived in order.
+     const tail=r.ids.slice(1), retained=new Set(tail);
+     const observedTail=current.ids.filter(id=>retained.has(id));
+     need(tail.length===observedTail.length&&tail.every((id,i)=>observedTail[i]===id),'OTHER_DIALOG_CHANGED');
+     return{schema:'native-dialog-response/1',action:a.action,dialogId:a.dialogId,nativeDialogDismissalVerified:true,remember:false,abortOnly:scope.abortOnly,...evidence()};
+    }
     need(current.fingerprint===r.fingerprint,'FRONT_CHANGED');need(now()<deadline,'DISMISSAL_TIMEOUT');await bounded(()=>sleep(pollMs),deadline);
    }
   }catch(error){if(attempted)throw Error('NATIVE_DIALOG_EFFECT_UNCERTAIN_RECONCILE');throw error;}finally{busy=false;}

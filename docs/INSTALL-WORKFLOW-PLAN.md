@@ -4,6 +4,55 @@ Improve the supported stock Vortex workflow in small independently useful steps.
 Mod development can continue using the existing own-local ZIP route while later
 collection work remains deferred. This plan does not authorize new live effects.
 
+## Follow-up from a collection upgrade on stock Vortex 2.10.1
+
+1. **Bind the collection wizard to its installed owner.** An existing inactive
+   collection and its newly staged replacement can display the same name and
+   revision. The current wizard refuses that ambiguity. Find a stock, observable
+   owner discriminator tied to the native install event, archive and profile.
+   Verify both Install Now and Done with two identical titles. Preserve refusal
+   when the renderer cannot prove which owner it is showing.
+2. **Finish one dialog even when Vortex immediately presents another.** After
+   answering a dependency warning, Vortex can prepend a previous-version
+   question ahead of the preserved queue. Verify that the answered ID disappeared
+   and that the other observed IDs survived in order. Give the new question a
+   fresh read and a separate request ID. Test prepending, a missing retained
+   dialog and a reordered retained queue.
+3. **Identify the effect of a dependency warning.** The stock prompt contains
+   neither the incoming archive nor the affected rules. The Ignore callback marks
+   those rules ignored on their owning mods, including older collection roots.
+   Establish a read-only way to bind the request to the exact incoming archive,
+   dependency edges and consumers before responding. Confirm that an update to
+   one profile preserves the older profile's mods and rule behavior.
+4. **Resume a paused collection without repeating a completed answer.** Retain
+   the original request, current queue, selected member identities and disk
+   state. Add a source-admitted recovery path only after establishing how the
+   real Vortex session behaves across a restart. Test an ambiguous reply after
+   dismissal while another question is open. No automatic replay or manual
+   deletion of the original receipt.
+
+5. **Watch for questions throughout a collection run.** Start the observer before
+   dispatching the install or resume event. Report each newly actionable question
+   immediately with its collection, revision, profile and, where stock Vortex
+   exposes them, archive and affected rules. Apply only decisions frozen for that
+   run. Keep one response in flight and verify each dismissal before responding to
+   the next question. Emit an actionable hold as soon as a question falls outside
+   the plan, and stop answering when the native run times out or ends, even if
+   stale dialogs remain visible. Verify on a real resume with newly prepended
+   questions, and measure question-to-response latency independently from install
+   and deployment time.
+
+6. **Detect misleading collection progress after completion.** Stock Vortex
+   2.10.1 can bind a page row to the first mod matching a reference tag or
+   archive hash, even if that record is disabled and the patched matching
+   record is enabled. A real completed run showed nine Disabled rows and 96%
+   despite 244 enabled selected files and an exact deployment. Report both
+   the active install session and installed coverage for the exact collection
+   owner and profile. For the Vortex UI, reproduce the duplicate case and
+   prefer the enabled record that matches the rule and expected install
+   specification. Verify that real missing and disabled members are still
+   reported, including after a profile switch.
+
 ## Boundaries and evidence
 
 - Use official Vortex and its reviewed extension/event APIs only. No Core or
