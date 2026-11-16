@@ -3,7 +3,7 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const source=fs.readFileSync(path.join(__dirname,'collection-wizard-host.cjs'),'utf8');
 const OFFICIAL='ec3a29d58ea65a1ca84e456742c894a19efe96920a6710063d221d451a26d59a';
 const sha=x=>crypto.createHash('sha256').update(x).digest('hex');
-function fixture(){
+function fixture(version='2.9.1'){
  const root=path.resolve('modeled-wizard-host'),own=path.join(root,'user/plugins/adapter'),user=path.join(root,'user'),manifest=path.join(root,'reviewed.json'),pkg=path.join(root,'resources/app.asar');
  const files=new Map(),symlinks=new Set();let serial=1,reads=0,factories=0,proves=0,afterRead=null,beforeReturn=null;
  const key=p=>(/^[a-z]:[\\/]/i.test(p)?path.win32.normalize(p):path.resolve(p)).replace(/\\/g,'/').toLowerCase();
@@ -14,18 +14,19 @@ function fixture(){
  put(pkg,'official host');put(path.join(own,'index.js'),'reviewed adapter');
  put(path.join(own,'provenance.json'),JSON.stringify({pluginSha256:sha('reviewed adapter')}));
  let extensions=[{dynamic:true,path:own,name:'adapter',info:{id:'adapter',version:'1.0',bundled:false}},{dynamic:false,name:'builtin'}];
- const api={getLoadedExtensions:()=>extensions};
+ const api={getState:()=>({app:{appVersion:version}}),getLoadedExtensions:()=>extensions};
  const stub={normalizeAdditionalSources:require('./local-install-host.cjs').normalizeAdditionalSources,createLocalInstallHostAdmission({packagePath,expected}){factories++;return async()=>{
-  proves++;const all=[{path:packagePath,sha256:OFFICIAL},...expected.dynamic.flatMap(d=>d.files.map(f=>({path:path.join(d.path,f.path),sha256:f.sha256}))),...(expected.additionalSources||[])];
+  proves++;const all=[{path:packagePath,sha256:expected.appAsarSha256},...expected.dynamic.flatMap(d=>d.files.map(f=>({path:path.join(d.path,f.path),sha256:f.sha256}))),...(expected.additionalSources||[])];
   const sources=all.map(f=>{const body=files.get(key(f.path))?.body;assert.ok(body,'modeled admitted file exists');assert.equal(f.path===packagePath?body.toString():sha(body),f.path===packagePath?'official host':f.sha256);return {...f,generation:stamp(f.path)};});
-  beforeReturn?.();return {appAsarSha256:OFFICIAL,dynamicExtensions:expected.dynamic.length,sources};
+  beforeReturn?.();return {appAsarSha256:expected.appAsarSha256,dynamicExtensions:expected.dynamic.length,sources};
  };}};
  const module={exports:{}};
- const requireModel=name=>name==='original-fs'?disk:name==='./local-install-host.cjs'?stub:name==='./stock-vortex-2.9.1-admission.json'?{appAsarSha256:OFFICIAL,extensions:[]}:name==='./paths.cjs'?{receipts:path.join(root,'receipts')}:require(name);
+ const requireModel=name=>name==='original-fs'?disk:name==='./local-install-host.cjs'?stub:name==='./official-vortex-hosts.cjs'?require(name):name==='./paths.cjs'?{receipts:path.join(root,'receipts')}:require(name);
  const load=vm.runInThisContext('(function(require,module,exports,__dirname,process){'+source+'\n})');
  load(requireModel,module,module.exports,own,{execPath:path.join(root,'Vortex.exe')});
  const helpers=rows=>put(manifest,JSON.stringify({schema:'collection-wizard-reviewed-helpers/1',reviewed:true,appAsarSha256:OFFICIAL,helpers:rows}));
- const make=()=>module.exports.createWizardHostAdmission(api,{getVortexPath:()=>user},{reviewedHelpersPath:manifest});
+ const make=(reviewedHelpersPath=manifest)=>module.exports.createWizardHostAdmission(api,{getVortexPath:()=>user},
+  reviewedHelpersPath===null?{}:{reviewedHelpersPath});
  const addHelper=(folder='helper')=>{const p=path.join(user,'plugins',folder);put(path.join(p,'index.js'),'reviewed helper');put(path.join(p,'worker.cjs'),'reviewed worker');extensions.push({dynamic:true,path:p,name:folder});helpers([{folder,files:[{path:'index.js',sha256:sha('reviewed helper')},{path:'worker.cjs',sha256:sha('reviewed worker')}]}]);return p;};
  return {root,own,pkg,manifest,disk,make,put,helpers,addHelper,api,symlinks,stat,files,key,stamp,exports:module.exports,
   get extensions(){return extensions;},set extensions(v){extensions=v;},set afterRead(v){afterRead=v;},set beforeReturn(v){beforeReturn=v;},counters:()=>({reads,factories,proves})};
@@ -110,4 +111,25 @@ for(const [label,refs]of [
 ])test('invalid externalSources refuses eagerly even for unloaded helper: '+label,async()=>{const f=fixture();externalHelper(f,refs);f.extensions=f.extensions.filter(e=>e.name!=='helper');await assert.rejects(f.make()(),/BINDING_INVALID|ADMISSION_INVALID/);assert.equal(f.counters().factories,0);});
 for(const where of ['manifest','helper','file'])test('unknown '+where+' fields refuse instead of ignoring source policy',async()=>{
  const f=fixture();f.addHelper();const value=JSON.parse(f.files.get(f.key(f.manifest)).body.toString());(where==='manifest'?value:where==='helper'?value.helpers[0]:value.helpers[0].files[0]).unsupported=true;f.put(f.manifest,JSON.stringify(value));await assert.rejects(f.make()(),/ADMISSION_INVALID|HELPER_FILE_INVALID/);
+});
+
+test('2.10.1 does not inherit 2.9.1 approval of a reviewed helper',async()=>{
+ const fixture2101=fixture('2.10.1');
+ assert.equal((await fixture2101.make()()).hostVersion,'2.10.1');
+ fixture2101.addHelper();
+ await assert.rejects(fixture2101.make()(),/ADMISSION_INVALID/);
+ assert.equal(fixture2101.counters().proves,1);
+});
+
+test('default helper ledger path is scoped to the admitted 2.10.1 host',async()=>{
+ const f=fixture('2.10.1'),admit=f.make(null);
+ const old=path.join(f.root,'collection-wizard-reviewed-helpers.json');
+ const current=path.join(f.root,'collection-wizard-reviewed-helpers-2.10.1.json');
+ f.put(old,'old-host contents must stay unread');
+ const proof=await admit();
+ assert.equal(proof.hostVersion,'2.10.1');
+ f.put(current,JSON.stringify({schema:'collection-wizard-reviewed-helpers/1',reviewed:true,
+   appAsarSha256:OFFICIAL,helpers:[]}));
+ assert.throws(()=>admit.revalidate(proof),/METADATA_CHANGED/);
+ await assert.rejects(admit(),/ADMISSION_INVALID/);
 });

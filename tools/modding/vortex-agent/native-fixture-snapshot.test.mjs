@@ -74,3 +74,41 @@ test('stopped ordinary admits only no host or the separately spawned fixture coh
   assert.equal(stoppedOrdinaryCohort([unexpected], 100), false);
   assert.equal(stoppedOrdinaryCohort(null), false);
 });
+
+test('fixture host admission is chosen from tracked versions and exhausts only the reviewed bundled sources', () => {
+  const source = fs.readFileSync(new URL('./native-fixture.mjs', import.meta.url), 'utf8');
+  const helpers = source.slice(source.indexOf('function loadFixtureAdmission('), source.indexOf('async function stoppedSnapshot('));
+  const files = [];
+  const support = 'Cyberpunk 2077 Support for Vortex exact';
+  const sourceCommit = 'a'.repeat(40), appAsarSha256 = 'b'.repeat(64), indexHash = 'c'.repeat(64);
+  const manifest = { schema: 'stock-vortex-source-admission/1', vortexVersion: '2.10.1', appAsarSha256,
+    provenance: { vortexSourceCommit: sourceCommit }, extensions: [
+      { kind: 'bundled', folder: 'offered-by-stock', files: [{ path: 'index.cjs', sha256: indexHash }] },
+      { kind: 'user', folder: support, files: [{ path: 'index.js', sha256: indexHash }] },
+      { kind: 'user', folder: 'ordinary-profile-plugin', files: [{ path: 'index.js', sha256: indexHash }] },
+    ] };
+  const { loadFixtureAdmission, reviewedFixtureExtensions } = vm.runInNewContext(helpers
+    + '; ({loadFixtureAdmission, reviewedFixtureExtensions})', {
+    fs: { readFileSync: file => { files.push(file); return Buffer.from(JSON.stringify(manifest)); } },
+    must: (ok, code) => { if (!ok) throw Error(code); },
+    here: 'C:\\review', path: path.win32, sha: () => 'd'.repeat(64),
+  });
+  assert.throws(() => loadFixtureAdmission('..\\evil'), /FIXTURE_HOST_VERSION_UNREVIEWED/);
+  assert.equal(files.length, 0);
+  const review = loadFixtureAdmission('2.10.1');
+  assert.equal(files[0], 'C:\\review\\stock-vortex-2.10.1-admission.json');
+  const resolved = reviewedFixtureExtensions(review, path.win32.join('C:\\support', support), indexHash,
+    'C:\\Program Files\\Vortex\\Vortex.exe');
+  assert.equal(resolved.hostVersion, '2.10.1');
+  assert.equal(resolved.appAsarSha256, appAsarSha256);
+  assert.equal(resolved.supportIndexSha256, indexHash);
+  assert.equal(resolved.dynamicSources.length, 1);
+  assert.equal(resolved.dynamicSources[0].path,
+    'C:\\Program Files\\Vortex\\resources\\app.asar.unpacked\\bundledPlugins\\offered-by-stock');
+  assert.throws(() => reviewedFixtureExtensions(review, support, appAsarSha256, 'C:/Vortex.exe'),
+    /FIXTURE_SUPPORT_NOT_STOCK_REVIEWED/);
+  assert.throws(() => reviewedFixtureExtensions(review, 'ordinary-profile-plugin', indexHash, 'C:/Vortex.exe'),
+    /FIXTURE_SUPPORT_NOT_STOCK_REVIEWED/);
+  delete manifest.provenance.vortexSourceCommit;
+  assert.throws(() => loadFixtureAdmission('2.10.1'), /FIXTURE_HOST_ADMISSION_INVALID/);
+});

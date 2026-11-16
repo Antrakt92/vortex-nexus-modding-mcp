@@ -2,7 +2,7 @@
 const fs=(()=>{try{return require('original-fs');}catch(_){return require('node:fs');}})();
 const path=require('node:path'),crypto=require('node:crypto');
 const {createLocalInstallHostAdmission,normalizeAdditionalSources}=require('./local-install-host.cjs');
-const stock=require('./stock-vortex-2.9.1-admission.json');
+const {officialVortexHost}=require('./official-vortex-hosts.cjs');
 const {receipts}=require('./paths.cjs');
 const OFFICIAL_HOST='ec3a29d58ea65a1ca84e456742c894a19efe96920a6710063d221d451a26d59a';
 const need=(v,c)=>{if(!v)throw Error(c);};
@@ -27,8 +27,8 @@ function readMetadata(file,disk){
  const bytes=disk.readFileSync(file);need(inspect(file,disk)===stamp,'COLLECTION_WIZARD_METADATA_CHANGED');
  return {value:JSON.parse(bytes.toString('utf8')),proof:{path:file,generation:stamp,sha256:hash(bytes)}};
 }
-function validateHelpers(value){
- need(fields(value,['schema','reviewed','appAsarSha256','helpers'])&&value.schema==='collection-wizard-reviewed-helpers/1'&&value.reviewed===true&&value.appAsarSha256===OFFICIAL_HOST&&Array.isArray(value.helpers)&&value.helpers.length<=32,'COLLECTION_WIZARD_ADMISSION_INVALID');
+function validateHelpers(value,appAsarSha256){
+ need(fields(value,['schema','reviewed','appAsarSha256','helpers'])&&value.schema==='collection-wizard-reviewed-helpers/1'&&value.reviewed===true&&value.appAsarSha256===appAsarSha256&&Array.isArray(value.helpers)&&value.helpers.length<=32,'COLLECTION_WIZARD_ADMISSION_INVALID');
  const seen=new Set();
  for(const row of value.helpers){
   need(fields(row,['folder','files','externalSources'])&&typeof row.folder==='string'&&/^[A-Za-z0-9_.-]{1,200}$/.test(row.folder)&&!['.','..'].includes(row.folder)&&!seen.has(row.folder.toLowerCase())&&Array.isArray(row.files)&&row.files.length>0&&row.files.length<=128,'COLLECTION_WIZARD_ADMISSION_INVALID');
@@ -47,7 +47,7 @@ function validateHelpers(value){
 function reviewedHelpers(file,disk=fs){
  need(typeof file==='string'&&path.isAbsolute(file),'COLLECTION_WIZARD_ADMISSION_PATH');
  if(!disk.existsSync(file))return[];
- return validateHelpers(readMetadata(file,disk).value);
+ return validateHelpers(readMetadata(file,disk).value,OFFICIAL_HOST);
 }
 function census(api){
  need(typeof api?.getLoadedExtensions==='function','COLLECTION_WIZARD_EXTENSIONS_UNAVAILABLE');
@@ -70,24 +70,30 @@ function createWizardHostAdmission(api,util,options={}){
  const disk=options.fsSyncImpl||fs;
  const packagePath=path.join(path.dirname(process.execPath),'resources/app.asar');
  const user=path.join(util.getVortexPath('userData'),'plugins'),bundled=path.join(path.dirname(packagePath),'app.asar.unpacked/bundledPlugins');
- const manifestPath=options.reviewedHelpersPath||path.join(path.dirname(receipts),'collection-wizard-reviewed-helpers.json');
- need(typeof manifestPath==='string'&&path.isAbsolute(manifestPath),'COLLECTION_WIZARD_ADMISSION_PATH');
+ const hostVersion=()=>api.getState()?.app?.appVersion;
+ const manifestPathFor=version=>options.reviewedHelpersPath||path.join(path.dirname(receipts),
+  version==='2.9.1'?'collection-wizard-reviewed-helpers.json':`collection-wizard-reviewed-helpers-${version}.json`);
  const ownRoot=norm(__dirname),provenancePath=path.join(__dirname,'provenance.json');
  let verifier=null,verifierKey=null,current=null;
  function assertCurrent(proof){
   need(proof&&proof===current,'COLLECTION_WIZARD_HOST_PROOF_REQUIRED');
+  need(hostVersion()===proof.hostVersion,'COLLECTION_WIZARD_UNREVIEWED_HOST');
   need(JSON.stringify(census(api))===JSON.stringify(proof.loadedExtensions),'COLLECTION_WIZARD_EXTENSIONS_CHANGED');
   for(const source of [...proof.sources,...proof.metadata])need(inspect(source.path,disk)===source.generation,'COLLECTION_WIZARD_SOURCE_GENERATION_CHANGED');
-  if(proof.reviewedHelpersAbsent)need(!disk.existsSync(manifestPath),'COLLECTION_WIZARD_METADATA_CHANGED');
+  if(proof.reviewedHelpersAbsent)need(!disk.existsSync(manifestPathFor(proof.hostVersion)),'COLLECTION_WIZARD_METADATA_CHANGED');
   need(JSON.stringify(census(api))===JSON.stringify(proof.loadedExtensions),'COLLECTION_WIZARD_EXTENSIONS_CHANGED');
   return proof;
  }
  const admit=async()=>{
   current=null;
   try{
+   const version=hostVersion(),stock=officialVortexHost(version);
+   need(stock,'COLLECTION_WIZARD_UNREVIEWED_HOST');
+   const {appAsarSha256}=stock,manifestPath=manifestPathFor(version);
+   need(typeof manifestPath==='string'&&path.isAbsolute(manifestPath),'COLLECTION_WIZARD_ADMISSION_PATH');
    const loaded=census(api),metadata=[],present=disk.existsSync(manifestPath);
    const manifest=present?readMetadata(manifestPath,disk):null;
-   const helpers=manifest?validateHelpers(manifest.value):[];if(manifest)metadata.push(manifest.proof);
+   const helpers=manifest?validateHelpers(manifest.value,appAsarSha256):[];if(manifest)metadata.push(manifest.proof);
    const provenance=readMetadata(provenancePath,disk);need(isHash(provenance.value.pluginSha256),'COLLECTION_WIZARD_ADMISSION_INVALID');metadata.push(provenance.proof);
    const dynamic=[],external=[];
    for(const extension of loaded){
@@ -102,15 +108,14 @@ function createWizardHostAdmission(api,util,options={}){
     if(helper)external.push(...normalizeAdditionalSources(helper.externalSources));
    }
    need(dynamic.some(row=>norm(row.path)===ownRoot),'COLLECTION_WIZARD_ADAPTER_NOT_LOADED');
-   need(stock.appAsarSha256===OFFICIAL_HOST,'COLLECTION_WIZARD_UNREVIEWED_HOST');
-   const pinned=new Map([[norm(packagePath),OFFICIAL_HOST],...dynamic.flatMap(d=>d.files.map(f=>[norm(path.join(d.path,f.path)),f.sha256]))]),additionalSources=[];
+   const pinned=new Map([[norm(packagePath),appAsarSha256],...dynamic.flatMap(d=>d.files.map(f=>[norm(path.join(d.path,f.path)),f.sha256]))]),additionalSources=[];
    for(const file of external){const id=norm(file.path);if(pinned.has(id)){need(pinned.get(id)===file.sha256,'COLLECTION_WIZARD_SOURCE_HASH_CONFLICT');continue;}pinned.set(id,file.sha256);additionalSources.push(file);}
-   const expected={appAsarSha256:OFFICIAL_HOST,dynamic,...(additionalSources.length?{additionalSources}: {})};
+   const expected={appAsarSha256,dynamic,...(additionalSources.length?{additionalSources}: {})};
    const key=JSON.stringify({expected,loaded,metadata});
    if(!verifier||key!==verifierKey){verifier=createLocalInstallHostAdmission({packagePath,expected,api,fsImpl:options.fsImpl||fs.promises});verifierKey=key;}
    const sources=await verifier();
-   need(sources.appAsarSha256===OFFICIAL_HOST,'COLLECTION_WIZARD_UNREVIEWED_HOST');
-   const proof=freeze({...sources,sourceAdmitted:true,loadedExtensions:loaded,metadata,reviewedHelpersAbsent:!present});
+   need(sources.appAsarSha256===appAsarSha256,'COLLECTION_WIZARD_UNREVIEWED_HOST');
+   const proof=freeze({...sources,hostVersion:version,sourceAdmitted:true,loadedExtensions:loaded,metadata,reviewedHelpersAbsent:!present});
    current=proof;return assertCurrent(proof);
   }catch(error){current=null;throw error;}
  };

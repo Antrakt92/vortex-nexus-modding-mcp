@@ -36,6 +36,79 @@ function diagnosticProof(value, completed = false) {
     'INSTALL_DIAGNOSTICS_COUNTS_INVALID');
   }
 }
+const namedArchiveOrder = input.hostVersion === '2.10.1';
+const archiveOrderId = namedArchiveOrder ? 'cyberpunk2077-archive' : undefined;
+const expectedOrder = namedArchiveOrder
+  ? [input.payloadPath, ...(input.planPackages || []).map(item => item.payloadPath)].map(file => path.basename(file)).sort()
+  : [];
+const orderSourceBlobs = namedArchiveOrder ? {
+  profiles: '6e8ba559e24efe4522019f41211469336f5e39fc', installManager: '41889630b3ebc826e3ef8e3847bc6706bee9fa48',
+  activity: '250cf30f897938ed1705cfec654b3b6b4f79d598', loadOrder: '493e510f653e5736de484e143dde7e57fd77a18e',
+  loadOrderAction: '7ab7ff28037ab6a143cb783f8ede85145f617854',
+  namedLoadOrderReducer: '02675b153879c7cc809dcb3f59fe36c6b4cefeb5',
+  validationAction: '3546403b98078e3e8904c1c99a6ddc4b04a04603',
+  reduxWatcher: '5bde67b43af3c10ca70297129539e5ba1819cb8b',
+} : {
+  profiles: '4b4cddc08c29f5fa2d78b0e7f59ebea8dc3380c1', installManager: '6f847f3f878a0f8a8082b827d8b2bc4ebbcbe221',
+  activity: '250cf30f897938ed1705cfec654b3b6b4f79d598', loadOrder: '8f3044cc73c8d97629da3f4f304382eb7fe71149',
+  loadOrderAction: 'b8f88de149399ed01d346ae8e6b4788438078f30',
+};
+function observeProfileLoadOrder() {
+  const orders = new Map([[archiveOrderId, { ids: expectedOrder, written: false, validated: false, validationRequired: false }]]);
+  if (namedArchiveOrder) orders.set('cyberpunk2077-redmod', { ids: [], written: false, validated: false, validationRequired: false });
+  const observations = [];
+  const idsOf = entries => !Array.isArray(entries) ? null : {
+    count: entries.length,
+    rows: entries.slice(0, 12).map(entry => expectedOrder.includes(entry?.id)
+      ? { id: entry.id, named: entry.name === entry.id, enabled: entry.enabled === true, managed: entry.modId !== undefined }
+      : { id: '<unexpected fixture entry>' }),
+  };
+  const exactOrder = (entries, ids) => Array.isArray(entries) && entries.length === ids.length
+    && entries.every((entry, i) => entry?.id === ids[i] && entry.name === ids[i]
+      && entry.enabled === true && entry.modId === undefined);
+  const stored = (state, id) => namedArchiveOrder
+    ? state.persistent.loadOrders?.[P]?.[id] : state.persistent.loadOrder?.[P];
+  return {
+    observe(action, previousState) {
+      const payload = action?.payload;
+      if (payload?.profileId !== P) return;
+      const order = orders.get(payload.loadOrderId);
+      if (observations.length < 24 && ['SET_FB_LOAD_ORDER', 'SET_FB_VALIDATION_RESULT'].includes(action.type)) {
+        observations.push({ type: action.type, id: order ? payload.loadOrderId ?? null : '<unexpected load order>',
+          ...(action.type === 'SET_FB_LOAD_ORDER' ? { entries: idsOf(payload.loadOrder) }
+            : { valid: payload.result === undefined }) });
+      }
+      if (!order) return;
+      if (action.type === 'SET_FB_LOAD_ORDER') {
+        order.written = exactOrder(payload.loadOrder, order.ids);
+        if (namedArchiveOrder) {
+          // ReduxWatcher uses deep equality, so an unchanged refresh never
+          // reaches the named load-order change handler or validator.
+          order.validationRequired = !isDeepStrictEqual(stored(previousState, payload.loadOrderId), payload.loadOrder);
+          order.validated = false;
+        }
+      } else if (order.written && action.type === 'SET_FB_VALIDATION_RESULT' && payload.result === undefined) {
+        order.validated = true;
+      }
+    },
+    settled(state) {
+      return [...orders].every(([id, order]) => order.written
+        && (!order.validationRequired || order.validated) && exactOrder(stored(state, id), order.ids));
+    },
+    diagnostics(state) {
+      return { observations, orders: [...orders].map(([id, order]) => ({
+        id: id ?? null, expected: order.ids, written: order.written, validated: order.validated,
+        validationRequired: order.validationRequired, persisted: idsOf(stored(state, id)),
+      })) };
+    },
+    proof() {
+      return { loadOrderCompletionObserved: true, sourceBlobs: orderSourceBlobs,
+        ...(namedArchiveOrder ? { namedLoadOrders: [...orders].map(([id, order]) => ({
+          id, entries: order.ids, validationRequired: order.validationRequired, validationObserved: order.validated,
+        })) } : {}) };
+    },
+  };
+}
 const norm = p => path.resolve(p).toLowerCase();
 const sha = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 function verifyPlanClientSources() {
@@ -90,7 +163,7 @@ function native(api, name, args) {
     try { must(api.events.emit(name, ...args(cb)), 'NO_NATIVE_LISTENER_' + name); } catch (err) { reject(err); }
   }), 'NATIVE_EVENT_TIMEOUT_' + name);
 }
-function rpc(token, name, args = {}) {
+function rpc(token, name, args = {}, acceptedToolErrors = []) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } });
     const req = http.request('http://127.0.0.1:3702/mcp', { method: 'POST', headers: {
@@ -102,8 +175,13 @@ function rpc(token, name, args = {}) {
         try {
           must(res.statusCode === 200, 'FIXTURE_HTTP_STATUS_' + res.statusCode);
           const payload = text.startsWith('{') ? JSON.parse(text) : JSON.parse(text.split(/\r?\n/).filter(l => l.startsWith('data:')).map(l => l.slice(5).trim()).join('\n'));
-          must(!payload.error && !payload.result?.isError, 'FIXTURE_TOOL_ERROR_' + name + '_' + (payload.result?.content?.[0]?.text || 'RPC'));
-          resolve(JSON.parse(payload.result.content[0].text));
+          const resultText = payload.result?.content?.[0]?.text;
+          must(!payload.error && typeof resultText === 'string', 'FIXTURE_TOOL_ERROR_' + name + '_RPC');
+          if (payload.result.isError) {
+            const refused = JSON.parse(resultText)?.error;
+            must(acceptedToolErrors.includes(refused), 'FIXTURE_TOOL_ERROR_' + name + '_' + resultText);
+            resolve({ refused });
+          } else resolve(JSON.parse(resultText));
         } catch (err) { reject(err); }
       });
     });
@@ -176,11 +254,12 @@ async function run(api) {
     const token = crypto.randomBytes(32).toString('hex');
     note('native-source-inventory', { loaded: api.getLoadedExtensions().map(e => ({ name: e.name, path: e.path, dynamic: e.dynamic })) });
     const sourceBinding = { packagePath: path.join(path.dirname(process.execPath), 'resources/app.asar'), expected: {
-      appAsarSha256: 'ec3a29d58ea65a1ca84e456742c894a19efe96920a6710063d221d451a26d59a',
+      ...(input.hostVersion ? { appVersion: input.hostVersion } : {}),
+      appAsarSha256: input.appAsarSha256 || 'ec3a29d58ea65a1ca84e456742c894a19efe96920a6710063d221d451a26d59a',
       dynamic: [
         ...(input.dynamicSources || []).filter(e => ![__dirname, path.join(input.userData, 'plugins/fixture-cyberpunk-support')].includes(e.path)),
         { path: __dirname, files: [{ path: 'index.js', sha256: sha(__filename) }, { path: 'runtime.cjs', sha256: input.runtimeSourceSha256 }] },
-        { path: path.join(input.userData, 'plugins/fixture-cyberpunk-support'), files: [{ path: 'index.js', sha256: input.supportIndexSha256 || '59d7d12179f30b2e77cab28bb5d417479e5f39269e9ce71e49ea5fac5782269a' }] },
+        { path: path.join(input.userData, 'plugins/fixture-cyberpunk-support'), files: input.supportSources || [{ path: 'index.js', sha256: '59d7d12179f30b2e77cab28bb5d417479e5f39269e9ce71e49ea5fac5782269a' }] },
       ],
     } };
     listener = bundle.start(api, 3702, { tokenProvider: async () => token, localInstallHostBinding: sourceBinding });
@@ -191,12 +270,36 @@ async function run(api) {
     if (input.installRoute === 'mcp-local-archive' && input.supportIndexSha256) {
       const readiness = await rpc(token, 'read_local_install_readiness');
       must(readiness.localArchiveInstallSupported === true && readiness.sourceAdmissionVerified === true
-        && readiness.hostVersion === '2.9.1', 'FIXTURE_INSTALL_READINESS_NOT_VERIFIED');
+        && readiness.hostVersion === input.hostVersion, 'FIXTURE_INSTALL_READINESS_NOT_VERIFIED');
       note('authenticated-local-install-readiness', { readiness });
       const collectionHealth = await rpc(token, 'read_collection_health');
       must(health.gameId === G && health.profileId === P && collectionHealth.collectionSession?.available === true
         && collectionHealth.collectionSession.present === false, 'FIXTURE_COLLECTION_CONTEXT_MISMATCH');
       note('authenticated-collection-health', { collectionHealth });
+    }
+    if (input.hostVersion === '2.10.1') {
+      const queue = await rpc(token, 'list_dialogs');
+      must(Array.isArray(queue) && queue.length <= 128, 'FIXTURE_NATIVE_DIALOG_QUEUE_INVALID');
+      const nativeDialog = await rpc(token, 'read_native_dialog', { gameId: G, profileId: P },
+        queue.length ? ['NATIVE_DIALOG_QUESTION_INVALID', 'NATIVE_DIALOG_UNSUPPORTED_QUESTION'] : []);
+      if (nativeDialog.refused) {
+        const actual = await rpc(token, 'list_dialogs');
+        const projection = values => values.map(row => [row.id, row.type, row.title, row.actions.length]);
+        must(Array.isArray(actual) && isDeepStrictEqual(projection(actual), projection(queue)),
+          'FIXTURE_NATIVE_DIALOG_QUEUE_CHANGED');
+        const first = queue[0];
+        must(typeof first.type === 'string' && Array.isArray(first.actions), 'FIXTURE_NATIVE_DIALOG_QUEUE_INVALID');
+        const title = typeof first.title === 'string' && /^[A-Za-z0-9 _?'!.()-]{1,120}$/.test(first.title)
+          ? first.title : null;
+        note('authenticated-native-dialog-readiness', { nativeDialog, unchangedQueueSize: queue.length,
+          first: { type: first.type, title, actionCount: first.actions.length } });
+      } else {
+        must(queue.length === 0 && nativeDialog.schema === 'native-dialog-readiness/1' && nativeDialog.status === 'empty'
+          && nativeDialog.queueSize === 0 && Array.isArray(nativeDialog.eligibleActions)
+          && nativeDialog.eligibleActions.length === 0 && nativeDialog.installationCompleted === false,
+        'FIXTURE_NATIVE_DIALOG_QUEUE_NOT_EMPTY');
+        note('authenticated-native-dialog-readiness', { nativeDialog });
+      }
     }
     const target = contained(path.join(input.game, input.payloadPath));
     must(sha(target) === input.sentinelSha256, 'SENTINEL_BASELINE_MISMATCH');
@@ -252,23 +355,21 @@ async function run(api) {
         if (input.ownLocalPlan) {
           const second = { id: 'native-agent-plan-second', gameId: G, name: 'PRIVATE inactive plan preservation',
             modState: { [id]: { enabled: true, enabledTime: 1 } }, lastActivated: 0, features: {} };
-          const dispatch = api.store.dispatch; let complete, released = false, loadOrderCompleted = false, starts = 0, stops = 0;
+          const dispatch = api.store.dispatch; let complete, released = false, starts = 0, stops = 0;
+          const order = observeProfileLoadOrder();
           const settled = new Promise(resolve => { complete = resolve; });
           function observe(...args) {
             if (released) return api.store.dispatch.apply(api.store, args);
-            const result = dispatch.apply(this, args), action = args[0];
-            if (action?.type === 'SET_FB_LOAD_ORDER' && action.payload?.profileId === P
-              && Array.isArray(action.payload.loadOrder) && action.payload.loadOrder.length === 0) {
-              loadOrderCompleted = true;
-            }
+            const action = args[0];
+            order.observe(action, api.getState());
+            const result = dispatch.apply(this, args);
             if (action?.payload?.group === 'installing_dependencies' && action.payload.activityId === id) {
               if (action.type === 'START_ACTIVITY') starts++;
               if (action.type === 'STOP_ACTIVITY') stops++;
             }
-            if (loadOrderCompleted && starts === 2 && stops === 2
-              && (api.getState().session.base.activity?.installing_dependencies ?? []).length === 0
-              && Array.isArray(api.getState().persistent.loadOrder?.[P])
-              && api.getState().persistent.loadOrder[P].length === 0) complete();
+            const state = api.getState();
+            if (order.settled(state) && starts === 2 && stops === 2
+              && (state.session.base.activity?.installing_dependencies ?? []).length === 0) complete();
             return result;
           }
           api.store.dispatch = observe;
@@ -277,13 +378,15 @@ async function run(api) {
             // Even without rules, the stock enabled-mod observer runs both
             // dependency/recommendation activities. Join both exact lifecycles
             // and active-profile load order, independent of completion order.
-            await bounded(settled, 'PLAN_SECOND_PROFILE_SETUP_UNOBSERVED', 15000);
-            must(loadOrderCompleted && starts === 2 && stops === 2 && selectors.activeProfileId(api.getState()) === P
+            try { await bounded(settled, 'PLAN_SECOND_PROFILE_SETUP_UNOBSERVED', 15000); }
+            catch (error) {
+              note('own-local-plan-profile-setup-timeout', { starts, stops, ...order.diagnostics(api.getState()) });
+              throw error;
+            }
+            must(order.settled(api.getState()) && starts === 2 && stops === 2 && selectors.activeProfileId(api.getState()) === P
               && isDeepStrictEqual(api.getState().persistent.profiles[second.id], second), 'PLAN_SECOND_PROFILE_SETUP_CHANGED');
             note('own-local-plan-second-profile-baseline', { profile: structuredClone(second), activeProfileId: P,
-              starts, stops, loadOrderCompletionObserved: true, sourceBlobs: { profiles: '4b4cddc08c29f5fa2d78b0e7f59ebea8dc3380c1',
-                installManager: '6f847f3f878a0f8a8082b827d8b2bc4ebbcbe221', activity: '250cf30f897938ed1705cfec654b3b6b4f79d598',
-                loadOrder: '8f3044cc73c8d97629da3f4f304382eb7fe71149', loadOrderAction: 'b8f88de149399ed01d346ae8e6b4788438078f30' } });
+              starts, stops, ...order.proof() });
           } finally { api.store.dispatch = dispatch; released = true; }
         }
         existingBaseline = { modId: id, staged: { path: staged } };
@@ -583,14 +686,11 @@ async function run(api) {
       must(!api.getState().persistent.profiles[secondProfileId], 'ASSESSMENT_PROFILE_COLLISION');
       let lateSetupDispatches = 0;
       async function settleProfileSetup(profile, enabling, phase) {
-        // Reviewed official v2.9.1: profile_management/index.ts (4b4cddc0)
-        // emits mod-enabled for ANY profile. InstallManager (6f847f3f) tracks
-        // dependencies+recommendations via util/activity.ts (250cf30f).
-        // file_based_loadorder/index.ts (8f3044cc) ends its profile refresh by
-        // SET_FB_LOAD_ORDER({profileId,loadOrder}), action blob b8f88de1.
-        // Join these exact setup effects; never sleep for a generic quiet period.
-        const dispatch = api.store.dispatch;
-        let starts = 0, stops = 0, loadOrderCompleted = false, released = false, complete;
+        // In both reviewed releases the profile observer starts dependencies and
+        // recommendations for an enabled mod. Wait for those exact activities and
+        // the active profile's load-order refresh before measuring read-only calls.
+        const dispatch = api.store.dispatch, order = observeProfileLoadOrder();
+        let starts = 0, stops = 0, released = false, complete;
         const settled = new Promise(resolve => { complete = resolve; });
         const required = enabling ? 2 : 0;
         function observeDispatch(...args) {
@@ -600,32 +700,32 @@ async function run(api) {
             // read-window observer so late callbacks cannot evade its zero count.
             return api.store.dispatch.apply(api.store, args);
           }
-          const action = args[0], result = dispatch.apply(this, args);
+          const action = args[0];
+          order.observe(action, api.getState());
+          const result = dispatch.apply(this, args);
           if (action?.payload?.group === 'installing_dependencies'
             && action.payload.activityId === id('old-vanilla')) {
             if (action.type === 'START_ACTIVITY') starts++;
             if (action.type === 'STOP_ACTIVITY') stops++;
           }
-          if (action?.type === 'SET_FB_LOAD_ORDER' && action.payload?.profileId === P
-            && Array.isArray(action.payload.loadOrder) && action.payload.loadOrder.length === 0) loadOrderCompleted = true;
           // Independent observers may finish in either order: join all their
           // exact completions, without assuming activity precedes load order.
-          if (loadOrderCompleted && starts === required && stops === required
-            && (api.getState().session.base.activity?.installing_dependencies ?? []).length === 0
-            && Array.isArray(api.getState().persistent.loadOrder?.[P])
-            && api.getState().persistent.loadOrder[P].length === 0) complete();
+          const state = api.getState();
+          if (order.settled(state) && starts === required && stops === required
+            && (state.session.base.activity?.installing_dependencies ?? []).length === 0) complete();
           return result;
         }
         api.store.dispatch = observeDispatch;
         try {
           api.store.dispatch(actions.setProfile(profile));
-          await bounded(settled, 'ASSESSMENT_SETUP_PROFILE_REFRESH_UNOBSERVED', 15000);
+          try { await bounded(settled, 'ASSESSMENT_SETUP_PROFILE_REFRESH_UNOBSERVED', 15000); }
+          catch (error) {
+            note('candidate-assessment-profile-setup-timeout', { phase, starts, stops, ...order.diagnostics(api.getState()) });
+            throw error;
+          }
           must(lateSetupDispatches === 0, 'ASSESSMENT_LATE_SETUP_DISPATCH');
           note(phase, { profileId: secondProfileId, activeProfileId: P, starts, stops,
-            loadOrderCompletionObserved: true, emptyLoadOrderObserved: true, loadOrderHash: digest([]),
-            sourceBlobs: { profiles: '4b4cddc08c29f5fa2d78b0e7f59ebea8dc3380c1',
-              installManager: '6f847f3f878a0f8a8082b827d8b2bc4ebbcbe221', activity: '250cf30f897938ed1705cfec654b3b6b4f79d598',
-              loadOrder: '8f3044cc73c8d97629da3f4f304382eb7fe71149', loadOrderAction: 'b8f88de149399ed01d346ae8e6b4788438078f30' } });
+            ...order.proof(), emptyLoadOrderObserved: expectedOrder.length === 0, loadOrderHash: digest(expectedOrder) });
         } finally { api.store.dispatch = dispatch; released = true; }
       }
       await settleProfileSetup(second, true, 'candidate-assessment-setup-profile-settled');

@@ -2,11 +2,13 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { createLocalInstallHostAdmission } = require('./local-install-host.cjs');
-const manifest = require('./stock-vortex-2.9.1-admission.json');
+const { officialVortexHost } = require('./official-vortex-hosts.cjs');
 const admissions = new WeakMap();
-const OFFICIAL_HOST = 'ec3a29d58ea65a1ca84e456742c894a19efe96920a6710063d221d451a26d59a';
 function localInstallAdmission(api, util, bindingOverride) {
   return async () => {
+    const hostVersion = api.getState()?.app?.appVersion;
+    const manifest = officialVortexHost(hostVersion);
+    if (!manifest) throw Error('LOCAL_INSTALL_HOST_UNREVIEWED_VERSION');
     if (!admissions.has(api)) {
       // Shipped maintainer-reviewed sources, never hashes supplied by an agent's
       // tool request. Unreviewed host/extension updates refuse installation.
@@ -33,15 +35,20 @@ function localInstallAdmission(api, util, bindingOverride) {
         }
         binding = { packagePath, expected: { appAsarSha256: manifest.appAsarSha256, dynamic } };
       }
-      if (binding?.expected?.appAsarSha256 !== OFFICIAL_HOST) throw Error('LOCAL_INSTALL_HOST_UNREVIEWED_VERSION');
+      if (binding?.expected?.appAsarSha256 !== manifest.appAsarSha256
+        || (binding.expected.appVersion !== undefined && binding.expected.appVersion !== hostVersion)) throw Error('LOCAL_INSTALL_HOST_UNREVIEWED_VERSION');
       const actual = path.join(path.dirname(process.execPath), 'resources/app.asar');
       if (path.resolve(binding.packagePath).toLowerCase() !== path.resolve(actual).toLowerCase())
         throw Error('LOCAL_INSTALL_HOST_RUNTIME_PATH_MISMATCH');
       // Electron's patched node:fs presents app.asar as a directory. Hash the
       // actual package file through Electron's original filesystem implementation.
-      admissions.set(api, createLocalInstallHostAdmission({ ...binding, api, fsImpl: require('original-fs').promises }));
+      admissions.set(api, { hostVersion, verify: createLocalInstallHostAdmission({ ...binding, api, fsImpl: require('original-fs').promises }) });
     }
-    return admissions.get(api)();
+    const { hostVersion: boundVersion, verify } = admissions.get(api);
+    if (boundVersion !== hostVersion) throw Error('LOCAL_INSTALL_HOST_UNREVIEWED_VERSION');
+    const proof = await verify();
+    if (api.getState()?.app?.appVersion !== hostVersion) throw Error('LOCAL_INSTALL_HOST_UNREVIEWED_VERSION');
+    return { ...proof, hostVersion };
   };
 }
 module.exports = { localInstallAdmission };

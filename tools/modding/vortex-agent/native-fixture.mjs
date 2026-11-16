@@ -152,17 +152,56 @@ async function observeFixtureCohort(fixturePid) {
     }
   }
 }
+function hostPins(config) {
+  const executable = pinnedFile(config.exe, 256 * 1024 * 1024);
+  must(executable.sha256 === config.expectedExe, 'ORDINARY_VORTEX_EXECUTABLE_CHANGED');
+  const appAsar = pinnedFile(path.join(path.dirname(config.exe), 'resources/app.asar'), 512 * 1024 * 1024);
+  must(appAsar.sha256 === config.expectedAsar, 'ORDINARY_VORTEX_APP_ASAR_CHANGED');
+  return { executable, appAsar, hold: pinnedFile(config.hold, 1024 * 1024) };
+}
+function loadFixtureAdmission(version) {
+  must(['2.9.1', '2.10.1'].includes(version), 'FIXTURE_HOST_VERSION_UNREVIEWED');
+  const bytes = fs.readFileSync(path.join(here, 'stock-vortex-' + version + '-admission.json'));
+  const admission = JSON.parse(bytes);
+  must(admission.schema === 'stock-vortex-source-admission/1' && admission.vortexVersion === version
+    && /^[a-f0-9]{64}$/.test(admission.appAsarSha256) && Array.isArray(admission.extensions)
+    && (version === '2.9.1' || /^[a-f0-9]{40}$/.test(admission.provenance?.vortexSourceCommit)),
+    'FIXTURE_HOST_ADMISSION_INVALID');
+  return { admission, sha256: sha(bytes) };
+}
+function reviewedFixtureExtensions(review, support, supportIndexSha256, executable) {
+  const entry = review.admission.extensions.find(item => item.kind === 'user' && item.folder === path.basename(support)
+    && /^Cyberpunk 2077 Support for Vortex /.test(item.folder));
+  must(entry?.files.some(file => file.path === 'index.js' && file.sha256 === supportIndexSha256),
+    'FIXTURE_SUPPORT_NOT_STOCK_REVIEWED');
+  // Vortex labels unpacked bundled extensions as dynamic as well as user plugins.
+  // Apply the reviewed bundled closure and the synthetic fixture's own plugins only.
+  const bundledRoot = path.join(path.dirname(executable), 'resources/app.asar.unpacked/bundledPlugins');
+  return {
+    appAsarSha256: review.admission.appAsarSha256,
+    hostVersion: review.admission.vortexVersion,
+    sourceAdmissionSHA256: review.sha256,
+    supportIndexSha256,
+    supportSources: entry.files,
+    dynamicSources: review.admission.extensions.filter(item => item.kind === 'bundled')
+      .map(item => ({ path: path.join(bundledRoot, item.folder), files: item.files })),
+  };
+}
 async function stoppedSnapshot(config) {
   const cohort = processes(true);
   must(stoppedOrdinaryCohort(cohort), 'ORDINARY_VORTEX_NOT_STOPPED');
   await absentOrdinaryListener();
-  const executable = pinnedFile(config.exe, 256 * 1024 * 1024);
-  must(executable.sha256 === config.expectedExe, 'STOPPED_ORDINARY_EXECUTABLE_CHANGED');
-  const appAsar = pinnedFile(path.join(path.dirname(config.exe), 'resources/app.asar'), 512 * 1024 * 1024);
-  must(appAsar.sha256 === config.expectedAsar, 'STOPPED_ORDINARY_APP_ASAR_CHANGED');
   const manifest = pinnedFile(config.manifest, 64 * 1024 * 1024);
-  const hold = pinnedFile(config.hold, 1024 * 1024);
-  return { mode: 'stopped', processes: cohort, executable, appAsar, manifest, hold, manifestSha256: manifest.sha256 };
+  return { mode: 'stopped', processes: cohort, ...hostPins(config), manifest, manifestSha256: manifest.sha256 };
+}
+async function pairedSnapshot(config) {
+  const baseline = await snapshot();
+  const mains = baseline.processes.filter(p => p.type === '');
+  must(mains.length === 1 && path.normalize(mains[0].exe).toLowerCase() === config.exe.toLowerCase(),
+    'ORDINARY_VORTEX_EXECUTABLE_UNVERIFIABLE');
+  const manifest = pinnedFile(baseline.manifestPath, 64 * 1024 * 1024);
+  must(manifest.sha256 === baseline.manifestSha256, 'ORDINARY_VORTEX_MANIFEST_CHANGED');
+  return { ...baseline, ...hostPins(config), manifest };
 }
 async function snapshot() {
   const health = await tool('health'), profiles = await tool('list_profiles', { gameId: 'cyberpunk2077' });
@@ -183,22 +222,31 @@ async function main() {
     const i = process.argv.indexOf(flag);
     return i > 2 ? process.argv[i + 1] : undefined;
   };
-  let stoppedConfig, stockAdmission;
-  if (stopped) {
-    const manifest = paths.absolute(option('--ordinary-manifest'), 'ORDINARY_DEPLOYMENT_MANIFEST');
+  const hostVersion = option('--host-version');
+  const curated = process.argv.includes('--mcp-local-archive');
+  must(!process.argv.includes('--host-version') || (hostVersion && curated
+    && !process.argv.includes('--source-admission') && !process.argv.includes('--source-admission-sha256')),
+    'FIXTURE_HOST_VERSION_REQUIRES_REVIEWED_CURATED_ROUTE');
+  const stockReview = (stopped || hostVersion) ? loadFixtureAdmission(hostVersion || '2.9.1') : null;
+  let hostConfig;
+  if (stockReview) {
     const ordinary = paths.absolute(option('--ordinary-workspace'), 'ORDINARY_WORKSPACE');
     const expectedExe = option('--vortex-exe-sha256');
     const outside = (parent, child) => {
       const relative = path.relative(parent, child);
       return path.isAbsolute(relative) || relative === '..' || relative.startsWith('..' + path.sep);
     };
-    must(/^[a-f0-9]{64}$/.test(expectedExe || '') && path.basename(manifest).toLowerCase() === 'vortex.deployment.json'
-      && outside(ordinary, paths.workspace)
-      && outside(paths.workspace, ordinary)
-      && outside(paths.workspace, manifest), 'STOPPED_ORDINARY_PINS_REQUIRED');
-    stockAdmission = JSON.parse(fs.readFileSync(path.join(here, 'stock-vortex-2.9.1-admission.json'), 'utf8'));
-    stoppedConfig = { expectedAsar: stockAdmission.appAsarSha256, exe: 'C:\\Program Files\\Vortex\\Vortex.exe', expectedExe, manifest,
+    must(/^[a-f0-9]{64}$/.test(expectedExe || '') && outside(ordinary, paths.workspace)
+      && outside(paths.workspace, ordinary), 'FIXTURE_ORDINARY_PINS_REQUIRED');
+    hostConfig = { expectedAsar: stockReview.admission.appAsarSha256,
+      exe: 'C:\\Program Files\\Vortex\\Vortex.exe', expectedExe,
       hold: path.join(ordinary, 'local-state/vortex-agent-build/receipts/unresolved.json') };
+    if (stopped) {
+      const manifest = paths.absolute(option('--ordinary-manifest'), 'ORDINARY_DEPLOYMENT_MANIFEST');
+      must(path.basename(manifest).toLowerCase() === 'vortex.deployment.json'
+        && outside(paths.workspace, manifest), 'STOPPED_ORDINARY_PINS_REQUIRED');
+      hostConfig.manifest = manifest;
+    }
   }
   const supportIndex = process.argv.indexOf('--support-extension');
   const hashIndex = process.argv.indexOf('--support-index-sha256');
@@ -212,7 +260,10 @@ async function main() {
   must(fs.existsSync(path.dirname(base)), 'FIXTURE_PARENT_MISSING');
   for (let p = path.dirname(base); p !== path.dirname(p); p = path.dirname(p)) must(!fs.lstatSync(p).isSymbolicLink(), 'ANCESTOR_REPARSE_POINT');
   await new Promise((resolve, reject) => { const s = net.createServer(); s.once('error', () => reject(Error('PORT_3702_OCCUPIED'))); s.listen(3702, '127.0.0.1', () => s.close(resolve)); });
-  const readOrdinary = stopped ? () => stoppedSnapshot(stoppedConfig) : snapshot;
+  const reviewedInputs = curated && stockReview
+    ? reviewedFixtureExtensions(stockReview, support, process.argv[hashIndex + 1], hostConfig.exe) : null;
+  const readOrdinary = stopped ? () => stoppedSnapshot(hostConfig)
+    : stockReview ? () => pairedSnapshot(hostConfig) : snapshot;
   const before = await readOrdinary();
   const runId = 'native_' + new Date().toISOString().replace(/[^0-9]/g, '');
   const root = path.join(base, runId);
@@ -251,18 +302,8 @@ async function main() {
     input.existingMod = { archivePath, payloadPath, archiveSize: archive.length,
       archiveSha256: sha(archive), payloadSha256: sha(bytes) };
   }
-  if (input.installRoute === 'mcp-local-archive' && stopped) {
-    const review = stockAdmission.extensions.find(entry => entry.kind === 'user' && entry.folder === path.basename(support)
-      && /^Cyberpunk 2077 Support for Vortex /.test(entry.folder));
-    must(review?.files.length === 1 && review.files[0].path === 'index.js'
-      && review.files[0].sha256 === process.argv[hashIndex + 1], 'FIXTURE_SUPPORT_NOT_STOCK_REVIEWED');
-    // Vortex marks both unpacked bundled extensions and user plugins dynamic.
-    // Bind only the reviewed bundled closure and the two fixture-local plugins.
-    const bundledRoot = path.join(path.dirname(stoppedConfig.exe), 'resources/app.asar.unpacked/bundledPlugins');
-    input.dynamicSources = stockAdmission.extensions.filter(entry => entry.kind === 'bundled')
-      .map(entry => ({ path: path.join(bundledRoot, entry.folder), files: entry.files }));
-    input.supportIndexSha256 = review.files[0].sha256;
-    input.sourceAdmissionSHA256 = sha(fs.readFileSync(path.join(here, 'stock-vortex-2.9.1-admission.json')));
+  if (reviewedInputs) {
+    Object.assign(input, reviewedInputs);
   } else if (input.installRoute === 'mcp-local-archive') {
     const a = process.argv.indexOf('--source-admission'), h = process.argv.indexOf('--source-admission-sha256');
     must(a > 0 && h > 0, 'PINNED_SOURCE_ADMISSION_REQUIRED');
@@ -305,13 +346,20 @@ async function main() {
   const supportHashes = {};
   for (const name of ['index.js', 'info.json', 'LICENSE', 'gameart.png', 'gameicon.jpg', 'REDdeploy.png', 'REDLauncher.png', 'SaveEditor.jpg']) { const src = path.join(support, name); must(!fs.lstatSync(src).isSymbolicLink(), 'SUPPORT_REPARSE_POINT'); fs.copyFileSync(src, path.join(supportDest, name), fs.constants.COPYFILE_EXCL); supportHashes[name] = sha(fs.readFileSync(src)); must(sha(fs.readFileSync(path.join(supportDest, name))) === supportHashes[name], 'SUPPORT_COPY_CHANGED'); }
   must(supportHashes['index.js'] === process.argv[hashIndex + 1], 'SUPPORT_SOURCE_CHANGED_DURING_COPY');
-  write(path.join(root, 'prepared.json'), { ...input, runtimeSourceSha256: sha(Buffer.from(original)), fixtureRuntimeSha256: sha(Buffer.from(runtime)), runtimeModification: 'None; fixture-only NEXUS_WORKSPACE isolates receipts; public start(api,3702).', supportHashes, sourcePin: '41be6d4556568a605d6131b8c5ca90ff26dec6ac' });
+  for (const file of input.supportSources ?? [])
+    must(Object.hasOwn(supportHashes, file.path) && supportHashes[file.path] === file.sha256, 'SUPPORT_SOURCE_CHANGED_DURING_COPY');
+  const sourcePin = stockReview?.admission.provenance?.vortexSourceCommit
+    || '41be6d4556568a605d6131b8c5ca90ff26dec6ac';
+  must(/^[a-f0-9]{40}$/.test(sourcePin), 'FIXTURE_SOURCE_COMMIT_INVALID');
+  write(path.join(root, 'prepared.json'), { ...input, runtimeSourceSha256: sha(Buffer.from(original)), fixtureRuntimeSha256: sha(Buffer.from(runtime)), runtimeModification: 'None; fixture-only NEXUS_WORKSPACE isolates receipts; public start(api,3702).', supportHashes, sourcePin });
   const env = { ...process.env, NEXUS_WORKSPACE: root, VORTEX_E2E: '1', VORTEX_E2E_HEADLESS: '1', VORTEX_ENABLE_LOGGING: '1', ELECTRON_USERDATA: input.earlyData, ELECTRON_APPDATA: path.join(root, 'appdata'), APPDATA: path.join(root, 'appdata'), LOCALAPPDATA: path.join(root, 'localappdata'), TEMP: path.join(root, 'temp'), TMP: path.join(root, 'temp'), ProgramData: path.join(root, 'programdata'), VORTEX_AGENT_NATIVE_FIXTURE: root };
   delete env.ELECTRON_RUN_AS_NODE;
   const args = ['--user-data', input.userData, '--start-minimized'];
   const mains = before.processes.filter(p => !p.type);
-  if (stopped) must(JSON.stringify(await readOrdinary()) === JSON.stringify(before), 'STOPPED_ORDINARY_BASELINE_CHANGED');
-  else must(mains.length === 1 && mains[0].exe && path.isAbsolute(mains[0].exe), 'ORDINARY_VORTEX_EXECUTABLE_UNVERIFIABLE');
+  if (stockReview) {
+    must(JSON.stringify(await readOrdinary()) === JSON.stringify(before), 'ORDINARY_VORTEX_BASELINE_CHANGED');
+  }
+  if (!stopped) must(mains.length === 1 && mains[0].exe && path.isAbsolute(mains[0].exe), 'ORDINARY_VORTEX_EXECUTABLE_UNVERIFIABLE');
   const vortexExe = stopped ? before.executable.file : mains[0].exe;
   const log = fs.openSync(path.join(root, 'process-output.log'), 'wx');
   const child = spawn(vortexExe, args, { env, windowsHide: true, stdio: ['ignore', log, log] });
@@ -349,8 +397,12 @@ async function main() {
     stoppedObservationFailure ||= error.message;
     after = null;
   }
+  const same = (key) => JSON.stringify(before[key]) === JSON.stringify(after?.[key]);
   const ordinaryUnchanged = stopped ? fixtureObserved && !stoppedObservationFailure
-    && JSON.stringify(before) === JSON.stringify(after) : JSON.stringify(before.health) === JSON.stringify(after.health) && JSON.stringify(before.profiles) === JSON.stringify(after.profiles) && JSON.stringify(before.mods) === JSON.stringify(after.mods) && before.manifestSha256 === after.manifestSha256 && ordinaryProcessesPreserved(before.processes, after.processes);
+    && JSON.stringify(before) === JSON.stringify(after)
+    : ['health', 'profiles', 'mods', 'manifestSha256', 'executable', 'appAsar', 'manifest', 'hold'].every(same)
+      && ordinaryProcessesPreserved(before.processes, after.processes)
+      && (!stockReview || before.processes.length === after.processes.length);
   const result = { root, nativeStatus: receipt.status, fixtureExited: exited, ordinaryUnchanged, ordinaryManifestSha256: after?.manifestSha256, error: receipt.error, ...(stopped ? { ordinaryMode: 'stopped', fixtureObserved, stoppedObservationFailure } : {}), remainingFixturePids: after?.processes.filter(p => p.pid === child.pid || p.parent === child.pid).map(p => p.pid) ?? null };
   write(path.join(root, 'runner-result.json'), result); console.log(JSON.stringify(result));
   // No forced termination: preserve failed evidence and identify the exact fixture PID.

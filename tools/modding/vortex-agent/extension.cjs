@@ -93,7 +93,7 @@ function register(server, api, options = {}) {
   add('health', {}, operations.health);
   add('read_local_install_readiness', {}, async () => {
     const proof = await admitLocalInstallHost();
-    return { localArchiveInstallSupported: true, sourceAdmissionVerified: true, hostVersion: '2.9.1',
+    return { localArchiveInstallSupported: true, sourceAdmissionVerified: true, hostVersion: proof.hostVersion,
       reviewedDynamicExtensions: proof.dynamicExtensions, nativeEffects: false,
       scope: 'New own-local noninteractive Cyberpunk ZIP only; no replacement, Nexus updates or automatic deploy.' };
   }, false, 'Check the actual official Vortex package and loaded extension source pins for install_local_archive, without installation or account changes. Unknown source/version refuses. This does not validate a package or authorize a write.');

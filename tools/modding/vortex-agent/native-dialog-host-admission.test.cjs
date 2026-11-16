@@ -7,7 +7,7 @@ function fixture(t,options={}) {
   t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const exe=path.join(dir,'Vortex.exe'),source=path.join(dir,'resources','app.asar');
   fs.mkdirSync(path.dirname(source)); fs.writeFileSync(exe,'fixture'); fs.writeFileSync(source,'source');
-  let creation=1,version='2.9.1',hashes=0;
+  let creation=1,version=options.version??'2.9.1',hashes=0;
   const api={getPath:()=>exe,getState:()=>({app:{appVersion:version}})};
   const admit=createNativeDialogHostAdmission(api,{processInfo:{pid:123,getCreationTime:()=>creation},hash(){hashes++;return options.hash||Object.keys(SOURCES)[0];}});
   return {dir,exe,source,api,admit,changeGeneration(){creation++;},changeVersion(){version='3.0.0';},get hashes(){return hashes;}};
@@ -46,4 +46,12 @@ test('cold hashing reads only the admitted ASAR bytes when the source grows',t=>
   const admit=createNativeDialogHostAdmission(f.api,{processInfo:{pid:123,getCreationTime:()=>1},io});
   assert.throws(admit,/SOURCE_CHANGED_DURING_HASH/);
   assert.equal(total,size);
+});
+
+test('official host proofs bind version to exact source and cannot cross versions',t=>{
+  const version='2.10.1';
+  const hash='0e308d6589719c5d68236c0930efda803e19ff41a3bbe8bd09330311c004fb95';
+  assert.equal(fixture(t,{version,hash}).admit().variant,'official-2.10.1');
+  assert.throws(fixture(t,{hash}).admit,/HOST_SOURCE_UNREVIEWED/);
+  assert.throws(fixture(t,{version}).admit,/HOST_SOURCE_UNREVIEWED/);
 });

@@ -243,3 +243,14 @@ test('cancellation during install waits for original receipt and stops later ste
   const journal = f.journal.read(result.planId);
   assert.deepEqual(journal.events.map(e => e.kind), ['intent', 'observed', 'terminal']);
 });
+
+test('plan accepts reviewed 2.10.1 readiness and rejects an unsupported host before effects', async t => {
+  for (const [hostVersion, expected] of [['2.10.1', 'completed'], ['2.10.2', 'stopped']]) {
+    const f = fixture(t, { before(name) {
+      if (name === 'read_local_install_readiness') return { ...readiness(), hostVersion };
+    } });
+    const result = await f.run();
+    assert.equal(result.status, expected);
+    if (expected === 'stopped') assert.equal(f.writes.length, 0);
+  }
+});
