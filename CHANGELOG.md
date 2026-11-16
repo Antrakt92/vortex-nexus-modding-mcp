@@ -8,6 +8,7 @@ embedded Vortex adapter's compatibility label.
 
 | Version | Published | Main changes |
 | --- | --- | --- |
+| [0.10.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.10.0) | 2026-11-16 | Official Vortex 2.10.1, local collection assessment and queued installation questions |
 | [0.9.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.9.0) | 2026-11-16 | Native installation prompts, mod fingerprints and safer installation and recovery |
 | [0.8.1](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.8.1) | 2026-11-04 | Fix bounded parsing of large immutable capture records |
 | [0.8.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.8.0) | 2026-11-03 | Guarded collection prompts, explicit capture profiles and settings comparison fixes |
@@ -19,6 +20,59 @@ embedded Vortex adapter's compatibility label.
 | [0.2.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.2.0) | 2026-10-29 | Offline helper preparation, installation diagnostics and development dependencies |
 | [0.1.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.1.0) | 2026-10-29 | Combined inspection, collection download reuse and coordinated plans |
 | [Recovery sources](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/recovery-sources-20261025) | 2026-10-25 | Pinned upstream Git bundles for source recovery |
+
+## 0.10.0 — 2026-11-16
+
+Support the reviewed official Vortex 2.10.1 host, assess local collections and
+continue answering installation questions when Vortex inserts the next prompt.
+Changes since [0.9.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/compare/v0.9.0...v0.10.0).
+
+### Added
+
+- Admit the pinned official Vortex 2.10.1 executable and ASAR for own-local ZIP
+  installation, collection wizard transitions and native installation questions.
+  Verify the reviewed closure of 122 bundled extensions and Cyberpunk Support
+  0.13.3. Vortex 2.9.1 keeps its separate admission checks.
+- Assess installed variants for local collection records without Nexus collection
+  or revision IDs. Preserve exact component and installer-specification matching,
+  and reject partially populated or malformed collection identities.
+- Carry reviewed game-extension identities forward across supported host versions
+  without admitting changed or unknown extension sources.
+- Capture a read-only disk baseline for an explicitly pinned Cyberpunk profile.
+  Preserve that profile and its full input context in the plan and ledger,
+  replacing the historical fixed DEV-profile restriction.
+
+### Fixed
+
+- Accept newly queued installation questions after a response when the older
+  questions retain their relative order. Continue refusing disappeared or
+  reordered retained questions and uncertain responses.
+- Verify isolated stock-host installation while ordinary Vortex is stopped,
+  preserving its profile, deployment and operation records. Handle proven changes
+  within the fixture process family during process checks.
+- Isolate historical executor fixtures from parallel writes outside the owned
+  source tree while retaining source and physical-identity checks.
+- Correct the setup guide's checksum filename, list the supported official
+  hosts and repair the local-install request-ID description.
+- Keep the upstream architecture document compatible with the updated formatter.
+
+### Development dependencies
+
+- Update oxfmt 0.75.0 → 0.78.0, oxlint 1.90.0 → 1.93.0,
+  Vite 8.3.5 → 8.3.8 and Vitest 5.0.5 → 5.1.0.
+- Keep weekly Dependabot proposals enabled. Limit Node declarations to the
+  supported host line and Vortex API declarations to 2.9.1.
+
+### Upgrading and verification
+
+- This source release retains the adapter's 1.1.0 compatibility label. Follow
+  [Restore and build](https://github.com/Antrakt92/vortex-nexus-modding-mcp/blob/v0.10.0/docs/RESTORE.md)
+  to update an installed extension while preserving its credentials and receipts.
+- Official Vortex 2.10.1 isolated checks cover disabled ZIP installation,
+  duplicate refusal, enable/deploy, a two-ZIP plan, restoration and clean shutdown.
+  See [the verification record](https://github.com/Antrakt92/vortex-nexus-modding-mcp/blob/v0.10.0/docs/STOCK-LOCAL-INSTALL.md#verify-official-vortex-2101).
+- General Nexus-mod installation and replacement use the separately reviewed
+  native workflow. Gameplay acceptance remains specific to each mod setup.
 
 ## 0.9.0 — 2026-11-16
 

@@ -43,7 +43,7 @@ Call `install_local_archive` with the normal write pins plus:
 
 | Field | Value |
 | --- | --- |
-| `requestId` | Stable operation ID, 8Ã¢â‚¬â€œ80 letters/digits/underscores/hyphens |
+| `requestId` | Stable operation ID, 8 to 80 letters/digits/underscores/hyphens |
 | `archivePath` | Absolute path to the approved own ZIP |
 | `size` | Exact archive byte count |
 | `sha256` | Lowercase SHA-256 |

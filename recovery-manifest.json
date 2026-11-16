@@ -40,7 +40,7 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256_lf": "ce13926e64ea40a77fcc158495fa4b02a44040a44ffd7e8ec505c65704e41df8"
+      "sha256_lf": "17b63aece6481bcc33d6c021dd492f542a86e5216732f2a07d86aa5109e7ee53"
     },
     {
       "path": "CONTRIBUTING.md",
@@ -52,7 +52,7 @@
     },
     {
       "path": "README.md",
-      "sha256_lf": "416911d7fa4047bf2b0bdbef83abccfc3303fb9e2a4cad07055bdc59a952ae53"
+      "sha256_lf": "9df429643400b82521d019de87cc9eff969d446222d9eb2d0ca3b0b98a13a333"
     },
     {
       "path": "SUPPORT.md",
@@ -60,7 +60,7 @@
     },
     {
       "path": "VERSION",
-      "sha256_lf": "9d8c94f1ad3ea96b1e2ac4914fda4cb93c76b4a3e0d8cc6dd8976d6c0b227d15"
+      "sha256_lf": "dc24feb5bd35084d8ae32a4eafbec12352707d4662401fcbcc9bbd696cde77a9"
     },
     {
       "path": "dependencies/vortex-mcp/.gitattributes",
@@ -100,7 +100,7 @@
     },
     {
       "path": "dependencies/vortex-mcp/ARCHITECTURE.md",
-      "sha256_lf": "ab9c7c948da5346b0216ed6d2c2c1c34b60213c6dd06d2c1d039727a219e5edc"
+      "sha256_lf": "467b6353492c6d404d69ea31314e4513a8885b2590e61104912cd0a97a736603"
     },
     {
       "path": "dependencies/vortex-mcp/LICENSE.md",
@@ -128,7 +128,7 @@
     },
     {
       "path": "dependencies/vortex-mcp/UPSTREAM-PROVENANCE.json",
-      "sha256_lf": "aa4c6723f2bf2ee5a6082589cc4edfee5939063b4db2e7deee1e7dd4e181f258"
+      "sha256_lf": "15e44c0dd4e42aeac369e813838f761700d3b40765753cb7601ed9cfed35bee2"
     },
     {
       "path": "dependencies/vortex-mcp/info.json",
@@ -252,7 +252,7 @@
     },
     {
       "path": "docs/GETTING-STARTED.md",
-      "sha256_lf": "7f9c9f7f81184e842379de87061fb1276b698ec999b630f7f2748119c012e739"
+      "sha256_lf": "bd7f8aa151c11c18ed109f55901146229b87e3280989c84667bfc758376a2b6e"
     },
     {
       "path": "docs/INSTALL-WORKFLOW-PLAN.md",
@@ -472,7 +472,7 @@
     },
     {
       "path": "docs/READ-CAPTURE-BASELINE.md",
-      "sha256_lf": "4878df139f24a8ede94e021d52328c94e217fbd31280c11818a1c8b0b2892abd"
+      "sha256_lf": "805f95a3d055045e144f9d4b08d56fe73a1686907383be3faa2e17b631070b20"
     },
     {
       "path": "docs/READ-CAPTURE-PREPARATION.md",
@@ -488,7 +488,7 @@
     },
     {
       "path": "docs/STOCK-LOCAL-INSTALL.md",
-      "sha256_lf": "acf56982701750a1386584b8107dc30245f2cc5b65040eb6570a0fe3d08cd4e5"
+      "sha256_lf": "e11d38d24e20f0af26beaea92323c32fed4c99dc3d9c597538e4f7af894ccb7d"
     },
     {
       "path": "docs/TECHNICAL-SETTINGS.md",
@@ -800,11 +800,11 @@
     },
     {
       "path": "tools/modding/vortex-agent/capture-disk-baseline.mjs",
-      "sha256_lf": "7e441b53a7de69843983a05c91baaae385baa5353bc21c08063f922886446989"
+      "sha256_lf": "dfdcadf872967b2fc0c2f119a81814fdfdc015021bf516199e26265939354edf"
     },
     {
       "path": "tools/modding/vortex-agent/capture-disk-baseline.test.mjs",
-      "sha256_lf": "01b088d8c9ff16a8571790c0adde4d6c0ec91e622559bb2dbcce3a96ed0bcd34"
+      "sha256_lf": "aa72eebf3c007fe50d5ca7254b3a4772db6c797602e15d5df4b6fe976466b995"
     },
     {
       "path": "tools/modding/vortex-agent/catalog-snapshot.test.mjs",

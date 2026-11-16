@@ -23,7 +23,7 @@ Mods metadata searches and uploads.
 **Build from source on Windows.** Follow the [setup guide](docs/GETTING-STARTED.md)
 to install the Vortex extension. Inspection, downloads, enabling mods and deployment
 use the running Vortex process. New own-local Cyberpunk ZIPs can also be installed
-disabled through MCP on the reviewed official Vortex 2.9.1 host.
+disabled through MCP on the reviewed official Vortex 2.9.1 and 2.10.1 hosts.
 
 ## What you can do
 
@@ -75,8 +75,9 @@ set the matching `NEXUS_WORKSPACE`; see [configuration](docs/CONFIGURATION.md).
 - **Windows.** Git, Python 3.11+ and Node are required. The adapter build uses
   the Node 24 toolchain; the optional community CLI needs .NET 10. See
   [exact prerequisites](docs/GETTING-STARTED.md#requirements).
-- **Tested with Vortex 2.9.1 and Cyberpunk 2077.** Results are
-  recorded in [the live verification report](docs/AUDIT-20261029.md#subsequent-live-upgrade-and-acceptance--2026-10-29).
+- **Tested with official Vortex 2.9.1 and 2.10.1 for Cyberpunk 2077.**
+  See [the isolated installation and deployment checks](docs/STOCK-LOCAL-INSTALL.md#verify-official-vortex-2101)
+  and [earlier live verification](docs/AUDIT-20261029.md#subsequent-live-upgrade-and-acceptance--2026-10-29).
   The setup guide lists other games with process checks; those games have not
   all been tested through a full install and deploy cycle.
 - **Local installation has a narrow scope.** `install_local_archive` handles new,

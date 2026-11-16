@@ -85,7 +85,7 @@
     ".oxlintrc.json": "ec3fa8c3e4354a0a2961229c64fdc2ae1075ca14db63d1cef151f0ab953e7091",
     ".pre-commit-config.yaml": "40d5c09109d25d33048f0789271b2c24eab039fc0b2a17f9e6471d1fb1bd5d09",
     ".releaserc.json": "07080d1c204b83d925980f26c4388f2e6d96668b9da6ce16cc07426f1ffa952c",
-    "ARCHITECTURE.md": "ab9c7c948da5346b0216ed6d2c2c1c34b60213c6dd06d2c1d039727a219e5edc",
+    "ARCHITECTURE.md": "467b6353492c6d404d69ea31314e4513a8885b2590e61104912cd0a97a736603",
     "LICENSE.md": "3c61a4b99007718626612c474991852b9428a3d4ed27a77e46b42fdfb80f896f",
     "LOCAL-CHANGES.md": "4990fb1571cec6499f01c57719458f18891497ec48913c60c5b4558eb0e5e221",
     "NEXUS_DESCRIPTION.bbcode": "caddcb4c08e56f90105b137eaa67ba4d626702f7a949c278ee47d218c3ede318",
@@ -144,7 +144,7 @@
     "vitest.config.ts",
     "scripts/check-source.mjs"
   ],
-  "acceptedSourceTreeSHA256": "0b23b5b5010e76fd05980eb8479f10e88da6cee80f6b9068958898a8a5af2177",
+  "acceptedSourceTreeSHA256": "fa71477b394d6080f6ffe5826ea5cb80a6c1efc84da8dbe3ecbef061af2ceeea",
   "runtimeLicenses": {
     "zod@4.6.7": "MIT",
     "@modelcontextprotocol/server@2.4.0": "Apache-2.0",

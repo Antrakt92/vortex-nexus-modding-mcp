@@ -98,17 +98,46 @@ test('required explicit prefs include stage configs and only two closed LocalApp
   } finally {if (old === undefined) delete process.env.LOCALAPPDATA; else process.env.LOCALAPPDATA = old;}
 });
 
-test('stale, unknown, wrong profile, wrong root ID and duplicate inputs refuse before output', () => {
-  for (const kind of ['stale','unknown','profile','root','duplicate']) {
+test('stale, unknown, wrong root ID and duplicate inputs refuse before output', () => {
+  for (const kind of ['stale','unknown','root','duplicate']) {
     const f = fixture();
     if (kind === 'stale') f.value.observedAtUTC = new Date(Date.now() - LIMITS.freshnessMs - 1000).toISOString();
     if (kind === 'unknown') f.value.approved = true;
-    if (kind === 'profile') f.value.health.profileId = 'other';
     if (kind === 'root') f.value.health.filesystemIds.stagingPath = '1:2';
     if (kind === 'duplicate') f.value.preferenceCandidates.push(f.explicit);
     assert.throws(() => captureDiskBaseline({...f.refresh(), apply: true}), /DISK_BASELINE_/);
     assert.equal(fs.existsSync(f.output), false);
   }
+});
+
+test('explicit bounded profile context survives plans and own-fixture capture without native admission', () => {
+  for (const profileId of ['ptndev1016', 'ihUVbd-eX', 'other', 'A'.repeat(200)]) {
+    const f = fixture(); f.value.health.profileId = profileId; const options = f.refresh();
+    const plan = captureDiskBaseline(options);
+    assert.deepEqual(plan.health, f.value.health);
+    assert.equal(plan.nativeContextVerified, false); assert.equal(plan.effectsAllowed, false);
+    assert.equal(fs.existsSync(f.output), false);
+    const captured = captureDiskBaseline({...options, apply: true});
+    const ledger = JSON.parse(fs.readFileSync(captured.file, 'utf8'));
+    for (const result of [captured, ledger]) {
+      assert.deepEqual(result.health, f.value.health);
+      assert.equal(result.nativeContextVerified, false); assert.equal(result.effectsAllowed, false);
+      assert.equal(result.sourceAdmissionVerified, false); assert.equal(result.noManagedWrites, true);
+    }
+    assert.equal(ledger.sourceProofSHA256, options.inputSHA256);
+  }
+});
+
+test('malformed or absent profile IDs and changed raw context pins are refused before output', () => {
+  for (const profileId of [undefined, null, 1, {}, [], '', 'A'.repeat(201), 'with space', 'bad/profile', 'bad\\profile', 'x\n', '\u00e9']) {
+    const f = fixture(); f.value.health.profileId = profileId;
+    assert.throws(() => captureDiskBaseline({...f.refresh(), apply: true}), /DISK_BASELINE_INVALID_CONTEXT/);
+    assert.equal(fs.existsSync(f.output), false);
+  }
+  const f = fixture(), oldPin = f.options.inputSHA256;
+  f.value.health.profileId = 'ihUVbd-eX'; f.refresh();
+  assert.throws(() => captureDiskBaseline({...f.options, inputSHA256: oldPin, apply: true}), /DISK_BASELINE_INPUT_SHA_DIFFERS/);
+  assert.equal(fs.existsSync(f.output), false);
 });
 
 test('duplicate JSON keys, wrong raw SHA and unbounded preference scope cannot admit a ledger', () => {
