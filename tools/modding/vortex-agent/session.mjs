@@ -6,6 +6,7 @@ import {CONTEXT_KEYS, ROOTS, validateContext, validatePlan, planQueue} from './p
 import {canonicalPlanId, createPlanJournal} from './plan-journal.mjs';
 import strictJSON from './strict-json.cjs';
 import receipts from './receipts.cjs';
+import hosts from './official-vortex-hosts.cjs';
 export {validateContext, validatePlan} from './plan-contract.mjs';
 
 const PROTOCOL = 'vortex-agent/1';
@@ -212,7 +213,7 @@ export async function runPlan(input, {apply = false, call = createToolCaller(), 
       checkCancellation();
       const readiness = await call('read_local_install_readiness', {});
       insist(object(readiness) && readiness.localArchiveInstallSupported === true && readiness.sourceAdmissionVerified === true
-        && readiness.hostVersion === '2.9.1' && readiness.nativeEffects === false
+        && hosts.officialVortexHost(readiness.hostVersion) !== undefined && readiness.nativeEffects === false
         && Number.isSafeInteger(readiness.reviewedDynamicExtensions) && readiness.reviewedDynamicExtensions >= 0
         && readiness.reviewedDynamicExtensions <= 256, 'LOCAL_INSTALL_READINESS_UNCERTAIN');
       checkCancellation();

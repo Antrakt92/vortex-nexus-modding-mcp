@@ -5,8 +5,8 @@ official Vortex installer. It leaves the mod disabled and does not deploy it.
 The extension stays installed; agents do not generate a temporary plugin or
 restart Vortex for each mod.
 
-This path supports the reviewed **official Vortex 2.9.1** package and extension
-sources. It does not require a Vortex fork, application patch or UI automation.
+This path supports the reviewed **official Vortex 2.9.1 and 2.10.1** packages
+and extension sources. It does not require a Vortex fork, application patch or UI automation.
 The stock event/callback approach was investigated from
 [Doodlebot](https://github.com/doodlum/vortex-doodlebot/tree/3b78fdfba1d1d07858908fffea53b32d46033df1).
 Its automatic dialog and FOMOD responders are not included.
@@ -43,7 +43,7 @@ Call `install_local_archive` with the normal write pins plus:
 
 | Field | Value |
 | --- | --- |
-| `requestId` | Stable operation ID, 8–80 letters/digits/underscores/hyphens |
+| `requestId` | Stable operation ID, 8Ã¢â‚¬â€œ80 letters/digits/underscores/hyphens |
 | `archivePath` | Absolute path to the approved own ZIP |
 | `size` | Exact archive byte count |
 | `sha256` | Lowercase SHA-256 |
@@ -183,6 +183,33 @@ conflicts, installer choices, ignored conflicts and pending profile changes.
 The verifier confirmed the assessment preserved fixture state. During the run,
 the process monitor resamples only a proven change within the owned fixture
 process tree. Unrecognized processes or unverifiable identities fail the check.
+
+## Verify official Vortex 2.10.1
+
+The 2.10.1 admission manifest pins the signed Windows release installer,
+the matching installed executable and ASAR, and the reviewed file closure
+of all 122 bundled extensions. Cyberpunk Support 0.13.3 has separate pins.
+The original 2.9.1 manifest still applies to that exact version.
+
+The fixture can run alongside an ordinary Vortex instance. Use the same
+fixture command with `--host-version 2.10.1` in place of
+`--stopped-ordinary`, supply the exact 2.10.1 executable and support pins,
+and omit `--ordinary-manifest` so the runner reads the active manifest path
+from authenticated ordinary health. Keep the build in a separate workspace.
+The runner independently compares the ordinary process cohort, profile, mod
+inventory, deployment manifest, and unresolved operation if one exists.
+
+The 16 November 2026 official-host run installed a synthetic ZIP disabled,
+refused a duplicate, enabled and deployed it, then restored the original
+bytes and hardlink identity. A two-ZIP plan kept both new mods disabled until
+activation, deployed once and restored both original files. The independent
+verifier confirmed eleven durable completions, matching deployed owners and
+clean fixture shutdown. The ordinary active collection, deployment manifest
+and unresolved operation marker were preserved.
+
+The native dialog read identified a startup error outside the reviewed
+installation questions and left its queue intact. The official 2.10.1
+collection wizard and prompt transitions still require live acceptance.
 
 ## Verification boundary
 

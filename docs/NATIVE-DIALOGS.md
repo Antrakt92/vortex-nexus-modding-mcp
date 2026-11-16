@@ -33,7 +33,7 @@ Eligible actions describe what the question supports, not which mod caused it.
 Before ignoring dependencies or updating, establish that it belongs to the
 authorized installation and assess the affected dependencies separately.
 
-The native source admission supports the reviewed Vortex 2.9.1 packages. Unknown
+The native source admission supports the reviewed Vortex 2.9.1 packages and official Vortex 2.10.1. Unknown
 source, changed context, unsupported question shapes, stale observations and
 ambiguous dialog IDs refuse before a response. No generic dispatcher, arbitrary
 code, keyboard input or window automation is involved.

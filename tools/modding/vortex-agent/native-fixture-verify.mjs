@@ -22,6 +22,35 @@ if (input.runtimeVersion) {
 function eventVersion(value) { return value.events.find(item => item.phase === 'authenticated-native-health')?.health?.extensionVersion; }
 assert.equal(receipt.status, 'passed'); assert.equal(result.fixtureExited, true); assert.equal(result.ordinaryUnchanged, true); assert.deepEqual(result.remainingFixturePids, []);
 const event = phase => { const found = receipt.events.filter(e => e.phase === phase); assert.equal(found.length, 1, phase); return found[0]; };
+const namedArchiveOrder = input.hostVersion === '2.10.1';
+const expectedOrder = namedArchiveOrder
+  ? [input.payloadPath, ...(input.planPackages || []).map(item => item.payloadPath)].map(file => path.basename(file)).sort()
+  : [];
+function checkLoadOrderBarrier(barrier) {
+  assert.equal(barrier.loadOrderCompletionObserved, true);
+  if (namedArchiveOrder) {
+    assert.deepEqual(barrier.namedLoadOrders.map(({ id, entries }) => ({ id, entries })), [
+      { id: 'cyberpunk2077-archive', entries: expectedOrder }, { id: 'cyberpunk2077-redmod', entries: [] },
+    ]);
+    for (const order of barrier.namedLoadOrders) {
+      assert.equal(typeof order.validationRequired, 'boolean');
+      assert.equal(typeof order.validationObserved, 'boolean');
+      if (order.validationRequired) assert.equal(order.validationObserved, true);
+    }
+    assert.deepEqual(barrier.sourceBlobs, {
+      profiles: '6e8ba559e24efe4522019f41211469336f5e39fc',
+      installManager: '41889630b3ebc826e3ef8e3847bc6706bee9fa48', activity: '250cf30f897938ed1705cfec654b3b6b4f79d598',
+      loadOrder: '493e510f653e5736de484e143dde7e57fd77a18e', loadOrderAction: '7ab7ff28037ab6a143cb783f8ede85145f617854',
+      namedLoadOrderReducer: '02675b153879c7cc809dcb3f59fe36c6b4cefeb5',
+      validationAction: '3546403b98078e3e8904c1c99a6ddc4b04a04603',
+      reduxWatcher: '5bde67b43af3c10ca70297129539e5ba1819cb8b',
+    });
+  } else {
+    assert.deepEqual(barrier.sourceBlobs, { profiles: '4b4cddc08c29f5fa2d78b0e7f59ebea8dc3380c1',
+      installManager: '6f847f3f878a0f8a8082b827d8b2bc4ebbcbe221', activity: '250cf30f897938ed1705cfec654b3b6b4f79d598',
+      loadOrder: '8f3044cc73c8d97629da3f4f304382eb7fe71149', loadOrderAction: 'b8f88de149399ed01d346ae8e6b4788438078f30' });
+  }
+}
 const install = event('native-install-only'), deploy = event('independent-disk-deployment-proof'), rollback = event('independent-rollback-proof');
 assert.equal(deploy.manifest.files.length, 1);
 assert.equal(deploy.manifest.files[0].source, install.installationPath);
@@ -148,11 +177,9 @@ if (input.candidateAssessment) {
     const barrier = event(phase);
     assert.equal(barrier.profileId, setup.secondProfileId); assert.equal(barrier.activeProfileId, 'native-agent-fixture');
     assert.equal(barrier.starts, expected); assert.equal(barrier.stops, expected);
-    assert.equal(barrier.loadOrderCompletionObserved, true); assert.equal(barrier.emptyLoadOrderObserved, true);
-    assert.equal(barrier.loadOrderHash, crypto.createHash('sha256').update('[]').digest('hex'));
-    assert.deepEqual(barrier.sourceBlobs, { profiles: '4b4cddc08c29f5fa2d78b0e7f59ebea8dc3380c1',
-      installManager: '6f847f3f878a0f8a8082b827d8b2bc4ebbcbe221', activity: '250cf30f897938ed1705cfec654b3b6b4f79d598',
-      loadOrder: '8f3044cc73c8d97629da3f4f304382eb7fe71149', loadOrderAction: 'b8f88de149399ed01d346ae8e6b4788438078f30' });
+    checkLoadOrderBarrier(barrier);
+    assert.equal(barrier.emptyLoadOrderObserved, expectedOrder.length === 0);
+    assert.equal(barrier.loadOrderHash, crypto.createHash('sha256').update(JSON.stringify(expectedOrder)).digest('hex'));
   }
   assert.equal(setup.preserved.nativeMod.id, install.modId);
   assert.equal(setup.preserved.existingMod.id, 'native-agent-existing');
@@ -258,9 +285,7 @@ if (input.ownLocalPlan) {
   assert.deepEqual(second.profile.modState, {'native-agent-existing': {enabled: true, enabledTime: 1}});
   assert.deepEqual(intent.originals.secondProfile, second.profile); assert.deepEqual(restored.originals.secondProfile, second.profile);
   assert.equal(event('existing-mod-baseline').profileFlags[second.profile.id]['native-agent-existing'], true);
-  assert.deepEqual(second.sourceBlobs, { profiles: '4b4cddc08c29f5fa2d78b0e7f59ebea8dc3380c1',
-    installManager: '6f847f3f878a0f8a8082b827d8b2bc4ebbcbe221', activity: '250cf30f897938ed1705cfec654b3b6b4f79d598',
-    loadOrder: '8f3044cc73c8d97629da3f4f304382eb7fe71149', loadOrderAction: 'b8f88de149399ed01d346ae8e6b4788438078f30' });
+  checkLoadOrderBarrier(second);
   assert.equal(completed.checkpoints.length, 2);
   const beforeActivation = event('own-local-plan-before-activation');
   assert.deepEqual(beforeActivation.disabledModIds, input.planPackages.map(item => item.modId));
@@ -302,6 +327,19 @@ if (input.ownLocalPlan) {
   }
 }
 const before = read('ordinary-before.json'), after = read('ordinary-after.json');
+if (input.hostVersion) {
+  assert.ok(['2.9.1', '2.10.1'].includes(input.hostVersion));
+  const reviewedPath = new URL('./stock-vortex-' + input.hostVersion + '-admission.json', import.meta.url);
+  assert.equal(hash(reviewedPath), input.sourceAdmissionSHA256);
+  assert.equal(before.appAsar.sha256, input.appAsarSha256);
+  const readiness = event('authenticated-local-install-readiness').readiness;
+  assert.equal(readiness.sourceAdmissionVerified, true);
+  assert.equal(readiness.hostVersion, input.hostVersion);
+  assert.equal(event('authenticated-collection-health').collectionHealth.collectionSession.present, false);
+} else if (before.mode === 'stopped' && input.installRoute === 'mcp-local-archive') {
+  assert.equal(event('authenticated-local-install-readiness').readiness.sourceAdmissionVerified, true);
+  assert.equal(event('authenticated-collection-health').collectionHealth.collectionSession.present, false);
+}
 if (before.mode === 'stopped') {
   assert.equal(result.ordinaryMode, 'stopped');
   assert.equal(result.fixtureObserved, true);
@@ -309,18 +347,38 @@ if (before.mode === 'stopped') {
   assert.deepEqual(before.processes, []);
   assert.deepEqual(after, before);
   for (const pin of [before.executable, before.appAsar, before.manifest, before.hold]) assert.equal(hash(pin.file), pin.sha256);
-  if (input.installRoute === 'mcp-local-archive') {
-    assert.equal(event('authenticated-local-install-readiness').readiness.sourceAdmissionVerified, true);
-    assert.equal(event('authenticated-collection-health').collectionHealth.collectionSession.present, false);
-  }
 } else {
   assertOrdinaryModSnapshot(before.mods); assertOrdinaryModSnapshot(after.mods);
   assert.deepEqual(before.health, after.health); assert.deepEqual(before.profiles, after.profiles); assert.deepEqual(before.mods, after.mods);
   assert.equal(before.manifestSha256, after.manifestSha256);
   assert.equal(ordinaryProcessesPreserved(before.processes, after.processes), true, 'Ordinary process generations changed or unavailable');
+  if (input.hostVersion) {
+    assert.equal(before.processes.length, after.processes.length, 'Unexpected Vortex process remained');
+    for (const key of ['executable', 'appAsar', 'manifest', 'hold']) {
+      assert.deepEqual(before[key], after[key]);
+      assert.equal(hash(before[key].file), before[key].sha256);
+    }
+  }
 }
 const log = fs.readFileSync(path.join(root, 'userdata/vortex.log'), 'utf8');
 assert.match(log, /clean application end/);
+const nativeDialogObserved = receipt.events.some(row => row.phase === 'authenticated-native-dialog-readiness');
+if (namedArchiveOrder && (nativeDialogObserved || input.ownLocalPlan || input.candidateAssessment)) {
+  const observed = event('authenticated-native-dialog-readiness');
+  const dialog = observed.nativeDialog;
+  if (dialog.refused) {
+    assert.ok(['NATIVE_DIALOG_QUESTION_INVALID', 'NATIVE_DIALOG_UNSUPPORTED_QUESTION'].includes(dialog.refused));
+    assert.ok(Number.isSafeInteger(observed.unchangedQueueSize)
+      && observed.unchangedQueueSize > 0 && observed.unchangedQueueSize <= 128);
+    assert.ok(typeof observed.first.type === 'string' && Number.isSafeInteger(observed.first.actionCount));
+  } else {
+    assert.equal(dialog.schema, 'native-dialog-readiness/1');
+    assert.equal(dialog.status, 'empty');
+    assert.equal(dialog.queueSize, 0);
+    assert.deepEqual(dialog.eligibleActions, []);
+    assert.equal(dialog.installationCompleted, false);
+  }
+}
 const proof = { passed: true, root, checks: ['native import/install', 'authenticated compiled agent enable/deploy/disable/restore', 'manifest ownership', 'deployed hardlink identity', 'original hash and filesystem identity restored', 'post-shutdown game/staging hashes', 'ZIP size/SHA-256/CRC',
   input.ownLocalPlan ? 'eleven durable completions without unresolved marker' : completionSuffixes.length === 5 ? 'five durable completions without unresolved marker' : 'four durable completions without unresolved marker',
   ...(input.withExistingMod ? ['existing mod/flags/staged identity preserved', 'same-archive collision refused before effects'] : []),
@@ -330,7 +388,10 @@ const proof = { passed: true, root, checks: ['native import/install', 'authentic
   ...(before.mode === 'stopped'
     ? ['ordinary host stayed stopped at observation checkpoints', 'ordinary deployment manifest and unresolved operation preserved',
       ...(input.installRoute === 'mcp-local-archive' ? ['authenticated local install readiness and inactive fixture collection session'] : [])]
-    : ['ordinary health/profile/mod inventory/manifest/process preservation']),
+    : ['ordinary health/profile/mod inventory/manifest/process preservation',
+      ...(input.hostVersion ? ['reviewed host files and unresolved operation preserved',
+        'authenticated local install readiness and inactive fixture collection session'] : [])]),
+  ...(nativeDialogObserved ? ['authenticated native dialog queue read'] : []),
   'clean native shutdown'], nexusReuse: receipt.nexusReuse, at: new Date().toISOString() };
 fs.writeFileSync(path.join(root, 'independent-verification.json'), JSON.stringify(proof, null, 2), { flag: 'wx' });
 console.log(JSON.stringify(proof));

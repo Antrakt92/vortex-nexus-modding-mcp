@@ -1,6 +1,8 @@
 # Background collection wizard
 
 Install Now has passed an authorized live collection test on official Vortex 2.9.1.
+The 2.10.1 controls have source and regression coverage. A live collection
+transition on 2.10.1 still requires separate acceptance.
 Done still needs live acceptance through MCP. Closing a resumed installation through
 Windows UI Automation does not establish that gate.
 
@@ -28,7 +30,7 @@ Implementation checklist:
 - [x] Accept Install Now against a real authorized collection flow.
 - [ ] Accept Done through MCP in the same uninterrupted collection flow.
 
-Initial scope: Cyberpunk 2077, reviewed Vortex 2.9.1 sources, a newly observed
+Scope: Cyberpunk 2077, reviewed official Vortex 2.9.1 or 2.10.1 sources, a newly observed
 collection owner, and unambiguous Install Now/Done branches in that same flow.
 Existing owners without an observed lifecycle event, profile-creation/switch
 confirmation, optional/failure footers, unknown dialogs and incomplete sessions
@@ -74,7 +76,8 @@ The official host and known extensions use maintained source pins. Unknown
 loaded extensions refuse. A maintainer may review additional task-helper source
 closures and record their relative files and SHA-256 pins in
 `<runtime>/local-state/vortex-agent-build/collection-wizard-reviewed-helpers.json`
-using schema `collection-wizard-reviewed-helpers/1`, `reviewed: true`, the exact
+for 2.9.1 or `collection-wizard-reviewed-helpers-2.10.1.json` in the same
+directory for 2.10.1. Each file uses schema `collection-wizard-reviewed-helpers/1`, `reviewed: true`, the exact
 reviewed `appAsarSha256`, and `helpers: [{folder, files: [{path, sha256}]}]`.
 `files` are plugin-relative paths. A helper that imports code or immutable
 configuration outside that folder must also declare its complete reviewed

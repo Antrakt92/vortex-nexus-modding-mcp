@@ -3,15 +3,17 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 import manifest from './stock-vortex-2.9.1-admission.json' with { type: 'json' };
 
-function fixture() {
+function fixture(version = '2.9.1') {
   const app = path.resolve('fixture-host/Vortex.exe'), own = path.resolve('fixture-user/plugins/vortex-agent');
   const userData = path.resolve('fixture-user'), ownHash = 'a'.repeat(64), calls = [];
   const known = manifest.extensions.find(e => e.kind === 'bundled');
   const loaded = [{ dynamic: true, path: own }, { dynamic: true,
     path: path.join(path.dirname(app), 'resources/app.asar.unpacked/bundledPlugins', known.folder) }];
-  const api = { getLoadedExtensions: () => loaded }, module = { exports: {} };
+  const api = { getState: () => ({ app: { appVersion: version } }), getLoadedExtensions: () => loaded }, module = { exports: {} };
   const sandbox = { module, exports: module.exports, process: { execPath: app }, __dirname: own,
     require(name) {
       if (name === 'node:path') return path;
@@ -20,7 +22,7 @@ function fixture() {
         return JSON.stringify({ pluginSha256: ownHash });
       } };
       if (name === 'original-fs') return { promises: {} };
-      if (name === './stock-vortex-2.9.1-admission.json') return manifest;
+      if (name === './official-vortex-hosts.cjs') return require(name);
       if (name === './local-install-host.cjs') return { createLocalInstallHostAdmission(binding) {
         calls.push(binding); return async () => ({ dynamicExtensions: binding.expected.dynamic.length });
       } };
@@ -87,4 +89,15 @@ test('internal binding cannot authorize an unreviewed official-host generation',
   await assert.rejects(f.read({ packagePath: path.join(path.dirname(f.app), 'resources/app.asar'), expected: {
     appAsarSha256: 'b'.repeat(64), dynamic: [] } })(), /LOCAL_INSTALL_HOST_UNREVIEWED_VERSION/);
   assert.equal(f.calls.length, 0);
+});
+
+test('2.10.1 host reports its admitted version and refuses to use the 2.9.1 pin', async () => {
+  const f = fixture('2.10.1');
+  const verified = await f.read()();
+  assert.equal(verified.hostVersion, '2.10.1');
+  assert.equal(f.calls[0].expected.appAsarSha256,
+    require('./stock-vortex-2.10.1-admission.json').appAsarSha256);
+  const mismatch = fixture('2.10.1');
+  await assert.rejects(mismatch.read({ packagePath: path.join(path.dirname(f.app), 'resources/app.asar'),
+    expected: { appAsarSha256: manifest.appAsarSha256, dynamic: [] } })(), /UNREVIEWED_VERSION/);
 });
