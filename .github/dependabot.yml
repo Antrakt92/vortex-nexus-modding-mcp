@@ -6,6 +6,12 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # Keep declarations aligned with the supported Node and Vortex hosts.
+      - dependency-name: "@types/node"
+        versions: [">=25.0.0"]
+      - dependency-name: "@nexusmods/vortex-api"
+        versions: [">2.9.1"]
     groups:
       minor-and-patch:
         patterns: ["*"]
