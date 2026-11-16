@@ -327,6 +327,10 @@ if (input.ownLocalPlan) {
   }
 }
 const before = read('ordinary-before.json'), after = read('ordinary-after.json');
+if (before.mode !== 'stopped') {
+  assertOrdinaryModSnapshot(before.mods);
+  assertOrdinaryModSnapshot(after.mods);
+}
 if (input.hostVersion) {
   assert.ok(['2.9.1', '2.10.1'].includes(input.hostVersion));
   const reviewedPath = new URL('./stock-vortex-' + input.hostVersion + '-admission.json', import.meta.url);
@@ -348,7 +352,6 @@ if (before.mode === 'stopped') {
   assert.deepEqual(after, before);
   for (const pin of [before.executable, before.appAsar, before.manifest, before.hold]) assert.equal(hash(pin.file), pin.sha256);
 } else {
-  assertOrdinaryModSnapshot(before.mods); assertOrdinaryModSnapshot(after.mods);
   assert.deepEqual(before.health, after.health); assert.deepEqual(before.profiles, after.profiles); assert.deepEqual(before.mods, after.mods);
   assert.equal(before.manifestSha256, after.manifestSha256);
   assert.equal(ordinaryProcessesPreserved(before.processes, after.processes), true, 'Ordinary process generations changed or unavailable');

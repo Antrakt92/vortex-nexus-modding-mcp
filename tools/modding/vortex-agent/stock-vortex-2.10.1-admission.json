@@ -8,7 +8,7 @@
     "installerSha256": "01d62323acc37f0056a2752b82b26fa5992df818f4718f82ab3e3ea24d406030",
     "rendererMapSha256": "eca6d7901916eaeeccf8660ba80b6f287e2011ede6e69fd35687f44aae96b579",
     "cyberpunkSupportSourceCommit": "a934850337c649002c9b3120cad26000b593157b",
-    "scope": "Official Windows installer and bundled file integrity, with Cyberpunk Support 0.13.3 source-map parity. Other user extensions require their own review."
+    "scope": "Official Windows installer and bundled file integrity, Cyberpunk Support 0.13.3 source-map parity, and the exact previously reviewed Assassin's Creed Unity 1.0.6 and Far Cry 6 1.2.3 installer closures. Their installers are scoped to their own game IDs. Other user extensions require their own review."
   },
   "extensions": [
     {
@@ -1814,6 +1814,42 @@
         {
           "path": "info.json",
           "sha256": "896943f739c16d6003de2dab8b6c4b5dd27422781917c6a342605a3203e1e811"
+        }
+      ]
+    },
+    {
+      "kind": "user",
+      "folder": "assassinscreedunity",
+      "files": [
+        {
+          "path": "downloader.js",
+          "sha256": "f99d075936ffcbbff89093bd5549a6a1913ab4dca9912c884cd50f39012cfd95"
+        },
+        {
+          "path": "index.js",
+          "sha256": "b56dd1aff625408be43b09b2553439aa3c3889c392daaaec704571cf3fa2c07d"
+        }
+      ]
+    },
+    {
+      "kind": "user",
+      "folder": "farcry6",
+      "files": [
+        {
+          "path": "base_browser.js",
+          "sha256": "5687de8e84348ee4e2a23dfbc3b8371bf13b53c641422ec5456aa2e9d3a785cf"
+        },
+        {
+          "path": "fcmodding_browser.js",
+          "sha256": "c3bf2888cfc23979c40e29c09c1fb93cd5cfbdd92aa78bb35e36adb7b7b85066"
+        },
+        {
+          "path": "fcmodding_downloader.js",
+          "sha256": "28fff91b8fa4577d1ebbae5b27bbe466d3686559c4392f729879248484be818c"
+        },
+        {
+          "path": "index.js",
+          "sha256": "656c1216a98c5fa2a06b999b4f509b980d879e6c1f06e4c57c18e45dc9407121"
         }
       ]
     }

@@ -1132,7 +1132,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/local-install-binding.test.mjs",
-      "sha256_lf": "c37ee56678055c0546f3591664b74ca8e711cd7820588c8e8ae5fbecf135a3ef"
+      "sha256_lf": "25f2374b0c61a5500045edbeabce6eca994e94893f6c2b35a488b2957304bab7"
     },
     {
       "path": "tools/modding/vortex-agent/local-install-host.cjs",
@@ -1416,11 +1416,11 @@
     },
     {
       "path": "tools/modding/vortex-agent/native-fixture-snapshot.test.mjs",
-      "sha256_lf": "99294c24decc6652c0690a66ffae12ddd89708936a06273ecf5d3ad34f717082"
+      "sha256_lf": "20cd98f3e8de6d2fa70174d1a3501af307e44746be32ae48fa3fc416e2ae0e54"
     },
     {
       "path": "tools/modding/vortex-agent/native-fixture-verify.mjs",
-      "sha256_lf": "00fbecf665b87f9ab1ec049e3b0c7ebb9ade7f6d4e15246e6c4f45bdf3228631"
+      "sha256_lf": "ee609f4e733647695052b52a3547e463b07f4b8b84d85c9af23262365d79f5b9"
     },
     {
       "path": "tools/modding/vortex-agent/native-fixture-worker.cjs",
@@ -3212,7 +3212,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/stock-vortex-2.10.1-admission.json",
-      "sha256_lf": "efec6490f032aab649a65c725e01cfe241c885da99d2a983bad31a7508e0e5b7"
+      "sha256_lf": "972ffba2a863c8163a19cfdb92a3b7dd1f757cac671c719b58fb31f5b2caa34d"
     },
     {
       "path": "tools/modding/vortex-agent/stock-vortex-2.9.1-admission.json",
