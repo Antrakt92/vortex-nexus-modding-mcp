@@ -8,6 +8,7 @@ embedded Vortex adapter's compatibility label.
 
 | Version | Published | Main changes |
 | --- | --- | --- |
+| [0.9.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.9.0) | 2026-11-16 | Native installation prompts, mod fingerprints and safer installation and recovery |
 | [0.8.1](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.8.1) | 2026-11-04 | Fix bounded parsing of large immutable capture records |
 | [0.8.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.8.0) | 2026-11-03 | Guarded collection prompts, explicit capture profiles and settings comparison fixes |
 | [0.7.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.7.0) | 2026-11-03 | Own-ZIP installation plans, installed-candidate assessment and bounded install diagnostics |
@@ -19,25 +20,57 @@ embedded Vortex adapter's compatibility label.
 | [0.1.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.1.0) | 2026-10-29 | Combined inspection, collection download reuse and coordinated plans |
 | [Recovery sources](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/recovery-sources-20261025) | 2026-10-25 | Pinned upstream Git bundles for source recovery |
 
-## Unreleased
+## 0.9.0 — 2026-11-16
 
-- Fix `read_mod_record_fingerprints` rejecting newly installed mods whose
-  `attributes.installTime` is a native Date. Existing persisted timestamp hashes
-  remain unchanged; the tool still returns hashes only.
+Control supported Vortex installation prompts from MCP and inspect installed mod
+records without reading raw attributes. Changes since
+[0.8.1](https://github.com/Antrakt92/vortex-nexus-modding-mcp/compare/v0.8.1...v0.9.0).
 
-- Refresh the reviewed Far Cry 6 extension source pins from 1.2.2 to 1.2.3.
-  This admits its browser popup change without disabling support for other games
-  or relaxing source checks for Cyberpunk installation.
+### Added
 
-- Admit the reviewed Cyberpunk Support 0.13.2 executable on official Vortex
-  2.9.1, alongside the existing 0.13.1 source pin. Unknown versions and changed
-  executable bytes still refuse local installation.
+- Read the current native installation question, respond to a supported prompt
+  and check its outcome with `read_native_dialog`, `respond_native_dialog` and
+  `read_native_dialog_operation`. Supports Cancel, Ignore dependencies and
+  Update current profile through the reviewed Vortex 2.9.1 adapter. Observations
+  survive separate HTTP requests. A dismissed prompt confirms only the response.
+- Read mod record fingerprints with `read_mod_record_fingerprints`, including
+  records with native Date install timestamps. Compare records without returning
+  raw mod attributes.
+- Inspect bounded extension state and loaded effective IDs, including queued
+  removals, with `read_native_preflight`. Missing or changing inputs are marked
+  incomplete.
 
-- Extend `read_native_preflight` with bounded extension state and loaded effective
-  IDs, including queued removals. Missing, malformed, oversized or changing data
-  is explicitly incomplete; no filesystem census or restart permission is implied.
-  Requires a rebuilt adapter and coordinated activation. Live read acceptance on
-  official Vortex 2.9.1 passed on 2026-11-04; restart approval remains separate.
+### Fixed
+
+- Reconcile a lost or unusable ZIP installation response by the original request
+  ID. Reject Windows request ID aliases and unsafe receipt files. Parse SSE
+  consistently across packet boundaries and stop accepting stdio requests when
+  the output pipe closes.
+- Keep nested operation receipts during an adapter upgrade. Refuse the swap
+  when the installed adapter has disappeared or changed, and check that Vortex
+  is stopped immediately before swapping. Validate build inputs before writing
+  the package and generate recovery pins from the staged Git blobs.
+- Preserve tracked-download failure vetoes through settlement. Bound archive
+  reads and reuse the application-source hash within the same renderer when
+  reading and answering a native dialog.
+- Bind Nexus upload finalisation, version creation and changelog submission
+  to the reviewed request and prevent repeat dispatch. Reject unsafe local CLI
+  paths and identify the exact failing pristine API cache in errors.
+
+### Compatibility and dependencies
+
+- Admit Cyberpunk Support 0.13.2 alongside 0.13.1 for the reviewed Vortex 2.9.1
+  local ZIP route. Refresh the reviewed Far Cry 6 extension pin to 1.2.3.
+- Update runtime dependencies `hono` 4.13.14 → 4.13.16 and
+  `@hono/node-server` 2.1.5 → 2.1.6 to address registry advisories.
+
+### Upgrading
+
+- This is a source release. Follow [Restore and build](https://github.com/Antrakt92/vortex-nexus-modding-mcp/blob/v0.9.0/docs/RESTORE.md)
+  to rebuild and load the resident adapter. The embedded compatibility label
+  remains 1.1.0. Refresh tool discovery after updating a running MCP client.
+- See the [tooling audit](https://github.com/Antrakt92/vortex-nexus-modding-mcp/blob/v0.9.0/docs/TOOLING-AUDIT-20261116.md)
+  for the source, package and isolated process checks and their limits.
 
 ## 0.8.1 — 2026-11-04
 
