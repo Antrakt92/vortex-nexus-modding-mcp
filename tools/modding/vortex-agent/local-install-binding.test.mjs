@@ -91,6 +91,17 @@ test('internal binding cannot authorize an unreviewed official-host generation',
   assert.equal(f.calls.length, 0);
 });
 
+test('2.10.1 admits the reviewed Unity and Far Cry extensions with their exact executable pins', async () => {
+  const f = fixture('2.10.1');
+  const folders = ['assassinscreedunity', 'farcry6'];
+  for (const folder of folders) {
+    f.loaded.push({ dynamic: true, path: path.resolve('fixture-user/plugins', folder) });
+  }
+  await f.read()();
+  assert.deepEqual(Array.from(f.calls[0].expected.dynamic.slice(-2), ({ files }) => files),
+    manifest.extensions.filter(entry => folders.includes(entry.folder)).map(({ files }) => files));
+});
+
 test('2.10.1 host reports its admitted version and refuses to use the 2.9.1 pin', async () => {
   const f = fixture('2.10.1');
   const verified = await f.read()();

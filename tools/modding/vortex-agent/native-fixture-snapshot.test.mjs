@@ -51,7 +51,8 @@ test('malformed and duplicate identities cannot masquerade as a complete snapsho
 test('a capped legacy receipt is also refused by the independent verifier', () => {
   const source = fs.readFileSync(new URL('./native-fixture-verify.mjs', import.meta.url), 'utf8');
   const start = source.indexOf("const before = read('ordinary-before.json')");
-  const end = source.indexOf('const log =', start);
+  const end = source.indexOf('if (input.hostVersion) {', start);
+  assert.ok(start >= 0 && end > start);
   const code = source.slice(start, end);
   const complete = { mods: [{ id: 'own' }], health: {}, profiles: [], manifestSha256: 'same' };
   for (const cappedSide of ['ordinary-before.json', 'ordinary-after.json']) {
