@@ -301,12 +301,13 @@ test('closed mode and typed request API refuse without process or caller options
     assert.equal(RELAY_SOURCE_NAMES.length, 15);
     assert.equal(new Set(RELAY_SOURCE_NAMES).size, 15);
 });
-// Execute the actual SDK status producer, with owned data-only captured variables.
+// Execute the actual ZIP coordinator status producer, including its mode flag.
+// Archive-observer projection is exercised separately by its own client tests.
 const sdkSource = fs.readFileSync(path.join(HERE, 'owned-zip-worker-client.mjs'), 'utf8');
 const sdkStatusBody = sdkSource.slice(sdkSource.indexOf('  function status() {'), sdkSource.indexOf('\n  function wake()', sdkSource.indexOf('  function status() {')));
 // Bound extraction to the real function, not neighboring source helpers.
 const sdkStatusFunction = sdkStatusBody.slice(0, sdkStatusBody.indexOf('\n  }') + 4);
-const produceSDKStatus = new Function('v', `const {binding,packetSHA256,ready,child,startAttempted,startSent,handoffAttempted,cancelAttempted,releaseAttempted,childClosed,last,destination,terminal,firstError,stderrBytes,inertAbortAttempted=false}=v;return (${sdkStatusFunction})();`);
+const produceSDKStatus = new Function('v', `const archiveObserver=false;const {binding,packetSHA256,ready,child,startAttempted,startSent,handoffAttempted,cancelAttempted,releaseAttempted,childClosed,last,destination,terminal,firstError,stderrBytes,inertAbortAttempted=false}=v;return (${sdkStatusFunction})();`);
 const matrixBinding = {
     operationId: 'op_' + '1'.repeat(32), nativeJobId: 'exec_' + '2'.repeat(32), requestSHA256: '3'.repeat(64), rendererGeneration: 'renderer_' + '4'.repeat(32)
 };

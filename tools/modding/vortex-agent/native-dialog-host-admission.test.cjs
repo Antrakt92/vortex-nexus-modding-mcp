@@ -36,3 +36,14 @@ test('real hash path pins the opened descriptor and refuses an unreviewed real f
   const io={...fs,fstatSync(fd,opts){const s=fs.fstatSync(fd,opts);return {...s,ino:s.ino+1n};}};
   assert.throws(createNativeDialogHostAdmission(f.api,{processInfo,io}),/SOURCE_CHANGED_DURING_HASH/);
 });
+test('cold hashing reads only the admitted ASAR bytes when the source grows',t=>{
+  const f=fixture(t),size=fs.statSync(f.source).size;
+  let total=0;
+  const io={...fs,readSync(...args){
+    if(total===0)fs.appendFileSync(f.source,Buffer.alloc(8192));
+    const count=fs.readSync(...args);total+=count;return count;
+  }};
+  const admit=createNativeDialogHostAdmission(f.api,{processInfo:{pid:123,getCreationTime:()=>1},io});
+  assert.throws(admit,/SOURCE_CHANGED_DURING_HASH/);
+  assert.equal(total,size);
+});

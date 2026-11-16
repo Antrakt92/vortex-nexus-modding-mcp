@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import fsPromises from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -145,6 +146,118 @@ test('rejects archive hash mismatch before any native effect', async t => {
   assert.deepEqual(f.state.persistent, f.baseline);
 });
 
+test('archive growth after descriptor admission refuses after reading only the pinned bytes', async t => {
+  const f = fixture(t);
+  const fstat = fs.fstatSync, readFile = fs.readFileSync, read = fs.readSync;
+  let target, positionedBytes = 0, wholeFileBytes = 0;
+  const open = fs.openSync;
+  t.mock.method(fs, 'openSync', (filename, ...options) => {
+    const descriptor = open(filename, ...options);
+    if (filename === f.args.archivePath && options[0] === 'r') target = descriptor;
+    return descriptor;
+  });
+  let grew = false;
+  t.mock.method(fs, 'fstatSync', (descriptor, ...options) => {
+    const stat = fstat(descriptor, ...options);
+    if (descriptor === target && !grew) {
+      grew = true;
+      fs.appendFileSync(f.args.archivePath, Buffer.alloc(8192));
+    }
+    return stat;
+  });
+  t.mock.method(fs, 'readSync', (descriptor, ...options) => {
+    const count = read(descriptor, ...options);
+    if (descriptor === target) positionedBytes += count;
+    return count;
+  });
+  t.mock.method(fs, 'readFileSync', (filename, ...options) => {
+    const data = readFile(filename, ...options);
+    if (filename === target) wholeFileBytes += data.length;
+    return data;
+  });
+  await assert.rejects(installLocalArchive(f.api, f.args, f.services), /LOCAL_ARCHIVE_CHANGED/);
+  assert.equal(grew, true);
+  assert.equal(wholeFileBytes, 0);
+  assert.equal(positionedBytes, f.args.size);
+  assert.equal(f.counts().effectCount, 0);
+});
+
+for (const timing of ['before', 'after']) {
+  test(`oversized staged payload is refused when its size grows ${timing} admission`, async t => {
+    const f = fixture(t);
+    const staged = path.join(f.args.stagingPath, ID, payloadPath);
+    const write = fs.writeFileSync, readFile = fs.readFileSync, open = fs.openSync, fstat = fs.fstatSync, read = fs.readSync;
+    const extra = Buffer.alloc(8192);
+    let descriptor, positionedBytes = 0, wholeFileBytes = 0, grew = false;
+    if (timing === 'before') t.mock.method(fs, 'writeFileSync', (filename, data, ...options) =>
+      write(filename, filename === staged ? Buffer.concat([data, extra]) : data, ...options));
+    t.mock.method(fs, 'openSync', (filename, ...options) => {
+      const handle = open(filename, ...options);
+      if (filename === staged && options[0] === 'r') descriptor = handle;
+      return handle;
+    });
+    if (timing === 'after') t.mock.method(fs, 'fstatSync', (handle, ...options) => {
+      const stat = fstat(handle, ...options);
+      if (handle === descriptor && !grew) {
+        grew = true;
+        fs.appendFileSync(staged, extra);
+      }
+      return stat;
+    });
+    t.mock.method(fs, 'readSync', (handle, ...options) => {
+      const count = read(handle, ...options);
+      if (handle === descriptor) positionedBytes += count;
+      return count;
+    });
+    t.mock.method(fs, 'readFileSync', (filename, ...options) => {
+      const data = readFile(filename, ...options);
+      if (filename === staged || filename === descriptor) wholeFileBytes += data.length;
+      return data;
+    });
+    await assert.rejects(installLocalArchive(f.api, f.args, f.services), /LOCAL_ARCHIVE_STAGED_BYTES_UNVERIFIED/);
+    assert.equal(wholeFileBytes, 0);
+    assert.equal(positionedBytes, timing === 'before' ? 0 : payload.length);
+  });
+}
+
+test('Nexus archive hashing reads at most the admitted size and refuses growth', async t => {
+  const f = fixture(t);
+  const localPath = 'tracked.zip', file = path.join(f.args.downloadPath, localPath);
+  const bytes = Buffer.from('synthetic tracked archive');
+  fs.writeFileSync(file, bytes);
+  f.state.settings = {gameMode: {discovered: {[G]: {path: f.args.gamePath}}}};
+  f.state.persistent.downloads.files.tracked = {
+    state: 'finished', game: [G], localPath, modInfo: {modId: 42, fileId: 43},
+  };
+  const selectors = {
+    activeGameId: () => G, activeProfileId: () => P,
+    downloadPathForGame: () => f.args.downloadPath, installPathForGame: () => f.args.stagingPath,
+  };
+  f.api.store = {getState: f.api.getState};
+  const ops = guard.createOperations(f.api, {}, selectors, {receipts: path.join(f.root, 'receipts'), stopped: () => {}});
+  const open = fsPromises.open;
+  let total = 0;
+  t.mock.method(fsPromises, 'open', async (filename, ...options) => {
+    const handle = await open(filename, ...options);
+    if (filename !== file) return handle;
+    return {
+      stat: (...args) => handle.stat(...args), close: () => handle.close(),
+      async *createReadStream(...args) {
+        fs.appendFileSync(file, Buffer.alloc(8192));
+        for await (const chunk of handle.createReadStream(...args)) {
+          total += chunk.length;
+          yield chunk;
+        }
+      },
+    };
+  });
+  await assert.rejects(ops.download_nexus({ ...f.args, requestId: 'growth-proof-01',
+    filesystemIds: Object.fromEntries(['gamePath', 'stagingPath', 'downloadPath'].map(key => [key, guard.identity(f.args[key])])),
+    nexusModId: 42, nexusFileId: 43, size: bytes.length, sha256: sha(bytes), reuseOnly: true,
+  }), /DOWNLOAD_ARCHIVE_CHANGED/);
+  assert.equal(total, bytes.length);
+});
+
 test('rejects existing owner and staging collisions before any native effect', async t => {
   for (const kind of ['key', 'id', 'installationPath', 'directory', 'installing']) {
     const f = fixture(t);
@@ -279,4 +392,20 @@ test('real operation guard retains one durable intent across import and install,
   assert.equal(fs.readFileSync(attemptPath, 'utf8'), attemptBytes);
   assert.equal(fs.readFileSync(completionPath, 'utf8'), completionBytes);
   assert.equal(fs.existsSync(unresolved), false);
+  const inspect = () => operations.reconcile_operation({requestId: f.args.requestId});
+  assert.equal((await inspect()).terminalOperationVerified, true);
+
+  const alias = path.join(f.root, 'foreign-completion.json');
+  fs.linkSync(completionPath, alias);
+  const linked = await inspect();
+  assert.equal(linked.terminalOperationVerified, false);
+  assert.equal(linked.completion, null);
+  assert(linked.receiptIssues.includes('INVALID_RECEIPT'));
+  fs.unlinkSync(alias);
+  assert.equal((await inspect()).terminalOperationVerified, true);
+
+  const relocated = path.join(f.root, 'relocated-receipts');
+  fs.renameSync(dir, relocated);
+  fs.symlinkSync(relocated, dir, 'junction');
+  await assert.rejects(inspect(), /RECEIPT_DIRECTORY_UNVERIFIABLE/);
 });

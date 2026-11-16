@@ -3,8 +3,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import ntpath
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import stat
 import subprocess
@@ -21,14 +22,16 @@ def digest(data):
 def relative(value):
     if not isinstance(value, str):
         raise ValueError('Unsafe recovery path')
-    p = PurePosixPath(value)
-    if not value or '\\' in value or ':' in value or p.is_absolute() or any(x in ('', '.', '..') for x in value.split('/')):
-        raise ValueError('Unsafe recovery path')
-    return p
+    parts = value.split('/')
+    for part in parts:
+        if (not part or part.endswith(('.', ' ')) or any(c in '\\:<>"|?*' or ord(c) < 32 for c in part)
+                or (ntpath.isreserved(part) if hasattr(ntpath, 'isreserved') else PureWindowsPath(part).is_reserved())):
+            raise ValueError('Unsafe recovery path')
+    return PurePosixPath(*parts)
 
 
 def no_links(path):
-    for p in [path, *path.parents]:
+    for p in (*reversed(path.parents), path):
         # exists() follows links and hides dangling reparse points.
         try:
             info = p.lstat()
@@ -67,9 +70,10 @@ def verify(root=ROOT):
                 or not re.fullmatch(r'[a-f0-9]{64}', row['sha256_lf'])):
             raise ValueError('Invalid recovery manifest file entry')
         rel = relative(row['path']).as_posix()
-        if rel in seen:
+        normalized = ntpath.normcase(rel)
+        if normalized in seen:
             raise ValueError('Duplicate recovery input')
-        seen.add(rel)
+        seen.add(normalized)
         p = root / rel
         no_links(p)
         if not p.is_file() or digest(p.read_bytes().replace(b'\r\n', b'\n')) != row['sha256_lf']:
@@ -110,10 +114,17 @@ def restore_skills(snapshot, destination, apply=False):
     no_links(manifest_path)
     manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
     plan = []
+    files, directories = set(), set()
     for row in manifest['skills']:
         rel = relative(row['path'])
         if rel.parts[0] != 'skills' or len(rel.parts) < 3:
             raise ValueError('Unexpected skill snapshot scope')
+        key = tuple(part.lower() for part in rel.parts[1:])
+        parents = {key[:length] for length in range(1, len(key))}
+        if key in files or key in directories or files.intersection(parents):
+            raise ValueError('Conflicting skill snapshot paths')
+        files.add(key)
+        directories.update(parents)
         src = snapshot / rel
         no_links(src)
         data = src.read_bytes()

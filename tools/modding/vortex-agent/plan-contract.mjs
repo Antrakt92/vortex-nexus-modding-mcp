@@ -28,14 +28,14 @@ export function validateContext(value) {
   return value;
 }
 
-export function validatePlan(input) {
+export function validatePlan(input, {historical = false} = {}) {
   insist(keys(input, ['version', 'context', 'steps', 'deploy']) && input.version === 1, 'INVALID_PLAN');
   validateContext(input.context);
   insist(Array.isArray(input.steps) && input.steps.length <= 100, 'INVALID_PLAN_STEPS');
-  // Windows receipt paths alias by case. Keep historical non-install v1 plans
-  // readable while refusing these aliases before a new installation plan runs.
-  const receiptId = input.steps.some(step => step?.operation === 'install_local_archive')
-    ? value => value.toLowerCase() : value => value;
+  // Windows receipt paths alias by case. Legacy non-install v1 journals used
+  // exact-case IDs; accept those only while reconstructing their history.
+  const legacyIds = historical && !input.steps.some(step => step?.operation === 'install_local_archive');
+  const receiptId = value => legacyIds ? value : value.toLowerCase();
   const ids = new Set(), installedIds = new Set(); let activationSeen = false;
   for (const step of input.steps) {
     if (step?.operation === 'download_nexus') {
@@ -75,8 +75,8 @@ export function validatePlan(input) {
   return JSON.parse(JSON.stringify(input));
 }
 
-export function planQueue(input) {
-  const plan = validatePlan(input);
+export function planQueue(input, options) {
+  const plan = validatePlan(input, options);
   const queue = plan.steps.map(({operation, ...parameters}) => ({operation, args: {...plan.context, ...parameters}}));
   if (plan.deploy !== null) queue.push({operation: 'deploy_mods', args: {...plan.context, requestId: plan.deploy.requestId}});
   return queue;

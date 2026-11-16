@@ -23,6 +23,12 @@ class CacheError(ValueError):
     pass
 
 
+class HeldCacheAttempt(CacheError):
+    def __init__(self, slot):
+        super().__init__('CACHE_ATTEMPT_HELD')
+        self.slot = slot
+
+
 def require(ok, code):
     if not ok:
         raise CacheError(code)
@@ -243,7 +249,8 @@ def validate_slot(s, slot, modern):
     allowed = {'receipt.json', 'vanilla.reds', 'decompile.log'} | ({'intent.json'} if modern else set())
     require(set(files) <= allowed, 'CACHE_UNKNOWN_ENTRY')
     receipt = slot / 'receipt.json'
-    require(exists(receipt), 'CACHE_ATTEMPT_HELD')
+    if not exists(receipt):
+        raise HeldCacheAttempt(slot)
     r = strict_json(receipt)
     output = slot / 'vanilla.reds'
     try:
@@ -304,8 +311,8 @@ def inspect_cache(workspace, game=None, expected_sha256=None):
                     'CACHE_TOOL_MANIFEST_INVALID': 'tool_manifest_invalid', 'CACHE_TOOL_UNAVAILABLE': 'tool_missing',
                     'CACHE_OUTPUT_MISSING': 'output_missing', 'CACHE_INVALID_JSON': 'invalid_receipt'}.get(code, 'incomplete')
         result.update(state='held' if s else 'blocked', code=code, failureClass=category)
-        if s and code == 'CACHE_ATTEMPT_HELD':
-            result['failureClass'] = failure_class(s['legacy'] if exists(s['legacy']) else s['slot'])
+        if isinstance(error, HeldCacheAttempt):
+            result['failureClass'] = failure_class(error.slot)
     return result
 
 

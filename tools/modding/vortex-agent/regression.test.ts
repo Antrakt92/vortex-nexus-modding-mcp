@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { readFileSync, mkdirSync } from 'node:fs';
 import vm from 'node:vm';
 import http from 'node:http';
+import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,7 +33,7 @@ function adaptedServer(api: any): http.Server {
   const module = { exports: {} as any };
   const artifact = readFileSync(fileURLToPath(new URL('../adapted-dist/index.js', import.meta.url)), 'utf8');
   const wrapped = vm.runInThisContext('(function(require,module,exports,__dirname,__filename){' + artifact + '\n})');
-  wrapped((id: string) => id === '@nexusmods/vortex-api' ? { actions, selectors, log: () => {}, util: {}, fs: {} }
+  wrapped((id: string) => id === '@nexusmods/vortex-api' ? { actions, selectors, log: () => {}, util: { getVortexPath: () => modelDir, renderModName: (mod: { id: string }) => mod.id }, fs: {} }
     : ['http', 'node:http'].includes(id) ? mockedHttp : localRequire(id), module, module.exports, path.dirname(fileURLToPath(new URL('../adapted-dist/index.js', import.meta.url))), fileURLToPath(new URL('../adapted-dist/index.js', import.meta.url)));
   module.exports.start(api, 0, { tokenProvider: async () => '7'.repeat(64) });
   return listener!;
@@ -57,7 +58,8 @@ describe('requested upstream safety regressions', () => {
       { allowAutoDeploy: false, reason: 'user_manual', installed: true });
   });
   it('read tool list must not expose mutating Nexus update refresh', async () => {
-    const api = { getState: () => ({}), store: { getState: () => ({}) } } as any;
+    const api = { getState: () => ({}), store: { getState: () => ({}) }, events: new EventEmitter(), ext: {}, onAsync() {}, closeDialog() { throw Error('Unexpected native dialog'); },
+      awaitUI: async () => {}, translate: (key: string) => key } as any;
     const server = adapted ? adaptedServer(api) : startMcpServer(api);
     try {
       await new Promise<void>(resolve => server.listening ? resolve() : server.once('listening', resolve));

@@ -251,6 +251,58 @@ class UpgradeTests(unittest.TestCase):
             upgrade.install(self.new, self.old, 'relative/package')
         self.assertEqual(upgrade.sha(self.plugins / 'vortex-agent/index.js'), self.old)
 
+    def test_upgrade_refuses_when_original_target_disappears_during_staging(self):
+        target = self.plugins / 'vortex-agent'
+        renamed = target.with_name('temporarily-removed')
+        checks = 0
+
+        def stopped():
+            nonlocal checks
+            checks += 1
+            if checks == 2:
+                target.rename(renamed)
+
+        with patch.object(upgrade, 'stopped', stopped):
+            with self.assertRaisesRegex(RuntimeError, 'Upgrade target disappeared'):
+                upgrade.install(self.new, self.old)
+        self.assertFalse(target.exists())
+        self.assertEqual(upgrade.sha(renamed / 'index.js'), self.old)
+        self.assertEqual(list((self.root / 'upgrades').glob('*/upgrade.json')), [])
+
+    def test_upgrade_refuses_byte_identical_target_replacement_during_staging(self):
+        target = self.plugins / 'vortex-agent'
+        renamed = target.with_name('retained-original')
+        checks = 0
+
+        def stopped():
+            nonlocal checks
+            checks += 1
+            if checks == 2:
+                target.rename(renamed)
+                upgrade.shutil.copytree(renamed, target)
+
+        with patch.object(upgrade, 'stopped', stopped):
+            with self.assertRaisesRegex(RuntimeError, 'Upgrade target changed'):
+                upgrade.install(self.new, self.old)
+        self.assertEqual(upgrade.sha(renamed / 'index.js'), self.old)
+        self.assertEqual(upgrade.sha(target / 'index.js'), self.old)
+
+    def test_upgrade_checks_processes_again_after_validating_receipts(self):
+        target = self.plugins / 'vortex-agent'
+        checks = 0
+
+        def stopped():
+            nonlocal checks
+            checks += 1
+            if checks == 3:
+                raise RuntimeError('Synthetic host launched after receipt preflight')
+
+        with patch.object(upgrade, 'stopped', stopped):
+            with self.assertRaisesRegex(RuntimeError, 'host launched after receipt preflight'):
+                upgrade.install(self.new, self.old)
+        self.assertEqual(upgrade.sha(target / 'index.js'), self.old)
+        self.assertEqual(list((self.root / 'upgrades').glob('*/upgrade.json')), [])
+
     def test_failed_post_swap_validation_restores_exact_old_plugin(self):
         actual = upgrade.package
         def validate(directory, expected, version=None, **kwargs):
@@ -375,6 +427,57 @@ class UpgradeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'identity'):
             upgrade.sync_provenance(self.new)
         self.assertEqual(receipt.read_bytes(), original)
+
+    def test_metadata_sync_preserves_valid_target_when_package_license_pins_differ(self):
+        receipt = self.matching_target()
+        original = receipt.read_bytes()
+        license = self.source / 'LICENSE.md'
+        license.write_bytes(b'Synthetic revised license')
+        metadata = self.source / 'provenance.json'
+        value = json.loads(metadata.read_bytes())
+        value['licenseFileSHA256']['LICENSE.md'] = upgrade.sha(license)
+        metadata.write_text(json.dumps(value), encoding='utf-8')
+        upgrade.package(self.source, self.new)
+        with self.assertRaisesRegex(RuntimeError, 'Installed license files differ'):
+            upgrade.sync_provenance(self.new)
+        self.assertEqual(receipt.read_bytes(), original)
+        upgrade.package(receipt.parent, self.new)
+
+    def test_metadata_sync_refuses_target_replaced_after_staging(self):
+        receipt = self.matching_target()
+        original = receipt.read_bytes()
+        actual = upgrade.receipt_pins
+        calls = 0
+
+        def receipt_pins():
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                receipt.parent.rename(receipt.parent.with_name('retained'))
+                package(receipt.parent, '1.1.0', b'synthetic new bundle')
+                receipt.write_bytes(original)
+            return actual()
+
+        with patch.object(upgrade, 'receipt_pins', receipt_pins):
+            with self.assertRaisesRegex(RuntimeError, 'Installed plugin changed'):
+                upgrade.sync_provenance(self.new)
+        self.assertEqual(receipt.read_bytes(), original)
+        self.assertEqual(receipt.parent.with_name('retained').joinpath('provenance.json').read_bytes(), original)
+        self.assertEqual(list((self.plugins.parent / 'temp').iterdir()), [])
+
+    def test_snapshot_comparison_does_not_write_through_hardlink(self):
+        report_dir = self.root / 'snapshots'
+        report_dir.mkdir()
+        for label in ('before', 'after'):
+            (report_dir / (label + '.snapshot.json')).write_bytes(b'{}')
+        sentinel = self.root / 'protected.json'
+        sentinel.write_bytes(b'preserve protected bytes')
+        report = report_dir / 'protected-state-comparison.json'
+        report.hardlink_to(sentinel)
+        with patch.object(upgrade, 'STATE', report_dir):
+            upgrade.compare('before', 'after')
+        self.assertEqual(sentinel.read_bytes(), b'preserve protected bytes')
+        self.assertIs(json.loads(report.read_bytes())['unchanged'], True)
 
     def test_metadata_sync_refuses_different_runtime_workspace(self):
         receipt = self.matching_target()

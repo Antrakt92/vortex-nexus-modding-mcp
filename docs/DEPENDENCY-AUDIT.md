@@ -223,3 +223,22 @@ evidence are described in the [API cache record](PRISTINE-API-CACHE.md).
 Detailed provenance and dependency reports remain private under ignored
 `local-state/pristine-api-refresh-20261030/`; no CDPR source or tool binary is
 included in this public repository.
+
+## 16 November 2026 Hono patch updates
+
+The registry audit reported six moderate advisories and one low advisory for
+the locked Hono packages. The overrides now select
+[`hono` 4.13.16](https://registry.npmjs.org/hono/4.13.16) and
+[`@hono/node-server` 2.1.6](https://registry.npmjs.org/@hono%2fnode-server/2.1.6).
+The updates address the reported ranges, including Hono's
+[mount middleware bypass](https://github.com/advisories/GHSA-4m76-xfj5-7975)
+and the Node adapter's
+[WebSocket upgrade error](https://github.com/advisories/GHSA-qv5m-9pm6-hqp3).
+This records the dependency exposure. Whether each path is reachable through
+the guarded Vortex endpoint has not been established.
+
+Only these two runtime package versions and their lockfile pins changed.
+Both installed package licenses match the retained MIT notices. An isolated
+frozen install used pnpm 10.34.9 with lifecycle scripts disabled. Production
+and full registry audits then reported zero findings across 7 and 219 graph
+entries, respectively.

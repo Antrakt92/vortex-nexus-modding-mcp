@@ -1,7 +1,9 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs/promises'),disk=require('node:fs'),os=require('node:os'),path=require('node:path');
+const vm=require('node:vm');
 const {createOperations,context,commitCompletion}=require('./guard.cjs');
+const {createNativeDialogHostAdmission,SOURCES}=require('./native-dialog-host-admission.cjs');
 const receiptSchema=require('./receipts.cjs');
 const {QUESTION_TEXT}=require('./collection-dialog-policy.cjs');
 const TEXT="You're updating a mod that others depend upon and the update doesn't seem to be compatible (according to the dependency information). If you continue we have to disable these dependencies, otherwise you'll continually get warnings about it.";
@@ -122,6 +124,46 @@ test('two independent request guards share observation but only response guard o
  assert.equal(result.nativeDialogDismissalVerified,true);assert.equal(oldChecks,0);assert.equal(oldCommits,0);assert(newChecks>2);assert.equal(newCommits,2);assert.equal(f.calls.length,1);
  assert.equal(disk.existsSync(path.join(f.receipts,'unresolved.json')),false);assert.equal((await reader.read_native_dialog_operation({requestId:'request_0001'})).status,'complete');
  const third=f.fresh();await assert.rejects(third.respond_native_dialog(f.args(r,'ignore_dependencies')),/REQUEST_REPLAY/);assert.equal(f.calls.length,1);
+});
+
+test('default source proof is reused across request facades and refuses changes in the same renderer',async t=>{
+ const f=await fixture(t), exe=path.join(f.dir,'Vortex.exe'), source=path.join(f.dir,'resources','app.asar');
+ await fs.mkdir(path.dirname(source));
+ await fs.writeFile(exe,'model executable');await fs.writeFile(source,'model source');
+ f.api.getPath=()=>exe;f.state.app={appVersion:'2.9.1'};
+ let generation=1,hashes=0,readChecks=0,responseChecks=0;
+ const hostModule={createNativeDialogHostAdmission(api){
+   return createNativeDialogHostAdmission(api,{
+     processInfo:{pid:123,getCreationTime:()=>generation},
+     hash(){hashes++;return Object.keys(SOURCES)[0];},
+   });
+ }};
+ const filename=require.resolve('./native-dialog-operations.cjs'), loaded={exports:{}};
+ const evaluate=vm.runInThisContext(`(function(require,module){${disk.readFileSync(filename,'utf8')}\n})`,{filename});
+ evaluate(id=>id==='./native-dialog-host-admission.cjs'?hostModule:require(id),loaded);
+ const {createNativeDialogOperations}=loaded.exports;
+ const readerCheck=()=>{readChecks++;};
+ const responseCheck=()=>{responseChecks++;};
+ const facade=(api,checkContext,options={})=>createNativeDialogOperations(api,f.selectors,{
+   receipts:f.receipts,checkContext,commitCompletion,...options,
+ });
+ const args={gameId:'game',profileId:'profile'};
+ const observed=await facade(f.api,readerCheck).read_native_dialog(args);
+ const reply=await facade(f.api,responseCheck).respond_native_dialog(f.args(observed));
+ assert.equal(reply.nativeDialogDismissalVerified,true);
+ assert.equal(hashes,1);assert.equal(readChecks,0);assert(responseChecks>1);
+ await assert.rejects(facade(f.api,responseCheck,{assertHost(){throw Error('CUSTOM_SOURCE_REFUSED');}}).read_native_dialog(args),/CUSTOM_SOURCE_REFUSED/);
+ assert.equal((await facade(f.api,responseCheck).read_native_dialog(args)).status,'empty');
+ assert.equal(hashes,1);
+ generation++;
+ await assert.rejects(facade(f.api,responseCheck).read_native_dialog(args),/SOURCE_CHANGED_IN_HOST/);
+ assert.equal(hashes,1);
+ const restarted={...f.api};
+ assert.equal((await facade(restarted,responseCheck).read_native_dialog(args)).status,'empty');
+ assert.equal(hashes,2);
+ await fs.appendFile(source,'changed before the next request');
+ await assert.rejects(facade(restarted,responseCheck).read_native_dialog(args),/SOURCE_CHANGED_IN_HOST/);
+ assert.equal(hashes,2);
 });
 test('credential rotation in the response guard is not bypassed by a retained read controller',async t=>{
  const f=await fixture(t),r=await f.fresh().read_native_dialog({gameId:'game',profileId:'profile'});

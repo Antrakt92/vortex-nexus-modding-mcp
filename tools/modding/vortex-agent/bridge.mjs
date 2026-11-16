@@ -38,14 +38,29 @@ export async function* boundedLines(input, max = 1024 * 1024) {
 }
 const UNAVAILABLE = 'Vortex MCP unavailable or timed out. Start Vortex with the audited vortex-agent extension, verify port 3701 ownership; inspect receipts before retrying a write.';
 const LOCAL_INSTALL_TRANSPORT_LOST = 'Vortex local archive transport lost or timed out. Native work may continue. Reconcile the original requestId with reconcile_operation; do not retry install_local_archive.';
-const transportAbort = error => error?.name === 'AbortError' || error?.name === 'TimeoutError';
+class UnusableResponse extends Error {
+  constructor(message = 'Invalid Vortex MCP response') { super(message); }
+}
+function isLocalArchiveInstall(method, params) {
+  return method === 'tools/call' && params?.name === 'install_local_archive';
+}
+function isLocalInstallResult(result) {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return false;
+  const { content, structuredContent, isError } = result;
+  if (!Array.isArray(content) || content.length !== 1) return false;
+  const [text] = content;
+  if (text?.type !== 'text' || typeof text.text !== 'string' || !text.text.length) return false;
+  if (isError === true) return true;
+  return (isError === undefined || isError === false)
+    && structuredContent !== null && typeof structuredContent === 'object' && !Array.isArray(structuredContent);
+}
 export async function remote(method, params = {}, fetcher = fetch, tokenProvider = credential.readToken) {
   let dispatched = false;
   try { return await remoteRequest(method, params, fetcher, tokenProvider, () => { dispatched = true; }); }
   catch (error) {
-    if (dispatched && method === 'tools/call' && params.name === 'install_local_archive'
-      && (error?.message === UNAVAILABLE || transportAbort(error))) throw new Error(LOCAL_INSTALL_TRANSPORT_LOST);
-    if (transportAbort(error)) throw new Error('Invalid Vortex MCP response');
+    if (dispatched && isLocalArchiveInstall(method, params)
+      && (error?.message === UNAVAILABLE || error instanceof UnusableResponse)) throw new Error(LOCAL_INSTALL_TRANSPORT_LOST);
+    if (error instanceof UnusableResponse) throw new Error(error.message);
     throw error;
   }
 }
@@ -69,64 +84,76 @@ async function remoteRequest(method, params, fetcher, tokenProvider, onDispatch)
     cancelBody(response.body);
     throw new Error(response.status === 401 ? 'Vortex MCP authentication failed. Run credential.cjs --initialize once as the same Windows user as Vortex, then verify extension and credential ownership.' : `Vortex MCP HTTP ${response.status}; verify the adapted extension and port ownership.`);
   }
-  if (Number(response.headers.get('content-length')) > MAX_RESPONSE_BYTES) { cancelBody(response.body); throw new Error('MCP response too large'); }
-  if (!response.body) throw new Error('Invalid Vortex MCP response');
+  if (Number(response.headers.get('content-length')) > MAX_RESPONSE_BYTES) { cancelBody(response.body); throw new UnusableResponse('MCP response too large'); }
+  if (!response.body) throw new UnusableResponse();
   let message;
   if ((response.headers.get('content-type') || '').includes('text/event-stream')) {
     const reader = response.body.getReader();
-    const decoder = new TextDecoder('utf-8', { fatal: true });
-    let pieces = [], dataLines = [], skipLF = false, bytes = 0;
+    const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+    let pieces = [], lineBytes = 0, dataLines = [], skipLF = false, firstLine = true, bytes = 0;
     try {
       while (!message) {
         const { value, done } = await reader.read();
-        bytes += value?.byteLength || 0;
-        if (bytes > MAX_RESPONSE_BYTES) throw new Error('MCP response too large');
-        const chunk = decoder.decode(value || new Uint8Array(), { stream: !done });
-        let start = skipLF && chunk.startsWith('\n') ? 1 : 0;
-        if (chunk.length) skipLF = false;
-        // Scan each new chunk once; rescanning a growing event for every read
-        // makes large, fragmented inventory replies quadratic.
-        const endings = /[\r\n]/g; endings.lastIndex = start;
-        let ending;
-        while ((ending = endings.exec(chunk)) !== null) {
-          pieces.push(chunk.slice(start, ending.index));
-          const line = pieces.join(''); pieces = [];
-          start = endings.lastIndex;
-          if (ending[0] === '\r') {
-            if (chunk[start] === '\n') {start++; endings.lastIndex = start;}
-            else if (start === chunk.length) skipLF = true;
+        if (done) break;
+        let start = 0;
+        // Parse line boundaries before decoding so bytes after a complete reply
+        // cannot change its result just because they arrived in the same read.
+        for (let end = 0; end < value.length; end++) {
+          if (++bytes > MAX_RESPONSE_BYTES) throw new UnusableResponse('MCP response too large');
+          const byte = value[end];
+          if (skipLF) {
+            skipLF = false;
+            if (byte === 10) { start = end + 1; continue; }
           }
+          if (byte !== 13 && byte !== 10) continue;
+          if (end > start) pieces.push(value.subarray(start, end));
+          let line = decoder.decode(Buffer.concat(pieces, lineBytes + end - start));
+          if (firstLine) { line = line.replace(/^\uFEFF/, ''); firstLine = false; }
+          pieces = []; lineBytes = 0; start = end + 1; skipLF = byte === 13;
           if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
           else if (!line && dataLines.length) {
             const data = dataLines.join('\n'); dataLines = [];
-            if (data) {const candidate = parse(data); if (candidate.id === 1) message = candidate;}
+            if (data) {
+              const candidate = parse(data);
+              if (candidate?.id === 1) {
+                message = candidate;
+                break;
+              }
+            }
           }
         }
-        if (start < chunk.length) pieces.push(chunk.slice(start));
-        if (done) break;
+        if (!message && start < value.length) {
+          pieces.push(value.subarray(start));
+          lineBytes += value.length - start;
+        }
       }
     } catch (error) {
-      if (transportAbort(error)) throw error;
-      throw new Error(error.message === 'MCP response too large' ? 'MCP response too large' : 'Invalid Vortex MCP response');
+      throw error instanceof UnusableResponse ? error : new UnusableResponse();
     } finally { releaseReader(reader); }
   } else {
     const reader = response.body.getReader(); const chunks = []; let bytes = 0;
     try {
       while (true) {
         const { value, done } = await reader.read(); if (done) break;
-        bytes += value.byteLength; if (bytes > MAX_RESPONSE_BYTES) throw new Error('MCP response too large');
+        bytes += value.byteLength; if (bytes > MAX_RESPONSE_BYTES) throw new UnusableResponse('MCP response too large');
         chunks.push(value);
       }
       message = parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, bytes)));
     } catch (error) {
-      if (transportAbort(error)) throw error;
-      throw new Error(error.message === 'MCP response too large' ? 'MCP response too large' : 'Invalid Vortex MCP response');
+      throw error instanceof UnusableResponse ? error : new UnusableResponse();
     } finally { releaseReader(reader); }
   }
-  if (!message || message.jsonrpc !== '2.0' || message.id !== 1) throw new Error('Invalid Vortex MCP response');
-  if (Object.hasOwn(message, 'result') === Object.hasOwn(message, 'error')) throw new Error('Invalid Vortex MCP response');
-  if (Object.hasOwn(message, 'error') && (!message.error || typeof message.error !== 'object')) throw new Error('Invalid Vortex MCP response');
-  if (message.error) throw new Error('Vortex MCP rejected the request; verify tool arguments and adapted protocol.');
+  if (!message || message.jsonrpc !== '2.0' || message.id !== 1) throw new UnusableResponse();
+  if (Object.hasOwn(message, 'result') === Object.hasOwn(message, 'error')) throw new UnusableResponse();
+  if (Object.hasOwn(message, 'error') && (!message.error || typeof message.error !== 'object')) throw new UnusableResponse();
+  const localInstall = isLocalArchiveInstall(method, params);
+  if (message.error) {
+    // Only protocol-level parsing, routing and input refusals prove the tool was never invoked.
+    if (localInstall && (![-32700, -32600, -32601, -32602].includes(message.error.code)
+      || typeof message.error.message !== 'string')) throw new UnusableResponse();
+    throw new Error('Vortex MCP rejected the request; verify tool arguments and adapted protocol.');
+  }
+  if (localInstall && !isLocalInstallResult(message.result)) throw new UnusableResponse();
   if (method === 'tools/list' && Array.isArray(message.result?.tools)) {
     return { ...message.result, tools: message.result.tools.filter(tool => tool.name !== 'install_download').map(maintainedToolMetadata) };
   }
@@ -281,9 +308,19 @@ export async function runStdio(input, output, handle, maxPending = 100) {
   const pending = new Set();
   let activeDispatches = 0;
   const cancelPlans = () => handle.cancelPendingPlans?.();
-  output.on('close', cancelPlans); output.on('error', cancelPlans);
+  let outputError;
+  const onOutputError = error => {
+    outputError ??= error;
+    cancelPlans();
+    input.destroy?.();
+  };
+  const onOutputClose = () => onOutputError(new Error('MCP output closed'));
+  output.on('close', onOutputClose); output.on('error', onOutputError);
   try {
+    if (output.destroyed) throw new Error('MCP output closed');
     for await (const line of boundedLines(input)) {
+      if (outputError) throw outputError;
+      if (output.destroyed) throw new Error('MCP output closed');
       if (line !== null && !line.trim()) continue;
       let request;
       try { if (line === null) throw new Error(); request = JSON.parse(line); }
@@ -309,10 +346,13 @@ export async function runStdio(input, output, handle, maxPending = 100) {
         if (pending.size >= maxPending && activeDispatches === 0) await Promise.race(pending);
       }
     }
+    if (outputError) throw outputError;
+  } catch (error) {
+    throw outputError ?? error;
   } finally {
     cancelPlans();
     await Promise.allSettled(pending);
-    output.off('close', cancelPlans); output.off('error', cancelPlans);
+    output.off('close', onOutputClose); output.off('error', onOutputError);
   }
   await Promise.all(pending);
 }

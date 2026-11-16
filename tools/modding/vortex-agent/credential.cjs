@@ -24,9 +24,21 @@ async function initialize(root = ROOT) {
   await fs.mkdir(root, { recursive: true });
   // Restrict the credential directory BEFORE writing even protected credential bytes.
   powershell("$p=[Console]::In.ReadToEnd(); $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $acl=[Security.AccessControl.DirectorySecurity]::new(); $acl.SetAccessRuleProtection($true,$false); $rule=[Security.AccessControl.FileSystemAccessRule]::new($sid,[Security.AccessControl.FileSystemRights]::FullControl,[Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit',[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow); $acl.AddAccessRule($rule); [IO.Directory]::SetAccessControl($p,$acl)", root);
-  const handle = await fs.open(path.join(root, user + '.dpapi'), 'wx');
-  try { await handle.writeFile(protect(crypto.randomBytes(32).toString('hex'))); await handle.sync(); }
-  finally { await handle.close(); }
+  const file = path.join(root, user + '.dpapi');
+  const blob = protect(crypto.randomBytes(32).toString('hex'));
+  const pending = file + '.pending-' + crypto.randomUUID();
+  const handle = await fs.open(pending, 'wx');
+  try {
+    try { await handle.writeFile(blob); await handle.sync(); }
+    finally { await handle.close(); }
+    // The canonical name appears only after sync. A competing initializer
+    // receives EEXIST and keeps the already-published credential intact.
+    await fs.link(pending, file);
+  } finally {
+    // Cleanup failure cannot reverse publication. Any leftover bytes remain
+    // DPAPI-protected inside the restricted directory.
+    await fs.unlink(pending).catch(() => {});
+  }
 }
 let cachedSid;
 const cache = new Map();

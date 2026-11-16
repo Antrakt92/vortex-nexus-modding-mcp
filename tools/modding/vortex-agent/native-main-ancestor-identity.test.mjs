@@ -19,9 +19,13 @@ assert(path.isAbsolute(originalRoot)&&path.isAbsolute(dependencyRoot),'explicit 
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const input=Object.fromEntries(NATIVE_SOURCE_PATHS.map(file=>[file,new Uint8Array(fs.readFileSync(path.join(originalRoot,file)))]));
 const assembled=assembleNativeSources(input);
-assert.equal(assembled.receipt.patches.length,132);assert.equal(assembled.receipt.sources.length,26);
+assert.equal(assembled.receipt.sources.length,NATIVE_SOURCE_PATHS.length);
 assert.equal(assembled.receipt.nativeAdmission,false);assert.equal(assembled.receipt.effectsAllowed,false);
 const file='src/main/src/store/mainPersistence.ts',expected='0b7ccab43cd949aac9e13b19344254a7d00f6884eb39c4234d940a46849e7b7d';
+const ancestorPatch=assembled.receipt.patches.find(row=>row.name==='native-main-ancestor-identity');
+assert.equal(ancestorPatch?.path,file,'maintained Main ancestor identity patch');
+assert.equal(ancestorPatch.patchSHA256,'bd27922e29cd4cc97ee12983ef9257e116d6ab6fd378d2828639e23fd6e3d09f');
+assert.equal(ancestorPatch.outputSHA256,expected);
 assert.equal(assembled.receipt.sources.find(row=>row.path===file)?.finalSHA256,expected,'maintained final Main source');
 const sourceRaw=assembled.sources[file];assert.equal(sha(sourceRaw),expected);
 const require=createRequire(path.join(dependencyRoot,'package.json')),tsPath=require.resolve('typescript');

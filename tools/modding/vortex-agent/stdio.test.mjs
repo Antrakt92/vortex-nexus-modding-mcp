@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough, Writable } from 'node:stream';
+import { once } from 'node:events';
 import * as bridge from './bridge.mjs';
 import {createRequire} from 'node:module';
 import path from 'node:path';
@@ -88,4 +89,49 @@ test('stdio lists and remotely forwards resident native preflight without a loca
   assert.equal(result.shutdownPermit,false);
   assert.equal(result.staging.available,true);assert.equal(result.staging.readinessVerified,false);
   assert.equal(calls.filter(([method,params])=>method==='tools/call'&&params.name==='read_native_preflight').length,1);
+});
+
+test('stdio does not dispatch another request after the output pipe closes', async () => {
+  const output = new PassThrough();
+  const dispatched = [];
+  const request = id => Buffer.from(JSON.stringify({jsonrpc: '2.0', id, method: 'tools/call'}) + '\n');
+  async function* input() {
+    yield request(1);
+    const closed = new Promise(resolve => output.once('close', resolve));
+    output.destroy();
+    await closed;
+    yield request(2);
+  }
+  await assert.rejects(bridge.runStdio(input(), output, async ({id}) => {
+    dispatched.push(id);
+  }), /MCP output closed/);
+  assert.deepEqual(dispatched, [1]);
+});
+
+test('stdio stops waiting for idle stdin when stdout closes', async t => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  t.after(() => input.destroy());
+  const work = bridge.runStdio(input, output, async () => assert.fail('Unexpected dispatch'));
+  output.destroy();
+  let timeout;
+  try {
+    await assert.rejects(Promise.race([work, new Promise((_, reject) => {
+      timeout = setTimeout(() => reject(Error('Bridge kept waiting for stdin')), 250);
+    })]), /MCP output closed/);
+  } finally {
+    clearTimeout(timeout);
+  }
+});
+
+test('stdio refuses an output pipe that closed before startup', async () => {
+  const output = new PassThrough();
+  const closed = once(output, 'close');
+  output.destroy();
+  await closed;
+  async function* input() {
+    assert.fail('Unexpected stdin read');
+  }
+  await assert.rejects(bridge.runStdio(input(), output, async () => assert.fail('Unexpected dispatch')),
+    /MCP output closed/);
 });

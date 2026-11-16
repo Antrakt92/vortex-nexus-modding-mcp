@@ -59,12 +59,17 @@ def bootstrap(apply=False, archive_path=None):
     no_links(target)
     if not apply:
         return {'mode': 'plan', 'target': str(target), 'network_accessed': False}
+    archive_bytes = lock.get('archiveBytes')
+    if type(archive_bytes) is not int or archive_bytes <= 0:
+        raise ValueError('Invalid pinned build-tool archive size')
     if archive_path:
-        no_links(Path(archive_path).absolute())
-        data = Path(archive_path).read_bytes()
+        archive_path = Path(archive_path).absolute()
+        no_links(archive_path)
+        with archive_path.open('rb') as stream:
+            data = stream.read(archive_bytes + 1)
     else:
         with urllib.request.urlopen(lock['tarball'], timeout=45) as response:
-            data = response.read(lock['archiveBytes'] + 1)
+            data = response.read(archive_bytes + 1)
     files = entries(data, lock)
     if target.exists():
         actual = set()

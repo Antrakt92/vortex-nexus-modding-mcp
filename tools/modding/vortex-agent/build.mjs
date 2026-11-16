@@ -15,11 +15,17 @@ const sha = async file => crypto.createHash('sha256').update(await fs.readFile(f
 
 async function noReparsePaths(...files) {
   for (const file of files) {
+    const ancestry = [];
     for (let entry = path.resolve(file); ; entry = path.dirname(entry)) {
-      try {
-        if ((await fs.lstat(entry)).isSymbolicLink()) throw Error('Build reparse path refused');
-      } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      ancestry.unshift(entry);
       if (entry === path.dirname(entry)) break;
+    }
+    for (const entry of ancestry) {
+      try {
+        const info = await fs.lstat(entry);
+        if (info.isSymbolicLink()) throw Error('Build reparse path refused');
+        if (info.isFile() && info.nlink !== 1) throw Error('Build hardlink path refused');
+      } catch (error) { if (error.code !== 'ENOENT') throw error; }
     }
   }
 }
@@ -119,22 +125,52 @@ async function preservePreviousBuild() {
   let previous;
   try { previous = JSON.parse(await fs.readFile(path.join(plugin, 'provenance.json'), 'utf8')); }
   catch (error) { if (error.code === 'ENOENT') return; throw error; }
-  if (previous.version === '1.1.0') return;
-  const digest = crypto.createHash('sha256').update(await fs.readFile(path.join(plugin, 'index.js'))).digest('hex');
+  if (previous?.version === '1.1.0') return;
+  if (!['1.0.3', '1.0.4'].includes(previous?.version) || !previous.sources
+      || typeof previous.sources !== 'object' || Array.isArray(previous.sources))
+    throw Error('Unsupported previous package provenance');
+  const allowedSources = new Set([...modules, 'build.mjs', 'bridge.mjs', 'manage-install.py']);
+  const sourceEntries = Object.entries(previous.sources);
+  if (!sourceEntries.length || sourceEntries.some(([name, pin]) =>
+    !allowedSources.has(name) || typeof pin !== 'string' || !/^[a-f0-9]{64}$/.test(pin)))
+    throw Error('Invalid previous package source provenance');
+  const retainedSources = sourceEntries.filter(([name]) => name.endsWith('.cjs'));
+  const digest = await sha(path.join(plugin, 'index.js'));
   if (digest !== previous.pluginSha256) throw Error('Previous package provenance mismatch');
   const archive = path.join(BUILD, 'archives', previous.version + '-' + digest);
+  const verifyArchiveInputs = async (sources, compiled) => {
+    const pins = [[path.join(compiled, 'index.js'), digest],
+      ...retainedSources.map(([name, pin]) => [path.join(sources, name), pin])];
+    for (const [file, pin] of pins) {
+      await noReparsePaths(file);
+      if (await sha(file) !== pin) throw Error('Previous build copy differs');
+    }
+  };
   await noReparsePaths(archive);
-  try {
-    await fs.access(archive);
-    const archived = crypto.createHash('sha256').update(await fs.readFile(path.join(archive, 'plugin/index.js'))).digest('hex');
-    if (archived !== digest) throw Error('Previous archive incomplete or mismatched; inspect before rebuilding');
+  let existing;
+  try { existing = await fs.lstat(archive); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  if (existing) {
+    try {
+      const archivedPlugin = path.join(archive, 'plugin/index.js');
+      await noReparsePaths(archivedPlugin);
+      if (!existing.isDirectory() || await sha(archivedPlugin) !== digest) throw Error('Previous archived bundle differs');
+      await verifyArchiveInputs(path.join(archive, 'src'), path.join(archive, 'adapted-dist'));
+    } catch {
+      throw Error('Previous archive incomplete or mismatched; inspect before rebuilding');
+    }
     return;
-  } catch (error) { if (error.code !== 'ENOENT') throw error; }
-  await fs.mkdir(archive, { recursive: true });
+  }
+  const copiedSources = path.join(BUILD, 'upstream/src');
+  const compiled = path.join(BUILD, 'upstream/adapted-dist');
+  await verifyArchiveInputs(copiedSources, compiled);
+  await fs.mkdir(path.dirname(archive), { recursive: true });
+  await fs.mkdir(archive);
   await fs.cp(plugin, path.join(archive, 'plugin'), { recursive: true, errorOnExist: true, force: false });
-  await fs.cp(path.join(BUILD, 'upstream/adapted-dist'), path.join(archive, 'adapted-dist'), { recursive: true, errorOnExist: true, force: false });
+  await fs.cp(compiled, path.join(archive, 'adapted-dist'), { recursive: true, errorOnExist: true, force: false });
   await fs.mkdir(path.join(archive, 'src'));
-  for (const name of Object.keys(previous.sources).filter(name => name.endsWith('.cjs'))) await fs.copyFile(path.join(BUILD, 'upstream/src', name), path.join(archive, 'src', name));
+  for (const [name] of retainedSources)
+    await fs.copyFile(path.join(copiedSources, name), path.join(archive, 'src', name), fs.constants.COPYFILE_EXCL);
 }
 const run = (cmd, args, cwd = BUILD) => execFileSync(cmd, args, { cwd, stdio: 'inherit', shell: process.platform === 'win32' && cmd.endsWith('.cmd') });
 export async function main(argv = process.argv.slice(2)) {
@@ -188,31 +224,49 @@ if (argv.includes('--prepare')) {
   await fs.writeFile(path.join(BUILD, 'adapted-compile.json'), JSON.stringify({ inputs,
     bundleSha256: await sha(path.join(tree, 'adapted-dist/index.js')) }, null, 2));
 } else if (argv.includes('--package')) {
-  await preservePreviousBuild();
   const tree = path.join(BUILD, 'upstream');
-  await checkBuildTree(tree);
-  assertCompileReceipt(JSON.parse(await fs.readFile(path.join(BUILD, 'adapted-compile.json'), 'utf8')),
-    await compileInputs(tree), await sha(path.join(tree, 'adapted-dist/index.js')));
-  const plugin = path.join(BUILD, 'plugin', 'vortex-agent');
-  await fs.mkdir(plugin, { recursive: true });
-  await fs.copyFile(path.join(BUILD, 'upstream', 'adapted-dist', 'index.js'), path.join(plugin, 'index.js'));
-  await fs.copyFile(path.join(BUILD, 'upstream', 'LICENSE.md'), path.join(plugin, 'LICENSE.md'));
-  await fs.copyFile(path.join(tree, 'THIRD-PARTY-NOTICES.md'), path.join(plugin, 'THIRD-PARTY-NOTICES.md'));
-  await fs.writeFile(path.join(plugin, 'info.json'), JSON.stringify({ id: 'vortex-agent', name: 'Vortex Agent (guarded MCP)', author: 'Alan Tse; local adapted fork', version: '1.1.0', description: 'DPAPI-authenticated curated MCP adapter; reviewed own-local ZIP installation; external deployment verification required', type: 'extension' }, null, 2));
+  const upstream = await checkBuildTree(tree);
+  const current = await compileInputs(tree);
+  const packageFiles = {};
+  for (const [name, input] of Object.entries({
+    'index.js': 'adapted-dist/index.js',
+    'LICENSE.md': 'LICENSE.md',
+    'THIRD-PARTY-NOTICES.md': 'THIRD-PARTY-NOTICES.md',
+  })) {
+    const file = path.join(tree, input);
+    await noReparsePaths(file);
+    packageFiles[name] = await fs.readFile(file);
+  }
+  const hash = value => crypto.createHash('sha256').update(value).digest('hex');
+  const bundleSha256 = hash(packageFiles['index.js']);
+  assertCompileReceipt(JSON.parse(await fs.readFile(path.join(BUILD, 'adapted-compile.json'), 'utf8')), current, bundleSha256);
   const sources = {};
   for (const name of [...modules, 'build.mjs', 'bridge.mjs', 'manage-install.py']) sources[name] = await sha(path.join(source, name));
-  for (const name of modules) if (await sha(path.join(BUILD, 'upstream/src', name)) !== sources[name]) throw Error('Build copy differs: ' + name);
-  await checkBuildTree(path.join(BUILD, 'upstream'));
-  await fs.writeFile(path.join(plugin, 'provenance.json'), JSON.stringify({ upstream: 'https://github.com/alandtse/vortex-mcp', commit: PIN,
-    maintainedSource: source, workspaceRoot: runtimeWorkspace(), protocol: 'vortex-agent/1', version: '1.1.0', installSupported: false, receiptVersion: 2,
-    packageSchemaVersion: 2,
-    licenseFileSHA256: { 'LICENSE.md': await sha(path.join(plugin, 'LICENSE.md')),
-      'THIRD-PARTY-NOTICES.md': await sha(path.join(plugin, 'THIRD-PARTY-NOTICES.md')) },
+  for (const name of modules) if (current.inputs['src/' + name] !== sources[name]) throw Error('Build copy differs: ' + name);
+  const licenseFileSHA256 = {};
+  for (const name of ['LICENSE.md', 'THIRD-PARTY-NOTICES.md']) {
+    licenseFileSHA256[name] = hash(packageFiles[name]);
+    if (upstream.currentFileSHA256 && licenseFileSHA256[name] !== upstream.currentFileSHA256[name])
+      throw Error('Pinned upstream content differs: ' + name);
+  }
+  packageFiles['info.json'] = JSON.stringify({ id: 'vortex-agent', name: 'Vortex Agent (guarded MCP)', author: 'Alan Tse; local adapted fork', version: '1.1.0', description: 'DPAPI-authenticated curated MCP adapter; reviewed own-local ZIP installation; external deployment verification required', type: 'extension' }, null, 2);
+  packageFiles['provenance.json'] = JSON.stringify({ upstream: 'https://github.com/alandtse/vortex-mcp', commit: PIN,
+    maintainedSource: source, workspaceRoot: current.workspaceRoot, protocol: 'vortex-agent/1', version: '1.1.0', installSupported: false, receiptVersion: 2,
+    packageSchemaVersion: 2, licenseFileSHA256,
     sourceOffer: { repository: 'https://github.com/Antrakt92/vortex-nexus-modding-mcp',
       description: 'Corresponding adapter source, build scripts, upstream source pins and dependency lockfile.' },
     authentication: 'Windows-DPAPI-CurrentUser-bearer', vortexSourceCommit: '41be6d4556568a605d6131b8c5ca90ff26dec6ac',
-    pluginSha256: await sha(path.join(plugin, 'index.js')),
-    lockfileSha256: await sha(path.join(BUILD, 'upstream', 'pnpm-lock.yaml')), upstreamControlSha256: await sha(path.join(BUILD, 'upstream/src/vortexControl.ts')), sources }, null, 2));
+    pluginSha256: bundleSha256, lockfileSha256: current.inputs['pnpm-lock.yaml'],
+    upstreamControlSha256: current.inputs['src/vortexControl.ts'], sources }, null, 2);
+  // A validation failure must leave any existing candidate package intact.
+  await preservePreviousBuild();
+  const plugin = path.join(BUILD, 'plugin', 'vortex-agent');
+  await fs.mkdir(plugin, { recursive: true });
+  for (const [name, data] of Object.entries(packageFiles)) {
+    const destination = path.join(plugin, name);
+    await noReparsePaths(destination);
+    await fs.writeFile(destination, data);
+  }
   console.log(plugin);
 } else throw new Error('Usage: build.mjs --prepare | --regression | --patch | --compile | --package');
 }

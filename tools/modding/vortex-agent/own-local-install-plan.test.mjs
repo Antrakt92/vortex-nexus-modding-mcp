@@ -114,14 +114,44 @@ test('installation plans refuse case-aliased receipt IDs offline across steps an
   }
 });
 
-test('historical non-install v1 plans with case-distinct IDs remain readable', t => {
-  const f = fixture(t), legacy = plan(); legacy.steps.shift();
+test('non-install plans reject receipt aliases before journal creation or adapter calls', async t => {
+  const f = fixture(t), value = plan(); value.steps.shift();
+  const alias = value.steps[0].requestId.toUpperCase();
+  for (const target of ['deploy', 'download']) {
+    const candidate = structuredClone(value);
+    if (target === 'deploy') candidate.deploy.requestId = alias;
+    else candidate.steps.unshift({operation: 'download_nexus', requestId: alias,
+      nexusModId: 1, nexusFileId: 2, size: 123, sha256: 'b'.repeat(64), reuseOnly: true});
+    const opts = {call: () => assert.fail('adapter call'), journal: {begin: () => assert.fail('journal creation')}};
+    await assert.rejects(runPlan(candidate, opts), /DUPLICATE_REQUEST_ID/);
+    await assert.rejects(runPlan(candidate, {...opts, apply: true}), /DUPLICATE_REQUEST_ID/);
+    assert.throws(() => f.journal.begin(candidate), /PLAN_JOURNAL_INVALID_PLAN/);
+  }
+});
+
+test('historical non-install v1 plans with case-distinct IDs remain readable', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'historical-plan-'));
+  t.after(() => fs.rmSync(root, {recursive: true}));
+  const legacy = plan(); legacy.steps.shift();
   legacy.deploy.requestId = legacy.steps[0].requestId.toUpperCase();
-  const expected = canonicalPlanId(legacy), writer = f.journal.begin(legacy);
-  for (const [index, item] of planQueue(legacy).entries()) {writer.intent(index, item.operation, item.args); writer.observed(index);}
-  writer.finish('completed');
-  assert.deepEqual(f.journal.read(expected).plan, legacy);
-  assert.equal(canonicalPlanId(f.journal.read(expected).plan), expected);
+  const expected = '63f2b9969562a767fededc743416132c41446485aba64c85696734eb8e488644';
+  const dir = path.join(root, expected);
+  fs.mkdirSync(dir);
+  const identity = filename => {
+    const stat = fs.statSync(filename, {bigint: true});
+    return `${stat.dev}:${stat.ino}`;
+  };
+  fs.writeFileSync(path.join(dir, 'plan.json'), JSON.stringify({
+    schema: 'mod-plan-journal/1', planId: expected, at: '2026-01-01T00:00:00.000Z',
+    rootId: identity(root), directoryId: identity(dir), plan: legacy,
+  }));
+  const journal = createPlanJournal({root});
+  assert.deepEqual(journal.read(expected).plan, legacy);
+  assert.equal(canonicalPlanId(journal.read(expected).plan), expected);
+  const result = await inspectPlan(expected, {journal, call: () => assert.fail('no intent recorded')});
+  assert.equal(result.journalObserved, true);
+  assert.equal(result.journalState, 'prepared');
+  assert.deepEqual(result.steps.map(step => step.requestId), ['own_enable_0001', 'OWN_ENABLE_0001']);
 });
 
 test('two installs precede explicit flags and one deploy; diagnostics are not receipt authority', async t => {

@@ -7,13 +7,13 @@ async function fixture(t){
  const target='F:\\reviewed\\config.json',body=Buffer.alloc(600000,97);let version=1,externalOpens=0,reads=0,reparse=false,race=false;
  const norm=p=>path.win32.normalize(p).toLowerCase(),external=p=>/^[a-z]:[\\/]/i.test(p)&&norm(p).startsWith('f:');
  const stat=p=>({dev:1n,ino:5n,size:BigInt(body.length),mtimeNs:BigInt(version),ctimeNs:BigInt(version),isFile:()=>norm(p)===norm(target),isSymbolicLink:()=>reparse&&norm(p)===norm('F:/reviewed')});
- const disk={...fs,lstat:async(p,o)=>external(p)?stat(p):fs.lstat(p,o),open:async(p,...args)=>{if(!external(p))return fs.open(p,...args);externalOpens++;let offset=0;return{stat:async()=>stat(p),read:async(buffer)=>{reads++;const n=Math.min(buffer.length,body.length-offset);body.copy(buffer,0,offset,offset+n);offset+=n;if(race)version++;return{bytesRead:n};},close:async()=>{}};}};
+ const disk={...fs,lstat:async(p,o)=>external(p)?stat(p):fs.lstat(p,o),open:async(p,...args)=>{if(!external(p))return fs.open(p,...args);externalOpens++;let offset=0;return{stat:async()=>stat(p),read:async(buffer,bufferOffset,length)=>{reads++;const n=Math.min(length,body.length-offset);body.copy(buffer,bufferOffset,offset,offset+n);offset+=n;if(race)version++;return{bytesRead:n};},close:async()=>{}};}};
  const expected={appAsarSha256:sha('app'),dynamic:[],additionalSources:[{path:target,sha256:sha(body)}]};
  const make=()=>createLocalInstallHostAdmission({packagePath,expected,api:{getLoadedExtensions:()=>[]},fsImpl:disk});
  return{make,expected,target,body,get externalOpens(){return externalOpens;},get reads(){return reads;},drift:()=>version++,reparse:()=>reparse=true,race:()=>race=true};
 }
 test('additional sources use chunked hash, generation cache, and copied immutable binding',async t=>{
- const f=await fixture(t),admit=f.make();f.expected.additionalSources[0].sha256='b'.repeat(64);const first=await admit();assert.equal(first.sources.length,2);assert.equal(first.sources[1].sha256,sha(f.body));assert.ok(f.reads>=4);await admit();assert.equal(f.externalOpens,1);f.drift();await admit();assert.equal(f.externalOpens,2);
+ const f=await fixture(t),admit=f.make();f.expected.additionalSources[0].sha256='b'.repeat(64);const first=await admit();assert.equal(first.sources.length,2);assert.equal(first.sources[1].sha256,sha(f.body));assert.equal(f.reads,3);await admit();assert.equal(f.externalOpens,1);assert.equal(f.reads,3);f.drift();await admit();assert.equal(f.externalOpens,2);assert.equal(f.reads,6);
 });
 test('external bytes drift cannot reuse a successful cached proof',async t=>{const f=await fixture(t),admit=f.make();await admit();f.body[0]=98;f.drift();await assert.rejects(admit(),/SOURCE_HASH_MISMATCH/);});
 test('external generation race during hashing refuses admission',async t=>{const f=await fixture(t);f.race();await assert.rejects(f.make()(),/SOURCE_CHANGED/);});

@@ -41,6 +41,29 @@ class PortablePathsTests(unittest.TestCase):
         else:
             link.symlink_to(destination, target_is_directory=True)
 
+    @contextlib.contextmanager
+    def watch_reads(self, watched_file):
+        open_path = Path.open
+        read_calls = []
+
+        @contextlib.contextmanager
+        def observe_open(path, *args, **kwargs):
+            with open_path(path, *args, **kwargs) as stream:
+                if path != watched_file:
+                    yield stream
+                    return
+                original_read = stream.read
+
+                def observe_read(*read_args):
+                    read_calls.append(read_args)
+                    return original_read(*read_args)
+
+                with patch.object(stream, 'read', side_effect=observe_read):
+                    yield stream
+
+        with patch.object(Path, 'open', observe_open):
+            yield read_calls
+
     def test_cli_output_junctions_and_dangling_leaf_are_refused_before_extraction(self):
         for placement in ['destination', 'nested', 'dangling', 'dangling-file-leaf']:
             with self.subTest(placement=placement), tempfile.TemporaryDirectory(prefix='cli link audit ') as root:
@@ -63,6 +86,30 @@ class PortablePathsTests(unittest.TestCase):
                 self.assertFalse((installer.ROOT / 'installation.json').exists())
                 if placement == 'nested':
                     self.assertFalse((destination / 'nexusmods.exe').exists())
+
+    def test_cli_configured_workspace_junction_is_refused_before_creating_output(self):
+        with tempfile.TemporaryDirectory(prefix='cli workspace alias audit ') as root:
+            physical = Path(root) / 'physical'
+            physical.mkdir()
+            alias = Path(root) / 'workspace-alias'
+            self.directory_link(alias, physical)
+            spec = importlib.util.spec_from_file_location('fixture_cli_workspace_alias', HERE / 'install.py')
+            installer = importlib.util.module_from_spec(spec)
+            with patch.dict(os.environ, {'NEXUS_WORKSPACE': str(alias)}):
+                spec.loader.exec_module(installer)
+            lstat_path = Path.lstat
+
+            def no_descendant_lstat(path, *args, **kwargs):
+                if path != alias and path.is_relative_to(alias):
+                    self.fail('Installer probed below the workspace junction before refusal')
+                return lstat_path(path, *args, **kwargs)
+
+            with patch.object(Path, 'lstat', no_descendant_lstat), patch.object(
+                installer.urllib.request, 'urlopen', side_effect=AssertionError('No download allowed')
+            ):
+                with self.assertRaisesRegex(RuntimeError, 'Reparse'):
+                    installer.install()
+            self.assertEqual(list(physical.iterdir()), [])
 
     def test_late_existing_file_mismatch_refuses_before_creating_earlier_missing_files(self):
         with tempfile.TemporaryDirectory(prefix='cli preflight audit ') as root:
@@ -88,6 +135,41 @@ class PortablePathsTests(unittest.TestCase):
                     installer.install()
             self.assertEqual(receipt.read_text(), '{"other":"installation"}')
             self.assertFalse((installer.ROOT / installer.VERSION).exists())
+
+    def test_oversized_cached_archive_is_read_only_up_to_the_pinned_limit(self):
+        with tempfile.TemporaryDirectory(prefix='cli oversized cache audit ') as root:
+            installer = self.fixture_installer(root)
+            archive = installer.ROOT / f'nexusmods-{installer.VERSION}-win-x64.zip'
+            corrupted = archive.read_bytes() + b'extra cached bytes' * 100
+            archive.write_bytes(corrupted)
+            with self.watch_reads(archive) as read_calls, patch.object(
+                installer.urllib.request, 'urlopen', side_effect=AssertionError('No download allowed')
+            ):
+                with self.assertRaisesRegex(RuntimeError, 'Cached release size/SHA256 mismatch'):
+                    installer.install()
+            self.assertEqual(read_calls, [(installer.SIZE + 1,)])
+            self.assertEqual(archive.read_bytes(), corrupted)
+            self.assertFalse((installer.ROOT / installer.VERSION).exists())
+            self.assertFalse((installer.ROOT / 'installation.json').exists())
+
+    def test_oversized_installed_support_file_is_read_only_up_to_the_expected_limit(self):
+        with tempfile.TemporaryDirectory(prefix='cli oversized support audit ') as root:
+            installer = self.fixture_installer(root)
+            destination = installer.ROOT / installer.VERSION
+            support = destination / 'support/data.txt'
+            support.parent.mkdir(parents=True)
+            expected = b'Synthetic support data'
+            changed = expected + b'extra support bytes' * 100
+            support.write_bytes(changed)
+            with self.watch_reads(support) as read_calls, patch.object(
+                installer.urllib.request, 'urlopen', side_effect=AssertionError('No download allowed')
+            ):
+                with self.assertRaisesRegex(RuntimeError, 'Existing installation differs'):
+                    installer.install()
+            self.assertEqual(read_calls, [(len(expected) + 1,)])
+            self.assertEqual(support.read_bytes(), changed)
+            self.assertFalse((destination / 'nexusmods.exe').exists())
+            self.assertFalse((installer.ROOT / 'installation.json').exists())
 
     def test_defaults_follow_source_and_overrides_preserve_spaces_without_creation(self):
         with tempfile.TemporaryDirectory(prefix="portable nexus ") as root:

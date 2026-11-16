@@ -6,14 +6,25 @@ const { inspectOwnZip, LIMITS } = require('./own-zip.cjs');
 const { validateLocalArchiveName, assertLocalArchiveAdmission } = require('./local-archive-policy.cjs');
 const { createInstallDiagnostics } = require('./install-diagnostics.cjs');
 const need = (ok, code) => { if (!ok) throw Error(code); };
-const sha = data => crypto.createHash('sha256').update(data).digest('hex');
-const stamp = s => [s.dev, s.ino, s.size, s.mtimeNs, s.ctimeNs].join(':');
+const stamp = s => [s.dev, s.ino, s.size, s.mtimeNs, s.ctimeNs, s.nlink].join(':');
 const hooks = new WeakMap();
 function ordinary(file) {
   need(path.isAbsolute(file), 'LOCAL_ARCHIVE_ABSOLUTE_PATH_REQUIRED');
   for (let p = file; ; p = path.dirname(p)) {
     need(!fs.lstatSync(p).isSymbolicLink(), 'LOCAL_ARCHIVE_REPARSE_PATH');
     if (p === path.dirname(p)) break;
+  }
+}
+function verifyGeneration(file, fd, generation, code) {
+  ordinary(file);
+  need(stamp(fs.lstatSync(file, { bigint: true })) === generation
+    && stamp(fs.fstatSync(fd, { bigint: true })) === generation, code);
+}
+function readExact(fd, buffer, length, code) {
+  for (let offset = 0; offset < length;) {
+    const count = fs.readSync(fd, buffer, offset, length - offset, null);
+    need(count > 0, code);
+    offset += count;
   }
 }
 function packageProof(args) {
@@ -23,19 +34,42 @@ function packageProof(args) {
     const before = fs.fstatSync(fd, { bigint: true });
     need(before.isFile() && before.size > 0n && before.size <= BigInt(LIMITS.archiveBytes)
       && before.size === BigInt(args.size), 'LOCAL_ARCHIVE_SIZE_MISMATCH');
-    const bytes = fs.readFileSync(fd), proof = inspectOwnZip(bytes);
+    const generation = stamp(before);
+    const verify = () => verifyGeneration(args.archivePath, fd, generation, 'LOCAL_ARCHIVE_CHANGED');
+    // File length was checked above. Never read to EOF from a growing archive.
+    const bytes = Buffer.allocUnsafe(Number(before.size));
+    readExact(fd, bytes, bytes.length, 'LOCAL_ARCHIVE_CHANGED');
+    verify();
+    const proof = inspectOwnZip(bytes);
     need(proof.sha256 === args.sha256, 'LOCAL_ARCHIVE_HASH_MISMATCH');
     // This first installer handles ordinary own Cyberpunk files, never installer code.
     need(Object.keys(proof.payload).every(p => /^(?:archive\/pc\/mod\/|r6\/scripts\/|r6\/tweaks\/|red4ext\/plugins\/|bin\/x64\/plugins\/cyber_engine_tweaks\/mods\/)/.test(p)),
       'LOCAL_ARCHIVE_PAYLOAD_SCOPE_UNSUPPORTED');
-    const generation = stamp(before);
-    const verify = () => {
-      ordinary(args.archivePath);
-      need(stamp(fs.lstatSync(args.archivePath, { bigint: true })) === generation
-        && stamp(fs.fstatSync(fd, { bigint: true })) === generation, 'LOCAL_ARCHIVE_CHANGED');
-    };
     verify(); return { ...proof, verify, close: () => fs.closeSync(fd) };
   } catch (error) { fs.closeSync(fd); throw error; }
+}
+function verifyStagedPayload(root, pkg) {
+  const code = 'LOCAL_ARCHIVE_STAGED_BYTES_UNVERIFIED';
+  const block = Buffer.allocUnsafe(64 * 1024);
+  for (const [relative, digest] of Object.entries(pkg.payload)) {
+    const file = path.join(root, relative);
+    ordinary(file);
+    const fd = fs.openSync(file, 'r');
+    try {
+      const before = fs.fstatSync(fd, { bigint: true });
+      const size = pkg.payloadSizes[relative];
+      need(before.isFile() && before.size === BigInt(size), code);
+      const hash = crypto.createHash('sha256');
+      for (let left = size; left > 0;) {
+        const length = Math.min(left, block.length);
+        readExact(fd, block, length, code);
+        hash.update(block.subarray(0, length));
+        left -= length;
+      }
+      verifyGeneration(file, fd, stamp(before), code);
+      need(hash.digest('hex') === digest, code);
+    } finally { fs.closeSync(fd); }
+  }
 }
 function noNexus(value, depth = 0) {
   need(depth <= 12, 'LOCAL_ARCHIVE_METADATA_UNSAFE');
@@ -188,10 +222,7 @@ async function installLocalArchive(api, args, { check, checkContext = check, eff
     const state = api.getState(), mod = state.persistent.mods?.[args.gameId]?.[modId];
     need(mod?.state === 'installed' && mod.installationPath === modId && mod.archiveId === active.downloadId
       && state.persistent.profiles[args.profileId].modState?.[modId]?.enabled !== true, 'LOCAL_ARCHIVE_INSTALLED_RECORD_UNVERIFIED');
-    diagnostics.measureSync('staged_proof', () => { for (const [relative, digest] of Object.entries(pkg.payload)) {
-      const staged = path.join(args.stagingPath, modId, relative);
-      ordinary(staged); need(sha(fs.readFileSync(staged)) === digest, 'LOCAL_ARCHIVE_STAGED_BYTES_UNVERIFIED');
-    } });
+    diagnostics.measureSync('staged_proof', () => verifyStagedPayload(path.join(args.stagingPath, modId), pkg));
     const afterMods = structuredClone(state.persistent.mods || {}); delete afterMods[args.gameId][modId];
     const afterProfiles = structuredClone(state.persistent.profiles || {});
     for (const profile of Object.values(afterProfiles)) {

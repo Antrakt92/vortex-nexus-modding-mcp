@@ -39,14 +39,51 @@ test('credential failure is unchanged and cannot dispatch', async () => {
   assert.equal(calls, 0);
 });
 
-test('HTTP authentication refusal and response policy failures stay unchanged', async () => {
-  const cases = [
+const unusableResponses = [
+  ['oversized declared length', () => new Response('', {headers: {'content-length': String(MAX_RESPONSE_BYTES + 1)}}), 'MCP response too large'],
+  ['oversized body', () => new Response(new Uint8Array(MAX_RESPONSE_BYTES + 1)), 'MCP response too large'],
+  ['missing body', () => new Response(null, {status: 204})],
+  ['invalid JSON', () => new Response('not json')],
+  ['empty JSON', () => new Response('')],
+  ['partial JSON at clean EOF', () => new Response('{"jsonrpc":"2.0","id":1,"result":')],
+  ['wrong JSON-RPC ID', () => Response.json({jsonrpc: '2.0', id: 2, result: {}})],
+  ['missing JSON-RPC outcome', () => Response.json({jsonrpc: '2.0', id: 1})],
+  ['invalid SSE', () => new Response('data: not json\n\n', {headers: {'content-type': 'text/event-stream'}})],
+  ['unterminated SSE at clean EOF', () => new Response('data: {"jsonrpc":"2.0","id":1,"result":{}}\n', {headers: {'content-type': 'text/event-stream'}})],
+];
+for (const [reason, response, otherMessage = 'Invalid Vortex MCP response'] of unusableResponses) {
+  test(`unusable local install response reports uncertain native work exactly once for ${reason}`, async () => {
+    let calls = 0;
+    await assert.rejects(remote('tools/call', args, async () => { calls++; return response(); }, token), {message: lost});
+    assert.equal(calls, 1);
+    await assert.rejects(remote('tools/call', {name: 'health'}, async () => response(), token), {message: otherMessage});
+  });
+}
+
+test('an unusable local install result needs reconciliation', async () => {
+  const text = {type: 'text', text: 'ok'};
+  for (const result of [null, [], {}, {content: []}, {content: [null]}, {content: [{type: 'text'}]},
+    {content: [text]}, {structuredContent: {}}, {content: [text], structuredContent: []}, {isError: true, content: [null]}]) {
+    await assert.rejects(remote('tools/call', args, async () => Response.json({jsonrpc: '2.0', id: 1, result}), token), {message: lost});
+  }
+});
+
+test('internal and malformed JSON-RPC errors cannot prove no local archive effects', async () => {
+  const rejected = 'Vortex MCP rejected the request; verify tool arguments and adapted protocol.';
+  for (const error of [[], {}, {code: -32603, message: 'private-path'}, {code: -32602}]) {
+    const response = async () => Response.json({jsonrpc: '2.0', id: 1, error});
+    await assert.rejects(remote('tools/call', args, response, token), {message: lost});
+    await assert.rejects(remote('tools/call', {name: 'health'}, response, token), {message: rejected});
+  }
+});
+
+test('explicit local install refusals retain authentication and JSON-RPC errors', async () => {
+  const refusals = [
     [() => new Response('', {status: 401}), 'Vortex MCP authentication failed. Run credential.cjs --initialize once as the same Windows user as Vortex, then verify extension and credential ownership.'],
-    [() => new Response('', {headers: {'content-length': String(MAX_RESPONSE_BYTES + 1)}}), 'MCP response too large'],
-    [() => new Response('not json'), 'Invalid Vortex MCP response'],
-    [() => new Response('data: not json\n\n', {headers: {'content-type': 'text/event-stream'}}), 'Invalid Vortex MCP response'],
+    ...[-32700, -32600, -32601, -32602].map(code =>
+      [() => Response.json({jsonrpc: '2.0', id: 1, error: {code, message: 'private-path'}}), 'Vortex MCP rejected the request; verify tool arguments and adapted protocol.']),
   ];
-  for (const [response, message] of cases) {
+  for (const [response, message] of refusals) {
     let calls = 0;
     await assert.rejects(remote('tools/call', args, async () => { calls++; return response(); }, token), {message});
     assert.equal(calls, 1);
@@ -63,6 +100,20 @@ test('read-only and other tools retain existing fetch/body errors', async () => 
 });
 
 test('local install successful response uses original transport and signature', async () => {
-  const expected = { content: [{type: 'text', text: 'ok'}] };
+  const acknowledgement = {requestId: args.arguments.requestId, modId: 'owned-mod', operationCompleted: true};
+  const expected = { content: [{type: 'text', text: JSON.stringify(acknowledgement)}], structuredContent: acknowledgement };
   assert.deepEqual(await remote('tools/call', args, async () => Response.json({jsonrpc: '2.0', id: 1, result: expected}), token), expected);
+});
+
+test('local install structured tool failure is returned unchanged', async () => {
+  const expected = { isError: true, content: [{type: 'text', text: '{"error":"CONTEXT_CHANGED"}'}] };
+  assert.deepEqual(await remote('tools/call', args, async () => Response.json({jsonrpc: '2.0', id: 1, result: expected}), token), expected);
+});
+
+test('an interrupted local-install response body preserves the original operation for reconciliation', async () => {
+  const disconnected = new TypeError('terminated');
+  const output = new Response(new ReadableStream({pull(controller) {
+    controller.error(disconnected);
+  }}), {headers: {'content-type': 'application/json'}});
+  await assert.rejects(remote('tools/call', args, async () => output, token), {message: lost});
 });

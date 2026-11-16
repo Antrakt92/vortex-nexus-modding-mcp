@@ -8,6 +8,7 @@ import subprocess
 import os
 import re
 import stat
+import tempfile
 import uuid
 from contextlib import contextmanager
 
@@ -99,30 +100,50 @@ def snapshot(label, roots=None):
         if directory.is_dir() and directory.name != 'vortex-agent':
             files.update(p for p in directory.rglob('*') if p.is_file())
     values = {str(p): {'size': p.stat().st_size, 'sha256': sha(p)} for p in sorted(files) if p.is_file()}
-    STATE.mkdir(parents=True, exist_ok=True)
     destination = STATE / (label + '.snapshot.json')
+    no_reparse(destination)
+    STATE.mkdir(parents=True, exist_ok=True)
+    no_reparse(destination)
     with destination.open('x', encoding='utf-8') as output:
         json.dump(values, output, indent=2)
     print(json.dumps({'snapshot': str(destination), 'files': len(values)}))
 
 def compare(before, after):
     before, after = checked_label(before), checked_label(after)
-    old = json.loads((STATE / (before + '.snapshot.json')).read_text(encoding='utf-8'))
-    new = json.loads((STATE / (after + '.snapshot.json')).read_text(encoding='utf-8'))
+    snapshots = [STATE / (label + '.snapshot.json') for label in (before, after)]
+    for snapshot_path in snapshots:
+        no_reparse(snapshot_path)
+    old, new = (json.loads(p.read_text(encoding='utf-8')) for p in snapshots)
     changed = sorted(p for p in old.keys() | new.keys() if old.get(p) != new.get(p))
     result = {'unchanged': not changed, 'before_count': len(old), 'after_count': len(new), 'changed_paths': changed}
-    (STATE / 'protected-state-comparison.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
+    destination = STATE / 'protected-state-comparison.json'
+    no_reparse(destination)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=STATE,
+                                         suffix='.tmp', delete=False) as output:
+            temporary = Path(output.name)
+            json.dump(result, output, indent=2)
+            output.flush()
+            os.fsync(output.fileno())
+        no_reparse(destination)
+        # Rename rather than truncate so an existing hardlink cannot alter its
+        # other pathname's contents.
+        os.replace(temporary, destination)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
     print(json.dumps(result))
     if changed:
         raise RuntimeError('Protected files changed; inspect comparison')
 
 def no_reparse(file):
-    for parent in [file, *file.parents]:
+    for parent in (*reversed(file.parents), file):
         try:
-            attributes = getattr(parent.lstat(), 'st_file_attributes', 0)
+            info = parent.lstat()
         except FileNotFoundError:
             continue
-        if parent.is_symlink() or attributes & 0x400:
+        if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
             raise RuntimeError('Reparse path refused')
 
 
@@ -295,19 +316,39 @@ def install(expected_sha, from_sha=None, package_root=None):
     no_reparse(PLUGINS)
     if not PLUGINS.is_dir():
         raise RuntimeError('Confirmed plugins parent missing')
-    if target.exists() and not from_sha:
+    no_reparse(target)
+    present = target.exists()
+    if present and not from_sha:
         raise RuntimeError('Existing plugin; use explicit pinned upgrade')
-    if from_sha and not target.exists():
+    if from_sha and not present:
         raise RuntimeError('Upgrade requires the existing owned plugin')
-    if target.exists():
-        package(target, from_sha, allow_historical=True)
+    prior_identity = directory_identity(target) if present else None
+    prior_package = package(target, from_sha, allow_historical=True) if present else None
+
+    def check_target():
+        no_reparse(target)
+        if prior_identity is None:
+            if target.exists():
+                raise RuntimeError('Plugin target appeared during installation')
+            return
+        try:
+            current_identity = directory_identity(target)
+        except FileNotFoundError as error:
+            raise RuntimeError('Upgrade target disappeared') from error
+        if current_identity != prior_identity or package(target, from_sha, allow_historical=True) != prior_package:
+            raise RuntimeError('Upgrade target changed')
+
     with install_lock():
+        check_target()
         run = UPGRADES / uuid.uuid4().hex
         run.mkdir()
         pins = receipt_pins()
-        if target.exists():
+        check_target()
+        if prior_identity is not None:
             shutil.copytree(target, run / 'old-plugin')
-            package(run / 'old-plugin', from_sha, allow_historical=True)
+            if package(run / 'old-plugin', from_sha, allow_historical=True) != prior_package:
+                raise RuntimeError('Upgrade target changed while backing up')
+            check_target()
         (run / 'receipt-pins.json').write_text(json.dumps(pins, indent=2), encoding='utf-8')
         # Staging and the atomic directory swap are on the installation volume.
         temp_parent = PLUGINS.parent / 'temp'
@@ -316,19 +357,27 @@ def install(expected_sha, from_sha=None, package_root=None):
         staged = temp_parent / ('vortex-agent-upgrade-' + run.name)
         old = temp_parent / ('vortex-agent-old-' + run.name)
         shutil.copytree(source, staged)
+        staged_identity = directory_identity(staged)
         staged_provenance = package(staged, expected_sha, '1.1.0')
         stopped()
         verify_runtime_workspace(staged_provenance)
         verify_sources(staged_provenance)
         if receipt_pins() != pins:
             raise RuntimeError('Receipt pins changed before swap')
-        staged_identity = directory_identity(staged)
+        if directory_identity(staged) != staged_identity or package(staged, expected_sha, '1.1.0') != staged_provenance:
+            raise RuntimeError('Staged package changed before swap')
+        if os.path.lexists(old):
+            raise RuntimeError('Upgrade rollback destination already exists')
+        check_target()
+        stopped()
         try:
-            if target.exists():
-                package(target, from_sha, allow_historical=True)
+            if prior_identity is not None:
                 target.rename(old)
+                if directory_identity(old) != prior_identity:
+                    raise RuntimeError('Upgrade target changed during swap')
             staged.rename(target)
-            package(target, expected_sha, '1.1.0')
+            if directory_identity(target) != staged_identity or package(target, expected_sha, '1.1.0') != staged_provenance:
+                raise RuntimeError('Staged package changed during swap')
             if receipt_pins() != pins:
                 raise RuntimeError('Receipt pins changed during upgrade')
         except BaseException:
@@ -339,8 +388,10 @@ def install(expected_sha, from_sha=None, package_root=None):
                     target.rename(temp_parent / ('vortex-agent-failed-' + run.name))
                 elif old.exists():
                     raise RuntimeError('Plugin target changed during failed swap; rollback refused; old plugin retained')
-            if old.exists():
-                package(old, from_sha, allow_historical=True)
+            if os.path.lexists(old):
+                if prior_identity is None or directory_identity(old) != prior_identity \
+                        or package(old, from_sha, allow_historical=True) != prior_package:
+                    raise RuntimeError('Saved plugin changed during failed swap; rollback refused')
                 old.rename(target)
             raise
         result = {'installed': str(target), 'version': '1.1.0', 'sha256': expected_sha, 'oldBundleBackup': str(run / 'old-plugin') if from_sha else None,
@@ -353,14 +404,22 @@ def sync_provenance(expected_sha, package_root=None):
     target = PLUGINS / 'vortex-agent'
     with install_lock():
         provenance = package(source, expected_sha, '1.1.0')
-        package(target, expected_sha, '1.1.0')
+        installed = package(target, expected_sha, '1.1.0')
+        if installed['licenseFileSHA256'] != provenance['licenseFileSHA256']:
+            raise RuntimeError('Installed license files differ from source provenance')
+        target_identity = directory_identity(target)
         verify_runtime_workspace(provenance)
         verify_sources(provenance)
         pins = receipt_pins()
         metadata = (source / 'provenance.json').read_bytes()
         if json.loads(metadata) != provenance:
             raise RuntimeError('Source provenance changed before sync')
-        temp = target / ('provenance-' + uuid.uuid4().hex + '.tmp')
+        # Keep the staged file outside the installed package so its exact
+        # inventory can be revalidated immediately before replacing metadata.
+        temp_parent = PLUGINS.parent / 'temp'
+        no_reparse(temp_parent)
+        temp_parent.mkdir(exist_ok=True)
+        temp = temp_parent / ('vortex-agent-provenance-' + uuid.uuid4().hex + '.tmp')
         try:
             with temp.open('xb') as handle:
                 handle.write(metadata)
@@ -372,6 +431,8 @@ def sync_provenance(expected_sha, package_root=None):
             verify_sources(provenance)
             if (source / 'provenance.json').read_bytes() != metadata:
                 raise RuntimeError('Source provenance changed during metadata staging')
+            if directory_identity(target) != target_identity or package(target, expected_sha, '1.1.0') != installed:
+                raise RuntimeError('Installed plugin changed during metadata staging')
             os.replace(temp, target / 'provenance.json')
         finally:
             if temp.exists():

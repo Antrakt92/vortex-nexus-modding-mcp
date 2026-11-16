@@ -121,6 +121,25 @@ test('a file modified during hashing cannot produce an admitted generation', asy
   await assert.rejects(f.make({ fsImpl })(), /SOURCE_CHANGED/);
 });
 
+test('a source that grows during hashing is read only to the admitted length', async t => {
+  const f = await fixture(t);
+  const size = (await fs.stat(f.packagePath)).size;
+  let total = 0;
+  const fsImpl = { ...fs, async open(target, flags) {
+    const handle = await fs.open(target, flags);
+    if (target !== f.packagePath) return handle;
+    return { stat: (...args) => handle.stat(...args), close: () => handle.close(),
+      async read(...args) {
+        if (total === 0) await fs.appendFile(target, Buffer.alloc(8192));
+        const result = await handle.read(...args);
+        total += result.bytesRead;
+        return result;
+      } };
+  } };
+  await assert.rejects(f.make({ fsImpl })(), /SOURCE_CHANGED/);
+  assert.equal(total, size);
+});
+
 test('symlink source and source directories are refused', async t => {
   const f = await fixture(t), outside = path.join(f.root, 'outside');
   await fs.mkdir(outside);

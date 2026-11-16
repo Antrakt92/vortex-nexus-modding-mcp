@@ -101,9 +101,14 @@ function assertContext(api, selectors, args, stop = stopped) {
   stop(api.getState(), args.gameId);
   return live;
 }
-async function digest(handle) {
+async function digest(handle, size) {
   const hash = crypto.createHash('sha256');
-  for await (const chunk of handle.createReadStream({ autoClose: false, start: 0 })) hash.update(chunk);
+  let bytes = 0;
+  for await (const chunk of handle.createReadStream({ autoClose: false, start: 0, end: size - 1 })) {
+    bytes += chunk.length;
+    hash.update(chunk);
+  }
+  insist(bytes === size, 'DOWNLOAD_ARCHIVE_CHANGED');
   return hash.digest('hex');
 }
 function fileStamp(stat) { return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`; }
@@ -130,7 +135,7 @@ async function archive(api, args, id, selectors = {}, catalog) {
     const stamp = fileStamp(before);
     // Pin the descriptor, not a name reopened after stat. Mutation of the tracked
     // record or of the path/file while hashing invalidates this proof.
-    const sha256 = await digest(handle);
+    const sha256 = await digest(handle, args.size);
     verifyRecord();
     insist(fileStamp(await handle.stat({ bigint: true })) === stamp, 'DOWNLOAD_ARCHIVE_CHANGED');
     const verify = () => {
@@ -443,25 +448,67 @@ function createOperations(api, actions, selectors, options = {}) {
     reconcile_operation: async args => {
       insist(/^[a-zA-Z0-9_-]{8,80}$/.test(args.requestId || ''), 'INVALID_REQUEST_ID');
       const issues = [];
+      const directoryIdentity = () => {
+        let info;
+        try { info = disk.lstatSync(dir, { bigint: true }); }
+        catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+        insist(info.isDirectory() && !info.isSymbolicLink()
+          && normalized(disk.realpathSync(dir)) === normalized(dir), 'RECEIPT_DIRECTORY_UNVERIFIABLE');
+        return `${info.dev}:${info.ino}`;
+      };
+      const originalDirectory = directoryIdentity();
+      const completionName = args.requestId + '.completion.json';
+      const receiptDecoder = new TextDecoder('utf-8', {fatal: true, ignoreBOM: true});
+      const generation = stat => `${fileStamp(stat)}:${stat.nlink}`;
       const read = async (name, readIssues = issues, limit = 1024 * 1024) => {
-        let handle;
-        try { handle = await fs.open(path.join(dir, name), 'r'); const bytes = Buffer.alloc(limit + 1); const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
-          insist(bytesRead <= limit, 'RECEIPT_LIMIT'); return { observed: true, value: JSON.parse(bytes.subarray(0, bytesRead).toString('utf8')) }; }
-        catch (error) { if (error.code === 'ENOENT') return { observed: false, value: null }; readIssues.push('INVALID_RECEIPT'); return { observed: true, value: null }; }
+        if (originalDirectory === null) return { observed: false, value: null };
+        const file = path.join(dir, name);
+        let before, handle;
+        try {
+          before = await fs.lstat(file, { bigint: true });
+          const linkedCompletion = name === completionName && before.nlink === 2n;
+          insist(before.isFile() && !before.isSymbolicLink()
+            && (before.nlink === 1n || linkedCompletion) && before.size <= BigInt(limit), 'INVALID_RECEIPT');
+          const pin = generation(before);
+          handle = await fs.open(file, 'r');
+          insist(generation(await handle.stat({ bigint: true })) === pin, 'INVALID_RECEIPT');
+          const bytes = Buffer.alloc(Number(before.size));
+          for (let offset = 0; offset < bytes.length;) {
+            const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
+            insist(bytesRead > 0, 'INVALID_RECEIPT');
+            offset += bytesRead;
+          }
+          insist(generation(await handle.stat({ bigint: true })) === pin
+            && generation(await fs.lstat(file, { bigint: true })) === pin, 'INVALID_RECEIPT');
+          return { observed: true, value: JSON.parse(receiptDecoder.decode(bytes)), pendingPin: linkedCompletion ? pin : null };
+        } catch (error) {
+          if (!before && error.code === 'ENOENT') return { observed: false, value: null };
+          readIssues.push('INVALID_RECEIPT'); return { observed: true, value: null };
+        }
         finally { if (handle) await handle.close(); }
       };
-      const a = await read(args.requestId + '.attempt.json'), c = await read(args.requestId + '.completion.json'), f = await read(args.requestId + '.failed.json'), u = await read('unresolved.json');
+      const a = await read(args.requestId + '.attempt.json'), c = await read(completionName), f = await read(args.requestId + '.failed.json'), u = await read('unresolved.json');
+      let incomplete = false, pendingMatches = false, entries = 0;
+      const pendingPrefix = completionName + '.pending-';
+      try { if (originalDirectory !== null) for await (const entry of await fs.opendir(dir)) {
+        insist(++entries <= 10000, 'RECEIPT_DIRECTORY_LIMIT');
+        if (!entry.name.startsWith(pendingPrefix)) continue;
+        incomplete = true;
+        // commitCompletion publishes through exactly two names until the
+        // pending link is cleaned up. Keep its diagnostic completion visible.
+        if (!c.pendingPin || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(entry.name.slice(pendingPrefix.length))) continue;
+        const pending = await fs.lstat(path.join(dir, entry.name), { bigint: true });
+        pendingMatches ||= pending.isFile() && generation(pending) === c.pendingPin;
+      } }
+      catch (error) { if (error.code !== 'ENOENT') issues.push('RECEIPT_DIRECTORY_UNVERIFIABLE'); }
+      if (c.pendingPin && !pendingMatches) { c.value = null; issues.push('INVALID_RECEIPT'); }
+      if (incomplete) issues.push('INCOMPLETE_COMPLETION_COMMIT');
       const attempt = receipts.validAttempt(a.value) && a.value.requestId === args.requestId ? a.value : null;
       const completion = receipts.validCompletion(c.value, attempt) ? c.value : null;
       const failure = attempt && receipts.validFailure(f.value, attempt) ? f.value : null;
       const interlock = receipts.validAttempt(u.value) ? u.value : null;
       if (a.observed && !attempt || c.observed && !completion || f.observed && !failure || u.observed && !interlock) issues.push('RECEIPT_SCHEMA_OR_IDENTITY_INVALID');
       if (c.observed && f.observed) issues.push('CONFLICTING_TERMINAL_RECEIPTS');
-      let incomplete = false, entries = 0;
-      try { for await (const entry of await fs.opendir(dir)) { insist(++entries <= 10000, 'RECEIPT_DIRECTORY_LIMIT');
-        if (entry.name.startsWith(args.requestId + '.completion.json.pending-')) incomplete = true; } }
-      catch (error) { if (error.code !== 'ENOENT') issues.push('RECEIPT_DIRECTORY_UNVERIFIABLE'); }
-      if (incomplete) issues.push('INCOMPLETE_COMPLETION_COMMIT');
       const state = api.getState();
       const enabledFlags = attempt?.operation === 'set_mods_enabled' ? (attempt.parameters.modIds || []).map(modId => ({
         modId, installed: state.persistent?.mods?.[attempt.gameId]?.[modId]?.state === 'installed',
@@ -504,6 +551,7 @@ function createOperations(api, actions, selectors, options = {}) {
           .map(([id, d]) => ({ id, state: d.state, terminalObserved: downloads.TERMINAL.has(d.state) })); }
         catch { issues.push('DOWNLOAD_IDENTITY_UNVERIFIABLE'); }
       }
+      insist(directoryIdentity() === originalDirectory, 'RECEIPT_DIRECTORY_UNVERIFIABLE');
       return { protocol: PROTOCOL, attempt, completion, failure, interlock, download, enabledFlags, deployment,
         ...(localInstall ? {localInstall,installDiagnostics,installDiagnosticsSource,
           diagnosticsIssues: diagnosticsIssues.length ? ['INVALID_INSTALL_DIAGNOSTICS'] : []} : {}),

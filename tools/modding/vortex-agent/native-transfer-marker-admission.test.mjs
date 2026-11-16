@@ -20,8 +20,9 @@ function parentChain(){
  const own=registered[0];
  assert.equal(own.manifestSHA256,hash(manifestBytes));
  assert.equal(own.patchSHA256,hash(patch));
- for(const key of ['path','inputSHA256','outputSHA256','prerequisitePatch','prerequisitePatchSHA256','requiredManagerPatchSHA256'])
-  assert.equal(own[key],key==='path'?manifest.upstreamPath:(manifest[key]??null));
+ for(const key of ['path','inputSHA256','outputSHA256','prerequisitePatch','prerequisitePatchSHA256'])
+  assert.equal(own[key],key==='path'?manifest.upstreamPath:manifest[key]);
+ assert.equal(own.requiredManagerPatchSHA256??null,manifest.requiredManagerPatchSHA256??null);
  return rows.slice(0,rows.indexOf(own));
 }
 let cached;
