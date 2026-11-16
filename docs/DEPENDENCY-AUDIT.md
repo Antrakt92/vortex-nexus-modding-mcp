@@ -242,3 +242,28 @@ Both installed package licenses match the retained MIT notices. An isolated
 frozen install used pnpm 10.34.9 with lifecycle scripts disabled. Production
 and full registry audits then reported zero findings across 7 and 219 graph
 entries, respectively.
+
+## 16 November 2026 development toolchain refresh
+
+The development lock uses [oxfmt 0.78.0](https://github.com/oxc-project/oxc/releases/tag/oxfmt_v0.78.0),
+[oxlint 1.93.0](https://github.com/oxc-project/oxc/releases/tag/oxlint_v1.93.0),
+[Vite 8.3.8](https://github.com/vitejs/vite/releases/tag/v8.3.8) and
+[Vitest 5.1.0](https://github.com/vitest-dev/vitest/releases/tag/v5.1.0).
+The lock was regenerated from the maintained baseline and retains unrelated
+package versions. It updates the Oxc and Rolldown platform bindings and the
+Vitest mock and spy packages. [Rolldown 1.2.19](https://github.com/rolldown/rolldown/releases/tag/v1.2.19)
+adds an optional WASI binding with beta transitive dependencies. The
+Windows x64 install selected the native binding and omitted that WASI graph.
+
+Registry metadata matched every added lockfile integrity pin. The changed
+packages report MIT or 0BSD licensing and declare no install hooks. The four
+direct tool packages publish npm provenance attestations. Vortex declarations
+remain on 2.9.1 and Node declarations remain on 24.19.2.
+
+The frozen install with scripts disabled passed on Node 24.20.0 and pnpm
+10.34.9. Typecheck, lint, formatting, 144 upstream tests, two guarded-adapter
+regressions and both builds passed. The guarded bundle matched the v0.9.0
+bundle byte for byte when built for the same runtime workspace. Vite still
+reports the upstream configuration's future native-loader compatibility
+warning. Registry audits returned zero advisories across 7 production and 226
+total entries.
