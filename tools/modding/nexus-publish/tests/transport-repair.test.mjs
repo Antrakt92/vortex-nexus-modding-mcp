@@ -7,6 +7,7 @@ const api = 'https://api.nexusmods.com/v3/uploads/multipart';
 const part = 'https://fixture.s3.eu-west-1.amazonaws.com/object?partNumber=1&uploadId=fixture';
 const complete = 'https://fixture.s3.eu-west-1.amazonaws.com/object?uploadId=fixture';
 const headers = { apikey: key };
+const archive = { archiveName: 'fixture.zip', archiveBytes: 4 };
 const create = { method: 'POST', headers, body: JSON.stringify({ filename: 'fixture.zip', size_bytes: '4' }) };
 const uploadId = '11111111-1111-1111-1111-111111111111';
 const finalise = `https://api.nexusmods.com/v3/uploads/${uploadId}/finalise`;
@@ -14,7 +15,10 @@ const versions = 'https://api.nexusmods.com/v3/mod-files/123/versions';
 const plan = (size = 4, urls = [part]) => ({ data: { id: uploadId,
   part_size_bytes: size, part_presigned_urls: urls, complete_presigned_url: complete } });
 const post = { method: 'POST', headers };
-const versionRequest = (id = uploadId) => ({ ...post, body: JSON.stringify({ upload_id: id, version: '1.2.3' }) });
+const versionRequest = (id = uploadId, version = '1.2.3') => ({ ...post, body: JSON.stringify({
+  upload_id: id, version, name: 'fixture.zip', file_category: 'main',
+  archive_existing_file: false, update_mod_version: false,
+}) });
 
 async function completeFixtureStorage(guard) {
   await guard(api, create);
@@ -38,7 +42,7 @@ test('only one multipart reservation reaches transport even with a pending respo
     calls++;
     await gate;
     return Response.json(plan());
-  }, key, { archiveBytes: 4 });
+  }, key, archive);
 
   const first = guard(api, create);
   const second = assert.rejects(guard(api, create), /Network boundary/);
@@ -54,7 +58,7 @@ test('a sent reservation cannot be repeated after an unusable response', async (
     const guard = installFetchGuard(async () => {
       calls++;
       return calls === 1 ? response : Response.json(plan());
-    }, key, { archiveBytes: 4 });
+    }, key, archive);
     if (response.ok) await assert.rejects(guard(api, create), /Network boundary/);
     else assert.equal((await guard(api, create)).status, 503);
     await assert.rejects(guard(api, create), /Network boundary/);
@@ -71,7 +75,7 @@ test('finalise is admitted once while a matching request is in flight', async ()
     finaliseCalls++;
     await gate;
     return Response.json({ data: { id: uploadId } });
-  }, key, { archiveBytes: 4, fileId: '123', version: '1.2.3' });
+  }, key, { ...archive, fileId: '123', version: '1.2.3' });
 
   await completeFixtureStorage(guard);
   const first = guard(finalise, post);
@@ -91,7 +95,7 @@ test('version creation is single-use and tied to the finalised upload and approv
       return Response.json({ data: {} });
     }
     return storageFixture(url);
-  }, key, { archiveBytes: 4, fileId: '123', version: '1.2.3' });
+  }, key, { ...archive, fileId: '123', version: '1.2.3' });
 
   await completeFixtureStorage(guard);
   await assert.rejects(guard(versions, versionRequest()), /Network boundary/);
@@ -116,18 +120,48 @@ test('changelog stays bound to the created version, approved mod and exact text'
       return Response.json({data: {}});
     }
     return storageFixture(url);
-  }, key, {archiveBytes: 4, fileId: '123', modId: '456', version: '1.2.3', changelog: 'Reviewed changes'});
+  }, key, {...archive, fileId: '123', modId: '456', version: '1.2.3', changelog: 'Reviewed changes'});
 
   await assert.rejects(guard(changelogUrl, accepted), /Network boundary/);
   await completeFixtureStorage(guard);
   await guard(finalise, post);
-  await assert.rejects(guard(versions, {...post, body: JSON.stringify({upload_id: uploadId, version: '2.0'})}), /Network boundary/);
-  await guard(versions, {...post, body: JSON.stringify({upload_id: uploadId, version: '1.2.3'})});
+  await assert.rejects(guard(versions, versionRequest(uploadId, '2.0')), /Network boundary/);
+  await guard(versions, versionRequest());
   await assert.rejects(guard(changelogUrl.replace('/456/', '/654/'), accepted), /Network boundary/);
   await assert.rejects(guard(changelogUrl, {...accepted, body: JSON.stringify({version: '1.2.3', changelog: 'Other text'})}), /Network boundary/);
   await guard(changelogUrl, accepted);
   await assert.rejects(guard(changelogUrl, accepted), /Network boundary/);
   assert.deepEqual(calls, [finalise, versions, changelogUrl]);
+});
+
+test('write payloads permit only the exact reviewed reservation, finalise and version fields', async () => {
+  const writes = [];
+  const metadata = {
+    name: 'Reviewed name', description: 'Reviewed description', file_category: 'optional',
+    archive_existing_file: false, primary_mod_manager_download: true, allow_mod_manager_download: false,
+    show_requirements_pop_up: true, update_mod_version: false,
+  };
+  const guard = installFetchGuard(async (url, init) => {
+    if (url === api || url === finalise || url === versions) writes.push([url, init.body]);
+    return url === finalise || url === versions ? Response.json({ data: {} }) : storageFixture(url);
+  }, key, { ...archive, fileId: '123', version: '1.2.3', versionMetadata: metadata });
+
+  await assert.rejects(guard(api, { ...post, body: JSON.stringify({ filename: 'other.zip', size_bytes: '4' }) }), /Network boundary/);
+  await completeFixtureStorage(guard);
+  await assert.rejects(guard(finalise, { ...post, body: '{}' }), /Network boundary/);
+  await assert.rejects(guard(new Request(finalise, { ...post, body: '{}' })), /Network boundary/);
+  await guard(finalise, post);
+
+  const accepted = { upload_id: uploadId, version: '1.2.3', ...metadata };
+  for (const [name, expected] of Object.entries(metadata)) {
+    const changed = typeof expected === 'boolean' ? !expected : 'unexpected';
+    await assert.rejects(guard(versions, { ...post, body: JSON.stringify({ ...accepted, [name]: changed }) }), /Network boundary/, name);
+  }
+  const { description, ...incomplete } = accepted;
+  await assert.rejects(guard(versions, { ...post, body: JSON.stringify(incomplete) }), /Network boundary/);
+  await assert.rejects(guard(versions, { ...post, body: JSON.stringify({ ...accepted, extra: false }) }), /Network boundary/);
+  await guard(versions, { ...post, body: JSON.stringify(accepted) });
+  assert.deepEqual(writes, [[api, create.body], [finalise, undefined], [versions, JSON.stringify(accepted)]]);
 });
 
 test('Nexus-issued canonical Cloudflare R2 plan transfers without the Nexus key', async () => {
@@ -144,7 +178,7 @@ test('Nexus-issued canonical Cloudflare R2 plan transfers without the Nexus key'
     if (url === r2part) return new Response('', { headers: { ETag: '"fixture-etag"' } });
     assert.equal(url, r2complete);
     return new Response('<CompleteMultipartUploadResult><Bucket>fixture</Bucket><Key>object</Key><ETag>fixture-etag</ETag></CompleteMultipartUploadResult>');
-  }, key, { archiveBytes: 4 });
+  }, key, archive);
   await guard(api, create);
   await guard(r2part, { method: 'PUT', headers: { 'content-length': '4' }, body: Buffer.alloc(4) });
   await guard(r2complete, { method: 'POST', body: '<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>fixture-etag</ETag></Part></CompleteMultipartUpload>' });
@@ -161,7 +195,7 @@ test('R2 suffix tricks, custom domains and noncanonical account IDs stay forbidd
     const guard = installFetchGuard(async () => { calls++; return Response.json({ data: {
       ...plan().data, part_presigned_urls: [part.replace('fixture.s3.eu-west-1.amazonaws.com', host)],
       complete_presigned_url: complete.replace('fixture.s3.eu-west-1.amazonaws.com', host),
-    } }); }, key, { archiveBytes: 4 });
+    } }); }, key, archive);
     await assert.rejects(guard(api, create));
     assert.equal(calls, 1);
   }
@@ -173,7 +207,7 @@ test('an oversized streaming multipart response is cancelled and refused promptl
     start(controller) { controller.enqueue(new Uint8Array(4_000_001)); },
     cancel() { cancelled = true; },
   });
-  const guard = installFetchGuard(async () => new Response(body), key, { archiveBytes: 4 });
+  const guard = installFetchGuard(async () => new Response(body), key, archive);
   let timer;
   try {
     const outcome = await Promise.race([
@@ -189,7 +223,7 @@ test('refusal does not wait for an uncooperative cancellation; valid plan remain
   const guard = installFetchGuard(async () => new Response(new ReadableStream({
     start(controller) { controller.enqueue(new Uint8Array(4_000_001)); },
     cancel() { return new Promise(() => {}); },
-  })), key, { archiveBytes: 4 });
+  })), key, archive);
   let timer;
   try {
     assert.equal(await Promise.race([
@@ -197,14 +231,14 @@ test('refusal does not wait for an uncooperative cancellation; valid plan remain
       new Promise(resolve => { timer = setTimeout(() => resolve('stalled'), 250); }),
     ]), 'refused');
   } finally { clearTimeout(timer); }
-  const valid = installFetchGuard(async () => Response.json(plan()), key, { archiveBytes: 4 });
+  const valid = installFetchGuard(async () => Response.json(plan()), key, archive);
   assert.deepEqual(await (await valid(api, create)).json(), plan());
 });
 
 test('inconsistent, unbounded and duplicate multipart plans are refused before storage', async () => {
   for (const body of [plan(1), plan(0), plan(-1), plan(1.5), plan('4'), plan(2, [part, part]), plan(2 ** 40)]) {
     let calls = 0;
-    const guard = installFetchGuard(async () => { calls++; return Response.json(body); }, key, { archiveBytes: 4 });
+    const guard = installFetchGuard(async () => { calls++; return Response.json(body); }, key, archive);
     await assert.rejects(guard(api, create));
     assert.equal(calls, 1);
   }
@@ -216,7 +250,7 @@ test('a short body never reaches storage, and completion requires all uploaded b
     if (url === api) return Response.json(plan());
     storageCalls++;
     return new Response('');
-  }, key, { archiveBytes: 4 });
+  }, key, archive);
   await guard(api, create);
   await assert.rejects(guard(part, { method: 'PUT', headers: { 'content-length': '1' }, body: Buffer.alloc(1) }));
   await assert.rejects(guard(complete, { method: 'POST', body: '<CompleteMultipartUpload/>' }));
@@ -228,7 +262,7 @@ test('S3 HTTP-200 Error is refused before Nexus finalise', async () => {
     if (url === api) return Response.json(plan());
     if (url === part) return new Response('', { headers: { ETag: '"fixture-etag"' } });
     return new Response('<Error><Code>InternalError</Code></Error>', { status: 200 });
-  }, key, { archiveBytes: 4 });
+  }, key, archive);
   await guard(api, create);
   await guard(part, { method: 'PUT', headers: { 'content-length': '4' }, body: Buffer.alloc(4) });
   await assert.rejects(guard(complete, { method: 'POST', body: '<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>fixture-etag</ETag></Part></CompleteMultipartUpload>' }));
@@ -245,7 +279,7 @@ test('concurrent duplicate part, gap and early completion are denied; full cover
     if (url === part) await pending;
     if (url === complete) return new Response('<CompleteMultipartUploadResult><Bucket>fixture</Bucket><Key>object</Key><ETag>result</ETag></CompleteMultipartUploadResult>');
     return new Response('', { headers: { ETag: '"fixture-etag"' } });
-  }, key, { archiveBytes: 4 });
+  }, key, archive);
   await guard(api, create);
   const transfer = { method: 'PUT', headers: { 'content-length': '2' }, body: Buffer.alloc(2) };
   const first = guard(part, transfer);
@@ -266,7 +300,7 @@ test('part-number gaps, reordered plan and mismatched object/upload ID never rea
                      [part.replace('uploadId=fixture', 'uploadId=other')],
                      [part.replace('/object?', '/other?')]]) {
     let calls = 0;
-    const guard = installFetchGuard(async () => { calls++; return Response.json(plan(4, urls)); }, key, { archiveBytes: 4 });
+    const guard = installFetchGuard(async () => { calls++; return Response.json(plan(4, urls)); }, key, archive);
     await assert.rejects(guard(api, create));
     assert.equal(calls, 1);
   }
@@ -278,7 +312,7 @@ test('bounded XML rejects empty, malformed, entity, wrong namespace, oversize an
     'x'.repeat(65537), '<CompleteMultipartUploadResult><Bucket>fixture</Bucket><Key>object</Key><ETag>ok</ETag><Error/></CompleteMultipartUploadResult>',
     '<CompleteMultipartUploadResult/>']) {
     const guard = installFetchGuard(async url => url === api ? Response.json(plan()) : url === part
-      ? new Response('', { headers: { ETag: '"fixture-etag"' } }) : new Response(xml), key, { archiveBytes: 4 });
+      ? new Response('', { headers: { ETag: '"fixture-etag"' } }) : new Response(xml), key, archive);
     await guard(api, create);
     await guard(part, { method: 'PUT', headers: { 'content-length': '4' }, body: Buffer.alloc(4) });
     await assert.rejects(guard(complete, { method: 'POST', body: '<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>fixture-etag</ETag></Part></CompleteMultipartUpload>' }));
@@ -293,7 +327,7 @@ test('completion request must list exactly all confirmed ETags before storage se
     if (url === part) return new Response('', { headers: { ETag: '"fixture-etag"' } });
     completeCalls++;
     return new Response('');
-  }, key, { archiveBytes: 4 });
+  }, key, archive);
   await guard(api, create);
   await guard(part, { method: 'PUT', headers: { 'content-length': '4' }, body: Buffer.alloc(4) });
   for (const xml of ['<CompleteMultipartUpload/>', '<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>wrong</ETag></Part></CompleteMultipartUpload>',

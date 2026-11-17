@@ -1,5 +1,6 @@
 // Network boundary around the unchanged official action. No URLs/response bodies enter errors.
 import { spawnSync } from 'node:child_process';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const API_ORIGIN = 'https://api.nexusmods.com';
@@ -18,6 +19,36 @@ function writeBody(value) {
   try { parsed = JSON.parse(value); } catch { denied(); }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || JSON.stringify(parsed) !== value) denied();
   return parsed;
+}
+
+function requireBody(body, expected) {
+  const actual = writeBody(body);
+  const entries = Object.entries(expected);
+  if (Object.keys(actual).length !== entries.length ||
+    entries.some(([name, value]) => !Object.hasOwn(actual, name) || actual[name] !== value)) denied();
+}
+
+function versionFields(archiveName) {
+  const input = name => process.env[`INPUT_${name}`]?.trim() || undefined;
+  const flag = name => {
+    const value = input(name);
+    if (value === undefined) return undefined;
+    if (value === 'true' || value === 'false') return value === 'true';
+    denied();
+  };
+  // Match the pinned action's filename/category fallbacks and optional JSON
+  // fields. Python supplies these same reviewed inputs to the action.
+  const metadata = {
+    name: input('DISPLAY_NAME') || archiveName,
+    description: input('DESCRIPTION'),
+    file_category: input('CATEGORY') || 'main',
+    archive_existing_file: flag('ARCHIVE_EXISTING_VERSION') ?? false,
+    primary_mod_manager_download: flag('PRIMARY_MOD_MANAGER_DOWNLOAD'),
+    allow_mod_manager_download: flag('ALLOW_MOD_MANAGER_DOWNLOAD'),
+    show_requirements_pop_up: flag('SHOW_REQUIREMENTS_POP_UP'),
+    update_mod_version: flag('UPDATE_MOD_VERSION') ?? false,
+  };
+  return Object.fromEntries(Object.entries(metadata).filter(([, value]) => value !== undefined));
 }
 
 function approvedURL(value, key) {
@@ -77,7 +108,10 @@ function completionXML(request, response, parts) {
 export function installFetchGuard(nativeFetch = globalThis.fetch, apiKey = process.env.INPUT_API_KEY?.trim(),
   { archiveBytes = Number(process.env.NEXUS_ARCHIVE_BYTES), fileId = process.env.INPUT_FILE_ID?.trim(),
     modId = process.env.INPUT_MOD_ID?.trim(), version = process.env.INPUT_VERSION?.trim(),
-    changelog = process.env.INPUT_CHANGELOG?.trim(), dispatcher } = {}) {
+    changelog = process.env.INPUT_CHANGELOG?.trim(), dispatcher,
+    archiveName = path.basename(process.env.INPUT_FILENAME?.trim() || ''),
+    versionMetadata = versionFields(archiveName) } = {}) {
+  const approvedMetadata = { ...versionMetadata };
   let plan = null;
   let reservationSent = false;
   let failed = false;
@@ -95,30 +129,27 @@ export function installFetchGuard(nativeFetch = globalThis.fetch, apiKey = proce
       headers.set('Application-Name', 'Nexus-Agent-Publication');
       headers.set('Application-Version', '1.0');
       if (method !== 'GET') {
-        if (method !== 'POST' || url.search) denied();
+        if (method !== 'POST' || url.search || input instanceof Request) denied();
         if (url.pathname === '/v3/uploads/multipart') {
-          let requested;
-          try { requested = JSON.parse(init.body); } catch { denied(); }
-          if (reservationSent || !Number.isSafeInteger(archiveBytes) || archiveBytes <= 0
-            || !/^[1-9][0-9]*$/.test(String(requested?.size_bytes)) || Number(requested.size_bytes) !== archiveBytes) denied();
+          if (reservationSent || !Number.isSafeInteger(archiveBytes) || archiveBytes <= 0 || !archiveName) denied();
+          requireBody(init.body, { filename: archiveName, size_bytes: String(archiveBytes) });
           // Claim before awaiting transport. An unusable response does not rule out a remote write.
           reservationSent = true;
         } else if (/^\/v3\/uploads\/[^/]+\/finalise$/.test(url.pathname)) {
-          if (!plan?.completed || plan.finaliseSent || url.pathname !== `/v3/uploads/${plan.id}/finalise`) denied();
+          if (!plan?.completed || plan.finaliseSent || init.body != null ||
+            url.pathname !== `/v3/uploads/${plan.id}/finalise`) denied();
           plan.finaliseSent = true;
           finalising = true;
         } else if (/^\/v3\/mod-files\/[^/]+\/versions$/.test(url.pathname)) {
           if (!plan?.finalised || plan.versionSent || !NEXUS_ID.test(fileId) || !version
             || url.pathname !== `/v3/mod-files/${fileId}/versions`) denied();
-          const requested = writeBody(init.body);
-          if (requested.upload_id !== plan.id || requested.version !== version) denied();
+          requireBody(init.body, { ...approvedMetadata, upload_id: plan.id, version });
           plan.versionSent = true;
           creatingVersion = true;
         } else if (/^\/v3\/mods\/[^/]+\/changelogs$/.test(url.pathname)) {
           if (!plan?.versionCreated || plan.changelogSent || !NEXUS_ID.test(modId)
             || url.pathname !== `/v3/mods/${modId}/changelogs` || !changelog) denied();
-          const requested = writeBody(init.body);
-          if (Object.keys(requested).length !== 2 || requested.version !== version || requested.changelog !== changelog) denied();
+          requireBody(init.body, { version, changelog });
           plan.changelogSent = true;
         } else {
           denied();

@@ -1,5 +1,5 @@
 'use strict';
-const { TextDecoder } = require('node:util');
+const { parseStrictJSON } = require('./strict-json.cjs');
 const LIMITS = Object.freeze({ bytes: 1024 * 1024, batch: 16, requests: 16, tools: 32, bodyTimeoutMs: 10000 });
 // Shared by every start()/renderer server in this Node process, not by a client.
 const key = Symbol.for('vortex-agent/ingress-v1');
@@ -21,7 +21,7 @@ function body(req, signal) {
     const aborted = () => fail();
     const data = chunk => { bytes += chunk.length; if (bytes > LIMITS.bytes) { req.pause(); finish(Object.assign(Error('HTTP_BODY_LIMIT'), { status: 413 })); }
       else chunks.push(chunk); };
-    const end = () => { try { const parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, bytes)));
+    const end = () => { try { const parsed = parseStrictJSON(Buffer.concat(chunks, bytes), { maxBytes: LIMITS.bytes });
       if (Array.isArray(parsed) && (parsed.length === 0 || parsed.length > LIMITS.batch)) finish(Object.assign(Error('HTTP_BATCH_LIMIT'), { status: 413 }));
       else finish(null, parsed);
     } catch { finish(Object.assign(Error('HTTP_BODY_INVALID'), { status: 400 })); } };

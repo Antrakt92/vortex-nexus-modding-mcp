@@ -30,6 +30,18 @@ test('audit: HTTP parser rejects malformed UTF-8 instead of altering tool argume
   input.end();
   assert.deepEqual(await parsed, { modId: 'проверка' });
 });
+test('audit: direct HTTP rejects ambiguous arguments before dispatch', async () => {
+  const ingress = require('./http-ingress.cjs');
+  for (const json of [
+    '{"jsonrpc":"2.0","method":"tools/call","params":{"arguments":{"apply":false,"apply":true}}}',
+    '[{"jsonrpc":"2.0","method":"tools/call","params":{"arguments":{"apply":false,"appl\\u0079":true}}}]',
+  ]) {
+    const input = new PassThrough();
+    const parsed = ingress.body(input, new AbortController().signal);
+    input.end(Buffer.from(json));
+    await assert.rejects(parsed, error => error.message === 'HTTP_BODY_INVALID' && error.status === 400);
+  }
+});
 async function fixture(hook = async () => {}) {
   const dir = await fs.mkdtemp(path.join(ROOT, 'audit-'));
   const state = { settings: { gameMode: { discovered: { cyberpunk2077: { path: dir } } } }, persistent: {

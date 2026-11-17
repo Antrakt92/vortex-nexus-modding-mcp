@@ -242,6 +242,13 @@ errors, malformed/empty/wrong-namespace responses and missing Bucket/Key/ETag
 success fields block before Nexus finalisation. The helper accepts stdin only,
 inherits no Nexus key and emits no response text or URLs.
 
+The reservation body uses the exact archive basename and size. Finalisation
+has no body. Creating the file version requires the exact approved title,
+description, file category, version and upload ID, along with the reviewed
+archive, version and mod-manager options. Optional fields follow the pinned
+action's omission rules. Changed values and unexpected fields are refused
+before transport.
+
 ### Native transport provenance
 
 Before importing the unchanged bundle, the launcher primes Node's lazy built-in
@@ -270,6 +277,9 @@ helper is not invoked by this action. No dependency or bundle changes were made.
   execution. Both carry the same random `attempt_id`; every update/removal checks
   exact ownership and complete receipt identity/schema. Atomic replacement is used
   for updates after fsync. Retain the operation-lock files as well as JSON ledgers.
+  If the attempt receipt cannot be written before launch, the runner clears its
+  own target marker only if no receipt entry exists. Existing or partial
+  receipts still block retry.
 - Windows sharing locks prevent ZIP writes/deletes while allowing the action to read it.
 - `done` requires action success, a valid returned v3 version ID, and independent
   `GET /mod-file-versions/{id}` matching file chain, version, display name and category.

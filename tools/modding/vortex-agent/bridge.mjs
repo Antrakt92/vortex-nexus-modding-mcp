@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 import credential from './credential.cjs';
 import {RUN_PLAN_TOOL, INSPECT_PLAN_TOOL} from './plan-tool.mjs';
+import diagnostics from './install-diagnostics.cjs';
+import strictJSON from './strict-json.cjs';
 export const ENDPOINT = 'http://127.0.0.1:3701/mcp';
 const RESTART_GUIDANCE = 'Authorized close/restart: read docs/AUTHORIZED-RESTART.md in the maintained Vortex Nexus Modding MCP checkout. MainWindowHandle=0 does not rule out hidden windows. Use the reviewed native WM_CLOSE route scoped to the exact main PID/generation, executable/source pins, stopped game, pending-operation and updater guards; verify all Vortex processes exit. Never force-kill. A missing MCP shutdown tool alone does not require manual closure.';
 function maintainedToolMetadata(tool) {
@@ -11,11 +14,15 @@ function maintainedToolMetadata(tool) {
     description: [description, RESTART_GUIDANCE].filter(Boolean).join(' ')};
 }
 
-function parse(text) { try { return JSON.parse(text); } catch { throw new Error('Invalid MCP JSON payload'); } }
+const MAX_REQUEST_BYTES = 1024 * 1024;
+function parse(input, maxBytes = MAX_RESPONSE_BYTES) {
+  try { return strictJSON.parseStrictJSON(typeof input === 'string' ? Buffer.from(input) : input, {maxBytes}); }
+  catch { throw new Error('Invalid MCP JSON payload'); }
+}
 export const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 function cancelBody(body) { if (body) void body.cancel().catch(() => {}); }
 function releaseReader(reader) { cancelBody(reader); reader.releaseLock(); }
-export async function* boundedLines(input, max = 1024 * 1024) {
+export async function* boundedLines(input, max = MAX_REQUEST_BYTES) {
   let pieces = [], bytes = 0, dropping = false;
   const decode = data => { try { return new TextDecoder('utf-8', { fatal: true }).decode(data); } catch { return null; } };
   for await (const chunk of input) {
@@ -44,15 +51,40 @@ class UnusableResponse extends Error {
 function isLocalArchiveInstall(method, params) {
   return method === 'tools/call' && params?.name === 'install_local_archive';
 }
-function isLocalInstallResult(result) {
+const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+const INSTALL_ERROR_ACTION = 'Re-read health/context, inspect external receipts and Vortex UI/log privately. Never blindly retry a mutation.';
+const INSTALL_INPUT_REFUSAL = 'Input validation error: Invalid arguments for tool install_local_archive: ';
+function isInstallInputRefusal(result) {
+  // SDK2 wraps its pre-handler Zod refusal in a text tool error. Its distinct
+  // post-handler output-validation and runtime errors must still reconcile.
+  const text = result?.content?.[0];
+  return isObject(result) && result.isError === true && !Object.hasOwn(result, 'structuredContent')
+    && Array.isArray(result.content) && result.content.length === 1 && text?.type === 'text'
+    && typeof text.text === 'string' && text.text.startsWith(INSTALL_INPUT_REFUSAL)
+    && text.text.length > INSTALL_INPUT_REFUSAL.length;
+}
+async function isLocalInstallResult(result, args) {
   if (!result || typeof result !== 'object' || Array.isArray(result)) return false;
   const { content, structuredContent, isError } = result;
   if (!Array.isArray(content) || content.length !== 1) return false;
   const [text] = content;
   if (text?.type !== 'text' || typeof text.text !== 'string' || !text.text.length) return false;
-  if (isError === true) return true;
-  return (isError === undefined || isError === false)
-    && structuredContent !== null && typeof structuredContent === 'object' && !Array.isArray(structuredContent);
+  const parsed = parse(text.text);
+  if (!isObject(parsed) || Object.hasOwn(parsed, 'installDiagnostics')
+    && !diagnostics.validInstallDiagnostics(parsed.installDiagnostics)) return false;
+  if (isError === true) {
+    return !Object.hasOwn(result, 'structuredContent')
+      && Object.keys(parsed).every(key => ['error', 'action', 'installDiagnostics'].includes(key))
+      && typeof parsed.error === 'string' && /^[A-Z][A-Z0-9_]{1,99}$/.test(parsed.error)
+      && (!Object.hasOwn(parsed, 'action') || parsed.action === INSTALL_ERROR_ACTION);
+  }
+  if ((isError !== undefined && isError !== false) || !isObject(structuredContent)
+    || !isDeepStrictEqual(structuredContent, parsed)) return false;
+  // session.mjs imports this bridge. Load its shared acknowledgement check only
+  // when a local-install response arrives.
+  const {validateLocalInstallAcknowledgement} = await import('./session.mjs');
+  validateLocalInstallAcknowledgement(structuredContent, args);
+  return true;
 }
 export async function remote(method, params = {}, fetcher = fetch, tokenProvider = credential.readToken) {
   let dispatched = false;
@@ -82,6 +114,9 @@ async function remoteRequest(method, params, fetcher, tokenProvider, onDispatch)
   catch { throw new Error(UNAVAILABLE); }
   if (!response.ok) {
     cancelBody(response.body);
+    // An HTTP server failure does not establish whether the install handler ran.
+    if (isLocalArchiveInstall(method, params) && response.status >= 500 && response.status <= 599)
+      throw new UnusableResponse();
     throw new Error(response.status === 401 ? 'Vortex MCP authentication failed. Run credential.cjs --initialize once as the same Windows user as Vortex, then verify extension and credential ownership.' : `Vortex MCP HTTP ${response.status}; verify the adapted extension and port ownership.`);
   }
   if (Number(response.headers.get('content-length')) > MAX_RESPONSE_BYTES) { cancelBody(response.body); throw new UnusableResponse('MCP response too large'); }
@@ -138,14 +173,16 @@ async function remoteRequest(method, params, fetcher, tokenProvider, onDispatch)
         bytes += value.byteLength; if (bytes > MAX_RESPONSE_BYTES) throw new UnusableResponse('MCP response too large');
         chunks.push(value);
       }
-      message = parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, bytes)));
+      message = parse(Buffer.concat(chunks, bytes));
     } catch (error) {
       throw error instanceof UnusableResponse ? error : new UnusableResponse();
     } finally { releaseReader(reader); }
   }
-  if (!message || message.jsonrpc !== '2.0' || message.id !== 1) throw new UnusableResponse();
+  if (!message || typeof message !== 'object' || Array.isArray(message)
+    || message.jsonrpc !== '2.0' || message.id !== 1) throw new UnusableResponse();
   if (Object.hasOwn(message, 'result') === Object.hasOwn(message, 'error')) throw new UnusableResponse();
-  if (Object.hasOwn(message, 'error') && (!message.error || typeof message.error !== 'object')) throw new UnusableResponse();
+  if (Object.hasOwn(message, 'error') && (!message.error || typeof message.error !== 'object' || Array.isArray(message.error)))
+    throw new UnusableResponse();
   const localInstall = isLocalArchiveInstall(method, params);
   if (message.error) {
     // Only protocol-level parsing, routing and input refusals prove the tool was never invoked.
@@ -153,7 +190,13 @@ async function remoteRequest(method, params, fetcher, tokenProvider, onDispatch)
       || typeof message.error.message !== 'string')) throw new UnusableResponse();
     throw new Error('Vortex MCP rejected the request; verify tool arguments and adapted protocol.');
   }
-  if (localInstall && !isLocalInstallResult(message.result)) throw new UnusableResponse();
+  if (localInstall) {
+    if (isInstallInputRefusal(message.result))
+      return {isError: true, content: [{type: 'text', text: '{"error":"INVALID_LOCAL_INSTALL_ARGUMENTS"}'}]};
+    try {
+      if (!await isLocalInstallResult(message.result, params.arguments)) throw new UnusableResponse();
+    } catch { throw new UnusableResponse(); }
+  }
   if (method === 'tools/list' && Array.isArray(message.result?.tools)) {
     return { ...message.result, tools: message.result.tools.filter(tool => tool.name !== 'install_download').map(maintainedToolMetadata) };
   }
@@ -241,7 +284,8 @@ export function handler(call = remote, {journal} = {}) {
   const handle = async request => {
     const hasId = request !== null && typeof request === 'object' && Object.hasOwn(request, 'id');
     const validId = hasId && (typeof request.id === 'string' || Number.isSafeInteger(request.id));
-    if (!request || request.jsonrpc !== '2.0' || typeof request.method !== 'string' || hasId && !validId)
+    if (!request || typeof request !== 'object' || Array.isArray(request)
+      || request.jsonrpc !== '2.0' || typeof request.method !== 'string' || hasId && !validId)
       return { jsonrpc: '2.0', id: validId ? request.id : null, error: { code: -32600, message: 'Invalid Request' } };
     if (!hasId) {
       if (request.method === 'notifications/cancelled') plans.get(request.params?.requestId)?.abort();
@@ -281,7 +325,7 @@ export async function main(argv = process.argv.slice(2)) {
     const health = await remote('tools/call', { name: 'health', arguments: {} });
     const info = parse(health.content?.[0]?.text || '{}');
     if (health.isError || info.protocol !== 'vortex-agent/1') throw new Error('Wrong server on port 3701');
-    const result = argv[0] === '--health' ? health : await clientRemote('tools/call', { name: argv[1], arguments: parse(argv[2] || '{}') });
+    const result = argv[0] === '--health' ? health : await clientRemote('tools/call', { name: argv[1], arguments: parse(argv[2] || '{}', MAX_REQUEST_BYTES) });
     process.stdout.write(JSON.stringify(result) + '\n');
     if (result.isError) process.exitCode = 1;
     return;
@@ -323,7 +367,7 @@ export async function runStdio(input, output, handle, maxPending = 100) {
       if (output.destroyed) throw new Error('MCP output closed');
       if (line !== null && !line.trim()) continue;
       let request;
-      try { if (line === null) throw new Error(); request = JSON.parse(line); }
+      try { if (line === null) throw new Error(); request = parse(line, MAX_REQUEST_BYTES); }
       catch { await write({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }); continue; }
       const notification = request?.jsonrpc === '2.0' && typeof request.method === 'string'
         && !Object.hasOwn(request, 'id');

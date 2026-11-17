@@ -17,7 +17,7 @@ b = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(b)
 
 
-def fixture(name='package/bin/tool.cjs', link=False):
+def fixture(name='package/bin/tool.cjs', link=False, extra_names=()):
     stream = io.BytesIO()
     with tarfile.open(fileobj=stream, mode='w:gz') as archive:
         member = tarfile.TarInfo(name)
@@ -29,10 +29,14 @@ def fixture(name='package/bin/tool.cjs', link=False):
         else:
             member.size = len(data)
             archive.addfile(member, io.BytesIO(data))
+        for extra in extra_names:
+            member = tarfile.TarInfo(extra)
+            member.size = len(data)
+            archive.addfile(member, io.BytesIO(data))
     value = stream.getvalue()
     lock = {'archiveBytes': len(value),
             'integrity': 'sha512-' + base64.b64encode(hashlib.sha512(value).digest()).decode(),
-            'fileCount': 1, 'unpackedBytes': len(data)}
+            'fileCount': 1 + len(extra_names), 'unpackedBytes': len(data) * (1 + len(extra_names))}
     return value, lock
 
 
@@ -132,6 +136,22 @@ class BootstrapTests(unittest.TestCase):
             data, lock = fixture(name, link)
             with self.assertRaises(ValueError):
                 b.entries(data, lock)
+
+    def test_reject_windows_path_aliases_before_unpacking(self):
+        for name, extra in [('package/bin/CON.txt', ()), ('package/bin/tool. ', ()),
+                            ('package/bin/tool', ('package/BIN/TOOL',)),
+                            ('package/bin/tool', ('package/BIN/TOOL/nested.cjs',)),
+                            ('package/bin/tool', ('package/BIN/other.cjs',))]:
+            with self.subTest(name=name, extra=extra):
+                data, lock = fixture(name, extra_names=extra)
+                with self.assertRaisesRegex(ValueError, 'archive path'):
+                    b.entries(data, lock)
+
+    def test_inventory_limits_are_checked_before_extracting_oversized_member(self):
+        data, lock = fixture()
+        with mock.patch.object(tarfile.TarFile, 'extractfile', side_effect=AssertionError('must not extract')):
+            with self.assertRaisesRegex(ValueError, 'content inventory'):
+                b.entries(data, {**lock, 'unpackedBytes': lock['unpackedBytes'] - 1})
 
 
 if __name__ == '__main__':

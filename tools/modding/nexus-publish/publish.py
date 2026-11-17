@@ -466,9 +466,20 @@ def execute_locked(manifest, path, state, action, credential, invoke, read):
                     action_running=True)
         try:
             write_receipt(lock, data, exclusive=True)
+        except FileExistsError:
+            raise Blocked("Concurrent attempt detected; retry refused.") from None
+        try:
             write_receipt(path, data, exclusive=True)
         except FileExistsError:
             raise Blocked("Concurrent attempt detected; retry refused.") from None
+        except (Exception, KeyboardInterrupt):
+            # Nothing was invoked. Clear only our lock, and only if the receipt
+            # write left no entry (including a partial file or broken symlink).
+            try:
+                path.lstat()
+            except FileNotFoundError:
+                unlink_owned(lock, data, manifest)
+            raise
         try:
             report = invoke(manifest, key, action, node)
             data["action_running"] = False

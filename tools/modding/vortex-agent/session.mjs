@@ -165,6 +165,11 @@ function verifiedAcknowledgement(value, operation, args, receipt = false) {
       && Number.isFinite(Date.parse(value.at)), 'TERMINAL_RECEIPT_UNCERTAIN');
   } else insist(value.enabledFlagsVerified === true && value.enabled === args.enabled && same(value.modIds, args.modIds), 'WRITE_ACKNOWLEDGEMENT_UNCERTAIN');
 }
+export function validateLocalInstallAcknowledgement(value, args) {
+  insist(object(args) && typeof args.requestId === 'string' && /^[a-zA-Z0-9_-]{8,80}$/.test(args.requestId)
+    && typeof args.archivePath === 'string' && args.archivePath.endsWith('.zip'), 'WRITE_ACKNOWLEDGEMENT_UNCERTAIN');
+  verifiedAcknowledgement(value, 'install_local_archive', args);
+}
 function verifiedReceipt(value, operation, args, acknowledgement) {
   insist(object(value) && value.protocol === PROTOCOL && value.terminalOperationVerified === true
     && value.adapterTerminalReceiptObserved === true && value.incompleteCompletionObserved === false

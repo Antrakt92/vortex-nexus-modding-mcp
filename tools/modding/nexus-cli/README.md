@@ -18,6 +18,8 @@ changed installed files, and writes the executable pin to
 The installer rejects reparse points in output paths, including dangling links.
 It checks all existing files and the receipt before extraction and unpacks the
 same in-memory archive bytes whose size/hash passed verification.
+Before launch, the wrapper checks the executable, shipped DLLs and runtime
+configuration against pins from that archive and refuses reparse paths.
 
 To install or reuse the verified release, run this explicit installation command
 from the repository root; it may download the pinned asset:
