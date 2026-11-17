@@ -24,6 +24,16 @@ The maintained tool READMEs list additional suites. Tests and source-integrity
 checks do not establish native Vortex loading, deployed file ownership or game
 behavior. Report those observations separately when they are relevant.
 
+For a full local adapter run, prepare the isolated package as described in
+[Restoration](docs/RESTORE.md). Point `VORTEX_ADAPTER_TEST_VENDOR` at that build's
+`upstream/package.json` when the source checkout has no installed dependencies.
+Run the Node suites serially if fixture writers share a workspace: tests that
+verify filesystem generations can observe unrelated directory changes during a
+parallel run. Use the Python interpreter for `*.test.py`. For
+`regression.test.ts`, copy the fixture with `build.mjs --regression` and set
+`ADAPTED_REGRESSION=1` before running Vitest in the prepared build: default
+mode targets the unmodified upstream and intentionally fails.
+
 For native-helper preparation, settlement or physical proof changes, also run:
 
 ```powershell

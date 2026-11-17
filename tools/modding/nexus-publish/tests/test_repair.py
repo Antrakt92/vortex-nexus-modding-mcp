@@ -112,6 +112,48 @@ class RepairTests(unittest.TestCase):
         self.assertEqual(p.load_receipt(lock, self.m), changed)
         self.assertEqual(p.load_receipt(path, self.m), original)
 
+    def test_pre_invoke_write_failure_clears_owned_lock_if_receipt_absent(self):
+        path = p.receipt_path(self.m, self.root)
+        lock = p.target_lock_path(self.m, self.root)
+        write = p.write_receipt
+
+        def fail_before_receipt(target, data, exclusive=False):
+            if target == path:
+                self.assertTrue(lock.is_file())
+                raise PermissionError('synthetic write failure')
+            write(target, data, exclusive)
+
+        with (patch.object(p, 'write_receipt', side_effect=fail_before_receipt),
+              patch.object(p, 'verify_action', return_value='modeled-node'),
+              self.assertRaisesRegex(PermissionError, 'synthetic write failure')):
+            p.execute(self.m, publish=True, state=self.root, credential=lambda: 'mock-secret-never-log',
+                      invoke=lambda *args: self.fail('action invoked'), read=self.read)
+        self.assertFalse(path.exists())
+        self.assertFalse(lock.exists())
+        self.assertEqual(self.execute({'ok': True, 'version_id': '987'})['outcome'], 'done')
+
+    def test_pre_invoke_write_failure_preserves_lock_if_receipt_present(self):
+        path = p.receipt_path(self.m, self.root)
+        lock = p.target_lock_path(self.m, self.root)
+        write = p.write_receipt
+
+        def fail_after_receipt(target, data, exclusive=False):
+            if target == path:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('{"schema":', encoding='utf-8')
+                raise PermissionError('synthetic partial receipt')
+            write(target, data, exclusive)
+
+        with (patch.object(p, 'write_receipt', side_effect=fail_after_receipt),
+              patch.object(p, 'verify_action', return_value='modeled-node'),
+              self.assertRaisesRegex(PermissionError, 'synthetic partial receipt')):
+            p.execute(self.m, publish=True, state=self.root, credential=lambda: 'mock-secret-never-log',
+                      invoke=lambda *args: self.fail('action invoked'), read=self.read)
+        self.assertEqual(path.read_text(encoding='utf-8'), '{"schema":')
+        self.assertTrue(p.load_receipt(lock, self.m)['action_running'])
+        with self.assertRaisesRegex(p.Blocked, 'already exists'):
+            p.execute(self.m, publish=True, state=self.root, credential=lambda: self.fail('key accessed'))
+
     def test_receipt_schema_identity_flags_and_legacy_fail_closed(self):
         self.execute({"ok": False, "version_id": "987"})
         path = p.receipt_path(self.m, self.root)

@@ -4,7 +4,7 @@ import base64
 import hashlib
 import io
 import json
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import re
 import tarfile
 import tempfile
@@ -22,20 +22,32 @@ def entries(data, lock):
     if lock['integrity'] != 'sha512-' + actual:
         raise ValueError('Build-tool archive integrity differs')
     files = {}
+    paths = {}
+    unpacked_bytes = 0
     with tarfile.open(fileobj=io.BytesIO(data), mode='r:gz') as archive:
-        for member in archive.getmembers():
-            path = PurePosixPath(member.name)
-            if path.is_absolute() or '\\' in member.name or ':' in member.name or '..' in path.parts or path.parts[0] != 'package':
+        for member in archive:
+            if not (member.isdir() or member.isfile()):
+                raise ValueError('Archive links/special entries refused')
+            try:
+                path = recovery_relative(member.name)
+            except ValueError:
+                raise ValueError('Unsafe archive path') from None
+            if path.parts[0] != 'package' or (member.isfile() and len(path.parts) < 2):
                 raise ValueError('Unsafe archive path')
+            for length in range(1, len(path.parts) + 1):
+                parts = path.parts[:length]
+                key = tuple(part.lower() for part in parts)
+                is_file = member.isfile() and length == len(path.parts)
+                if key in paths and (paths[key] != (parts, False) or is_file):
+                    raise ValueError('Conflicting archive path')
+                paths[key] = parts, is_file
             if member.isdir():
                 continue
-            if not member.isfile() or len(path.parts) < 2:
-                raise ValueError('Archive links/special entries refused')
-            relative = path.relative_to('package').as_posix()
-            if relative in files:
-                raise ValueError('Duplicate archive entry')
-            files[relative] = archive.extractfile(member).read()
-    if len(files) != lock['fileCount'] or sum(map(len, files.values())) != lock['unpackedBytes']:
+            unpacked_bytes += member.size
+            if len(files) >= lock['fileCount'] or unpacked_bytes > lock['unpackedBytes']:
+                raise ValueError('Build-tool content inventory differs')
+            files[path.relative_to('package').as_posix()] = archive.extractfile(member).read()
+    if len(files) != lock['fileCount'] or unpacked_bytes != lock['unpackedBytes']:
         raise ValueError('Build-tool content inventory differs')
     return files
 

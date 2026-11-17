@@ -99,6 +99,36 @@ test('published completion survives cleanup errors without conflicting failure r
   await assert.rejects(f.ops.respond_native_dialog(f.args(r)),/COMPLETION_PUBLISHED_CLEANUP_PENDING/);
   const ledger=await f.ops.read_native_dialog_operation({requestId:'request_0001'});assert.equal(ledger.status,'complete');assert.equal(ledger.held,null);assert.equal(f.calls.length,1);
 });
+test('control ledger never reports a completion for a different dialog, action or verification scope',async t=>{
+  const f=await fixture(t),r=await f.read();
+  await f.ops.respond_native_dialog(f.args(r));
+  const file=path.join(f.receipts,'native-dialog-control','request_0001.completion.json');
+  const original=await f.record('request_0001','completion');
+  for(const patch of [{action:'ignore_dependencies'},{dialogId:'foreign-dialog'},{profileId:'other-profile'},
+    {remember:true},{installationCompleted:true},{abortOnly:false},{diskDeploymentVerified:true}]) {
+    await fs.writeFile(file,JSON.stringify({...original,response:{...original.response,...patch}}));
+    await assert.rejects(f.ops.read_native_dialog_operation({requestId:'request_0001'}),/LEDGER_COMPLETION_INVALID/);
+  }
+});
+test('restarted control refuses a completed attempt whose file aliases an earlier no-effect request',async t=>{
+  const f=await fixture(t,{commit:async(file,...args)=>{
+    await commitCompletion(file,...args);
+    if(file.endsWith('request_0001.attempt.json')) f.state.session.notifications.dialogs=[];
+  }});
+  await assert.rejects(f.ops.respond_native_dialog(f.args(await f.read())),/FRONT_CHANGED/);
+  assert.equal((await f.record('request_0001','held')).effectsMayHaveOccurred,false);
+
+  f.state.session.notifications.dialogs=[dialog()];
+  await f.ops.respond_native_dialog(f.args(await f.read(),'cancel','request_0002'));
+  const control=path.join(f.receipts,'native-dialog-control');
+  await fs.copyFile(path.join(control,'request_0001.attempt.json'),path.join(control,'request_0002.attempt.json'));
+
+  const restarted=createOperations({...f.api},{},f.selectors,{receipts:f.receipts,stopped(){},nativeDialogOptions:{assertHost(){}}});
+  f.state.session.notifications.dialogs=[dialog()];
+  const observed=await restarted.read_native_dialog({gameId:'game',profileId:'profile'});
+  await assert.rejects(restarted.respond_native_dialog(f.args(observed,'cancel','request_0003')),/LEDGER_JOIN_INVALID/);
+  assert.equal(f.calls.length,1);
+});
 test('own control mutex excludes concurrent clients without modifying foreign locks',async t=>{
   const f=await fixture(t),r=await f.read(),dir=path.join(f.receipts,'native-dialog-control');await fs.mkdir(dir);await fs.writeFile(path.join(dir,'mutation.lock'),'another control');
   await assert.rejects(f.ops.respond_native_dialog(f.args(r)),/CONTROL_BUSY/);assert.equal(f.calls.length,0);assert.equal(await fs.readFile(path.join(dir,'mutation.lock'),'utf8'),'another control');

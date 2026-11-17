@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 const disk = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { spawnSync } = require('node:child_process');
+const { execFile, spawnSync } = require('node:child_process');
 const { safe } = require('./serialization.cjs');
 const downloads = require('./download-identity.cjs');
 const receipts = require('./receipts.cjs');
@@ -39,24 +39,44 @@ try {
   [Console]::Error.WriteLine('PROCESS_ENUMERATION_FAILED')
   exit 1
 }`;
+function processProbe() {
+  const windows = process.env.SystemRoot;
+  insist(typeof windows === 'string' && /^[a-z]:\\[^<>:"|?*\x00-\x1f]+$/i.test(windows)
+    && path.win32.normalize(windows) === windows, 'PROCESS_LIST_UNVERIFIABLE');
+  const exe = path.win32.join(windows, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const args = ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(PROCESS_SNAPSHOT_SCRIPT, 'utf16le').toString('base64')];
+  const options = { encoding: 'utf8', timeout: 10000, maxBuffer: 1024 * 1024, windowsHide: true };
+  return { exe, args, options };
+}
+function parseProcessNames(stdout, stderr) {
+  insist(typeof stdout === 'string' && typeof stderr === 'string' && stderr.trim() === '', 'PROCESS_LIST_UNVERIFIABLE');
+  const snapshot = JSON.parse(stdout);
+  insist(snapshot && !Array.isArray(snapshot) && Object.keys(snapshot).sort().join(',') === 'complete,count,names,schema'
+    && snapshot.schema === 1 && snapshot.complete === true && Array.isArray(snapshot.names)
+    && Number.isInteger(snapshot.count) && snapshot.count > 0 && snapshot.count <= 65536
+    && snapshot.names.length === snapshot.count
+    && snapshot.names.every(name => typeof name === 'string' && name.length > 0 && name.length <= 260
+      && !/[\\/\x00-\x1f\x7f]/.test(name)), 'PROCESS_LIST_UNVERIFIABLE');
+  return snapshot.names.map(name => name.toLowerCase());
+}
 function processNames() {
   try {
-    const windows = process.env.SystemRoot;
-    insist(typeof windows === 'string' && /^[a-z]:\\[^<>:"|?*\x00-\x1f]+$/i.test(windows)
-      && path.win32.normalize(windows) === windows, 'PROCESS_LIST_UNVERIFIABLE');
-    const exe = path.win32.join(windows, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-    const result = spawnSync(exe, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(PROCESS_SNAPSHOT_SCRIPT, 'utf16le').toString('base64')],
-      { encoding: 'utf8', timeout: 10000, maxBuffer: 1024 * 1024, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-    insist(!result.error && result.status === 0 && !result.signal && typeof result.stdout === 'string'
-      && typeof result.stderr === 'string' && result.stderr.trim() === '', 'PROCESS_LIST_UNVERIFIABLE');
-    const snapshot = JSON.parse(result.stdout);
-    insist(snapshot && !Array.isArray(snapshot) && Object.keys(snapshot).sort().join(',') === 'complete,count,names,schema'
-      && snapshot.schema === 1 && snapshot.complete === true && Array.isArray(snapshot.names)
-      && Number.isInteger(snapshot.count) && snapshot.count > 0 && snapshot.count <= 65536
-      && snapshot.names.length === snapshot.count
-      && snapshot.names.every(name => typeof name === 'string' && name.length > 0 && name.length <= 260
-        && !/[\\/\x00-\x1f\x7f]/.test(name)), 'PROCESS_LIST_UNVERIFIABLE');
-    return snapshot.names.map(name => name.toLowerCase());
+    const { exe, args, options } = processProbe();
+    const result = spawnSync(exe, args, { ...options, stdio: ['ignore', 'pipe', 'pipe'] });
+    insist(!result.error && result.status === 0 && !result.signal, 'PROCESS_LIST_UNVERIFIABLE');
+    return parseProcessNames(result.stdout, result.stderr);
+  } catch { throw new Error('PROCESS_LIST_UNVERIFIABLE'); }
+}
+async function processNamesAsync() {
+  try {
+    const { exe, args, options } = processProbe();
+    return await new Promise((resolve, reject) => {
+      execFile(exe, args, options, (error, stdout, stderr) => {
+        if (error) return reject(error);
+        try { resolve(parseProcessNames(stdout, stderr)); }
+        catch (error) { reject(error); }
+      });
+    });
   } catch { throw new Error('PROCESS_LIST_UNVERIFIABLE'); }
 }
 function noRunningTools(state, gameId) {
@@ -69,8 +89,15 @@ function stopped(state, gameId) {
   const names = processNames();
   insist(!processes[gameId].some(name => names.includes(name.toLowerCase())), 'GAME_RUNNING');
 }
+async function stoppedAsync(state, gameId) {
+  noRunningTools(state, gameId);
+  const names = await processNamesAsync();
+  insist(!processes[gameId].some(name => names.includes(name.toLowerCase())), 'GAME_RUNNING');
+}
 function context(api, selectors) {
-  const state = api.getState();
+  return contextFromState(api.getState(), selectors);
+}
+function contextFromState(state, selectors) {
   const profileId = selectors.activeProfileId(state);
   const gameId = selectors.activeGameId(state);
   const result = { gameId, profileId, gamePath: state.settings?.gameMode?.discovered?.[gameId]?.path,
@@ -89,16 +116,19 @@ function context(api, selectors) {
 function identity(file) { const stat = disk.statSync(file, { bigint: true }); insist(stat.isDirectory(), 'PATH_NOT_DIRECTORY'); return `${stat.dev}:${stat.ino}`; }
 function normalized(p) { return path.resolve(p).toLowerCase(); }
 function assertContext(api, selectors, args, stop = stopped) {
-  const live = context(api, selectors);
+  const state = api.getState();
+  const live = contextFromState(state, selectors);
   insist(live.gameId === args.gameId && live.profileId === args.profileId
-    && api.getState().persistent?.profiles?.[args.profileId]?.gameId === args.gameId, 'STALE_ACTIVE_CONTEXT');
+    && state.persistent?.profiles?.[args.profileId]?.gameId === args.gameId, 'STALE_ACTIVE_CONTEXT');
+  const profileSettings = state.settings?.profiles;
+  insist(!profileSettings || profileSettings.nextProfileId === args.profileId, 'PROFILE_TRANSITION_PENDING');
   for (const key of ['gamePath', 'stagingPath', 'downloadPath']) {
     insist(typeof live[key] === 'string' && typeof args[key] === 'string' && path.isAbsolute(args[key])
       && normalized(live[key]) === normalized(args[key])
       && normalized(disk.realpathSync(args[key])) === normalized(args[key]), 'PATH_PIN_MISMATCH');
     insist(args.filesystemIds?.[key] === live.filesystemIds[key], 'FILESYSTEM_IDENTITY_MISMATCH');
   }
-  stop(api.getState(), args.gameId);
+  stop(state, args.gameId);
   return live;
 }
 async function digest(handle, size) {
@@ -194,6 +224,13 @@ function createOperations(api, actions, selectors, options = {}) {
   const dir = options.receipts || RECEIPTS;
   const sanitize = (value, kind) => safe(value, api, kind, options.credentials || []);
   const check = args => assertContext(api, selectors, args, options.stopped || stopped);
+  const checkWaitingDownload = async args => {
+    if (options.stopped) return check(args);
+    const checkContext = () => assertContext(api, selectors, args, noRunningTools);
+    checkContext();
+    await stoppedAsync(api.getState(), args.gameId);
+    checkContext();
+  };
   const catalog = options.catalog;
   // The facade captures this request's guard; its controller/observations are
   // retained per native API + receipts path inside native-dialog-operations.
@@ -423,7 +460,9 @@ function createOperations(api, actions, selectors, options = {}) {
       let observed = false;
       // No timeout releases the mutation lock while a download is still in progress.
       while (true) {
-        check(args);
+        // The renderer remains responsive while waiting for a fresh process census.
+        // Native dispatch and receipt publication still use synchronous checks.
+        await checkWaitingDownload(args);
         const item = api.getState().persistent?.downloads?.files?.[id];
         if (!item) {
           insist(!observed && Date.now() < initializedBy, 'DOWNLOAD_RECORD_MISSING');
@@ -562,4 +601,4 @@ function createOperations(api, actions, selectors, options = {}) {
     },
   };
 }
-module.exports = { PROTOCOL, RECEIPTS, safe, processNames, stopped, context, assertContext, exclusive, createOperations, insist, normalized, identity, durable, commitCompletion, effectiveEnabled };
+module.exports = { PROTOCOL, RECEIPTS, safe, processNames, stopped, stoppedAsync, context, assertContext, exclusive, createOperations, insist, normalized, identity, durable, commitCompletion, effectiveEnabled };

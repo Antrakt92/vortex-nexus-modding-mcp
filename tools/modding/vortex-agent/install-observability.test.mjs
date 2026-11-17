@@ -76,10 +76,11 @@ function fixture(t, options = {}, implementation = guard) {
           queueMicrotask(() => callback(['imported']));
         } else if (event === 'start-install-download') {
           const [downloadId, , callback] = args; callbacks.install = callback;
+          const download = state.persistent.downloads.files[downloadId];
           if (options.suspendNative) return true;
           void (async () => {
             await options.beforeHook?.();
-            await hooks.get('will-install-mod')(G, downloadId, ID, {});
+            await hooks.get('will-install-mod')(G, downloadId, ID, { download });
             const target = path.join(dirs.stagingPath, ID, payloadPath);
             fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, payload); stagedWrites++;
             state.persistent.mods[G][ID] = { id: ID, state: 'installed', installationPath: ID, archiveId: downloadId };

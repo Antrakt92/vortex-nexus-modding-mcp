@@ -11,11 +11,12 @@ const nativeFetch = globalThis.fetch;
 const key = 'synthetic-fetch-key';
 const api = 'https://api.nexusmods.com/v3/uploads/multipart';
 const headers = { apikey: key };
+const archive = { archiveName: 'fixture.zip', archiveBytes: 4 };
 const s3 = 'https://fixture.s3.eu-west-1.amazonaws.com/object?partNumber=1&uploadId=fixture&X-Amz-Signature=synthetic';
 const complete = 'https://fixture.s3.eu-west-1.amazonaws.com/object?uploadId=fixture&X-Amz-Signature=synthetic';
 const plan = (part = s3, finish = complete) => ({ data: { id: '11111111-1111-1111-1111-111111111111',
   part_size_bytes: 4, part_presigned_urls: [part], complete_presigned_url: finish } });
-const creation = { method: 'POST', headers, body: JSON.stringify({ size_bytes: '4' }) };
+const creation = { method: 'POST', headers, body: JSON.stringify({ filename: archive.archiveName, size_bytes: '4' }) };
 const transfer = { method: 'PUT', headers: { 'content-length': '4' }, body: Buffer.alloc(4) };
 const completion = { method: 'POST', body: '<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>fixture-etag</ETag></Part></CompleteMultipartUpload>' };
 const successXML = '<CompleteMultipartUploadResult><Bucket>fixture</Bucket><Key>object</Key><ETag>fixture-etag</ETag></CompleteMultipartUploadResult>';
@@ -40,7 +41,7 @@ for (const status of [302, 307]) {
       // Baseline demonstrates the defect using actual Node native fetch, fully network-intercepted.
       await nativeFetch(api, { method: 'POST', headers, body: '{}' });
       assert.equal(forwarded, 1);
-      const guarded = installFetchGuard(nativeFetch, key, { archiveBytes: 4 });
+      const guarded = installFetchGuard(nativeFetch, key, archive);
       await assert.rejects(guarded(api, creation));
       assert.equal(forwarded, 1); // guard caused NO further attacker request.
     } finally {
@@ -76,7 +77,7 @@ test('only approved API-issued exact S3 URL/method pairs may reach storage', asy
     calls.push({ input, init });
     return input === api ? Response.json(plan()) : input === s3
       ? new Response('', { headers: { ETag: '"fixture-etag"' } }) : new Response(successXML);
-  }, key, { archiveBytes: 4 });
+  }, key, archive);
   await assert.rejects(guarded(s3, { method: 'PUT' })); // provider alone does not authorize destination
   await guarded(api, creation);
   for (const badHeaders of [{ apikey: key }, new Headers({ APIKEY: key }), [['Cookie', 'value']],
@@ -106,7 +107,7 @@ test('unsafe API-issued storage plans fail before transport, including complete 
   for (const url of unsafe) {
     for (const body of [plan(url), plan(s3, url)]) {
       let calls = 0;
-      const guarded = installFetchGuard(async () => { calls++; return Response.json(body); }, key, { archiveBytes: 4 });
+      const guarded = installFetchGuard(async () => { calls++; return Response.json(body); }, key, archive);
       await assert.rejects(guarded(api, creation));
       assert.equal(calls, 1);
     }
@@ -119,7 +120,7 @@ test('documented AWS regional/global/path/legacy endpoints work only when return
     const url = `https://${host}/object?partNumber=1&uploadId=fixture&X-Amz-Signature=synthetic`;
     const finish = `https://${host}/object?uploadId=fixture&X-Amz-Signature=synthetic`;
     const guarded = installFetchGuard(async input => input === api ? Response.json(plan(url, finish))
-      : new Response('', { headers: { ETag: '"fixture-etag"' } }), key, { archiveBytes: 4 });
+      : new Response('', { headers: { ETag: '"fixture-etag"' } }), key, archive);
     await guarded(api, creation);
     await guarded(url, transfer);
   }
@@ -131,7 +132,7 @@ test('storage redirects are refused even if transport returns a 302/307 response
     const guarded = installFetchGuard(async input => {
       calls++;
       return input === api ? Response.json(plan()) : new Response('', { status, headers: { location: 'https://localhost/receive' } });
-    }, key, { archiveBytes: 4 });
+    }, key, archive);
     await guarded(api, creation);
     await assert.rejects(guarded(s3, transfer));
     assert.equal(calls, 2);

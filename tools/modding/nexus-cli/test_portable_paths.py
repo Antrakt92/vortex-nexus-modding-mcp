@@ -244,6 +244,19 @@ print(json.dumps({'cli':str(cli.ROOT),'action':str(publisher.DEFAULT_ACTION),'st
                 self.assertEqual(receipt.read_text(encoding="utf-8"), '{"other":"installation"}')
 
     @unittest.skipUnless(sys.platform == "win32", "Windows PowerShell wrapper")
+    def test_powershell_wrapper_refuses_an_unpinned_executable(self):
+        with tempfile.TemporaryDirectory() as root:
+            exe = Path(root) / "local-state/nexus-cli/1.1.1/nexusmods.exe"
+            exe.parent.mkdir(parents=True)
+            exe.write_bytes(b"not the pinned executable")
+            executable = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+            result = subprocess.run([str(executable), "-NoProfile", "-NonInteractive", "-File",
+                str(HERE / "nexusmods.ps1"), "--version"], cwd=root,
+                env={**os.environ, "NEXUS_WORKSPACE": root}, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Nexus CLI runtime differs", result.stderr)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows PowerShell wrapper")
     def test_powershell_wrapper_resolves_workspace_with_spaces_from_any_cwd(self):
         script = """
 function Test-Path {

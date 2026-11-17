@@ -10,7 +10,11 @@ const {createNativeDialogHostAdmission} = require('./native-dialog-host-admissio
 const OP = 'respond_native_dialog', PROTOCOL = 'vortex-agent/1', SCHEMA = 'native-dialog-control-ledger/1';
 const need = (v,c) => { if (!v) throw Error('NATIVE_DIALOG_' + c); };
 const requestId = v => typeof v === 'string' && /^[A-Za-z0-9_-]{8,80}$/.test(v);
+const identity = v => typeof v === 'string' && v.length>0 && v.length<=512 && !/[\x00-\x1f\x7f]/.test(v);
+const sha256 = v => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v);
+const actions = ['cancel','ignore_dependencies','update_current_profile'];
 const digest = v => crypto.createHash('sha256').update(JSON.stringify(v)).digest('hex');
+const dialogKeyFor = a => digest([a.gameId,a.profileId,a.dialogId,a.fingerprint]);
 function object(value, keys) {
   need(value && typeof value === 'object' && !Array.isArray(value) && !isProxy(value), 'ARGUMENT_INVALID');
   need([Object.prototype,null].includes(Object.getPrototypeOf(value)), 'ARGUMENT_INVALID');
@@ -21,9 +25,9 @@ function parameters(value) {
   const a=object(value,['gameId','profileId','gamePath','stagingPath','downloadPath','filesystemIds','requestId','dialogId','fingerprint','action']);
   a.filesystemIds=object(a.filesystemIds,['gamePath','stagingPath','downloadPath']);
   need(requestId(a.requestId), 'REQUEST_ID_INVALID');
-  for (const k of ['gameId','profileId','dialogId']) need(typeof a[k]==='string' && a[k].length>0 && a[k].length<=512 && !/[\x00-\x1f\x7f]/.test(a[k]), 'IDENTITY_INVALID');
-  need(typeof a.fingerprint==='string' && /^[a-f0-9]{64}$/.test(a.fingerprint), 'FINGERPRINT_INVALID');
-  need(['cancel','ignore_dependencies','update_current_profile'].includes(a.action), 'ACTION_INVALID');
+  for (const k of ['gameId','profileId','dialogId']) need(identity(a[k]), 'IDENTITY_INVALID');
+  need(sha256(a.fingerprint), 'FINGERPRINT_INVALID');
+  need(actions.includes(a.action), 'ACTION_INVALID');
   for (const k of ['gamePath','stagingPath','downloadPath']) need(typeof a[k]==='string' && path.isAbsolute(a[k]) && typeof a.filesystemIds[k]==='string' && a.filesystemIds[k].length>0, 'PATH_CONTEXT_REQUIRED');
   return a;
 }
@@ -35,18 +39,29 @@ function plainParents(dir) {
   }
 }
 async function readRecord(file) {
-  let handle;
+  const generation = s => `${s.dev}:${s.ino}:${s.size}:${s.mtimeNs}:${s.ctimeNs}:${s.nlink}`;
+  let before, handle;
   try {
-    const before=await fs.lstat(file,{bigint:true});
+    before=await fs.lstat(file,{bigint:true});
     need(before.isFile()&&!before.isSymbolicLink()&&before.size<=65536n, 'LEDGER_INVALID');
-    handle=await fs.open(file,'r'); const actual=await handle.stat({bigint:true});
-    need(actual.dev===before.dev&&actual.ino===before.ino&&actual.size===before.size,'LEDGER_CHANGED');
-    const bytes=Buffer.alloc(65537),{bytesRead}=await handle.read(bytes,0,bytes.length,0);
-    need(bytesRead<=65536,'LEDGER_INVALID');
-    const result=JSON.parse(bytes.subarray(0,bytesRead).toString('utf8'));
-    need(result?.schema===SCHEMA&&result.operation===OP&&requestId(result.requestId)&&/^[a-f0-9]{64}$/.test(result.parametersDigest)&&/^[a-f0-9]{64}$/.test(result.dialogKey), 'LEDGER_INVALID');
+    const pin=generation(before);
+    handle=await fs.open(file,'r');
+    need(generation(await handle.stat({bigint:true}))===pin,'LEDGER_CHANGED');
+    const bytes=Buffer.alloc(Number(before.size));
+    for(let offset=0;offset<bytes.length;){
+      const {bytesRead}=await handle.read(bytes,offset,bytes.length-offset,offset);
+      need(bytesRead>0,'LEDGER_CHANGED');offset+=bytesRead;
+    }
+    need(generation(await handle.stat({bigint:true}))===pin
+      &&generation(await fs.lstat(file,{bigint:true}))===pin,'LEDGER_CHANGED');
+    let result;
+    try { result=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes)); }
+    catch { throw Error('NATIVE_DIALOG_LEDGER_INVALID'); }
+    need(result?.schema===SCHEMA&&result.operation===OP&&requestId(result.requestId)&&sha256(result.parametersDigest)
+      &&identity(result.gameId)&&identity(result.profileId)&&identity(result.dialogId)&&sha256(result.fingerprint)
+      &&actions.includes(result.action)&&result.dialogKey===dialogKeyFor(result),'LEDGER_INVALID');
     return result;
-  } catch(e) { if(e.code==='ENOENT') return null; throw e; }
+  } catch(e) { if(e.code==='ENOENT'){need(!before,'LEDGER_CHANGED');return null;} throw e; }
   finally { if(handle) await handle.close(); }
 }
 function createNativeDialogSession(api, selectors, {receipts,controllerOptions={}}) {
@@ -84,9 +99,17 @@ function createNativeDialogSession(api, selectors, {receipts,controllerOptions={
     const attempt=await readRecord(file(id,'attempt')), completion=await readRecord(file(id,'completion')), held=await readRecord(file(id,'held'));
     need(!completion&&!held||attempt,'LEDGER_ATTEMPT_MISSING');
     for(const record of [attempt,completion,held].filter(Boolean)) need(record.requestId===id
-      &&record.parametersDigest===attempt.parametersDigest&&record.dialogKey===attempt.dialogKey,'LEDGER_JOIN_INVALID');
-    need(!completion||completion.response?.requestId===id&&completion.response.operation===OP
-      &&completion.response.operationCompleted===true&&completion.response.nativeDialogDismissalVerified===true,'LEDGER_COMPLETION_INVALID');
+      &&record.parametersDigest===attempt.parametersDigest&&record.dialogKey===attempt.dialogKey
+      &&record.action===attempt.action,'LEDGER_JOIN_INVALID');
+    need(!attempt||attempt.noReplay===true,'LEDGER_INVALID');
+    const response=completion?.response;
+    need(!completion||response?.requestId===id&&response.operation===OP&&response.protocol===PROTOCOL
+      &&response.status==='complete'&&response.schema==='native-dialog-response/1'
+      &&['dialogId','action','gameId','profileId'].every(k=>response[k]===attempt[k])
+      &&response.operationCompleted===true&&response.nativeDialogDismissalVerified===true
+      &&response.verificationRequired===VERIFICATION&&response.dialogDismissalOnly===true
+      &&['remember','installationCompleted','diskDeploymentVerified','callbackOriginVerified','targetArchiveIdentityVerified'].every(k=>response[k]===false)
+      &&response.abortOnly===(attempt.action==='cancel'),'LEDGER_COMPLETION_INVALID');
     need(!held||held.operationCompleted===false&&typeof held.effectsMayHaveOccurred==='boolean'&&held.inspectBeforeRetry===true,'LEDGER_HELD_INVALID');
     need(!(held&&completion),'LEDGER_CONFLICTING_TERMINALS');
     return {status:completion?'complete':held?'held':attempt?'pending':'absent',attempt,completion,held};
@@ -95,6 +118,7 @@ function createNativeDialogSession(api, selectors, {receipts,controllerOptions={
     const entries=await fs.readdir(control); need(entries.length<=4096,'LEDGER_LIMIT');
     for(const name of entries) if(name.endsWith('.attempt.json')) {
       const prior=await readRecord(path.join(control,name)); need(prior,'LEDGER_CHANGED');
+      need(name===path.basename(file(prior.requestId,'attempt')),'LEDGER_JOIN_INVALID');
       if(prior.dialogKey===key) { const result=await inspect(prior.requestId); need(result.held?.effectsMayHaveOccurred===false,'DIALOG_ALREADY_ATTEMPTED'); }
     }
   }
@@ -122,7 +146,7 @@ function createNativeDialogSession(api, selectors, {receipts,controllerOptions={
         try {
         need((await inspect(a.requestId)).status==='absent','REQUEST_REPLAY_REFUSED');
         hooks.checkContext(a); readContext(a,hooks);
-        const dialogKey=digest([a.gameId,a.profileId,a.dialogId,a.fingerprint]); await noPriorDialog(dialogKey);
+        const dialogKey=dialogKeyFor(a); await noPriorDialog(dialogKey);
         async function invoke(ordinary) {
           if(ordinary) await noUnresolved();
           const base={schema:SCHEMA,operation:OP,requestId:a.requestId,parametersDigest:digest(a),dialogKey,

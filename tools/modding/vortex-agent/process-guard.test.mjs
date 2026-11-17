@@ -8,14 +8,55 @@ import { spawnSync } from 'node:child_process';
 const require = createRequire(import.meta.url);
 const source = await fs.readFile(new URL('./guard.cjs', import.meta.url), 'utf8');
 const good = names => ({status: 0, signal: null, stderr: '', stdout: JSON.stringify({schema: 1, complete: true, count: names.length, names})});
-function fixture(run, env = {SystemRoot: 'C:\\Windows'}) {
+function fixture(run, env = {SystemRoot: 'C:\\Windows'}, runAsync) {
   const module = {exports: {}};
   const calls = [];
   const invoke = (exe, args, options) => { calls.push({exe, args, options}); return run(exe, args, options); };
   vm.runInNewContext('(function(require,module,exports){' + source + '\n})', {process: {platform: 'win32', env}, Buffer})(
-    id => id === 'node:child_process' ? {spawnSync: invoke} : require(id), module, module.exports);
-  return {stopped: module.exports.stopped, calls};
+    id => id === 'node:child_process' ? {spawnSync: invoke, execFile: runAsync} : require(id), module, module.exports);
+  return {stopped: module.exports.stopped, stoppedAsync: module.exports.stoppedAsync, calls};
 }
+
+test('waiting probe yields to the renderer and still rejects running games or untrusted results', async () => {
+  let respond;
+  const f = fixture(() => { assert.fail('unexpected synchronous probe'); }, undefined, (exe, args, options, callback) => {
+    assert.equal(exe, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+    assert.ok(args.includes('-NonInteractive'));
+    assert.equal(options.timeout, 10000);
+    assert.equal(options.windowsHide, true);
+    respond = callback;
+  });
+  const pending = f.stoppedAsync({}, 'cyberpunk2077');
+  await new Promise(setImmediate);
+  respond(null, good(['Vortex.exe', 'Cyberpunk2077.exe']).stdout, '');
+  await assert.rejects(pending, /GAME_RUNNING/);
+  const invalid = f.stoppedAsync({}, 'cyberpunk2077');
+  respond(null, good(['Vortex.exe']).stdout, 'partial process snapshot');
+  await assert.rejects(invalid, /PROCESS_LIST_UNVERIFIABLE/);
+  const valid = f.stoppedAsync({}, 'cyberpunk2077');
+  respond(null, good(['Vortex.exe']).stdout, '');
+  await valid;
+  assert.equal(f.calls.length, 0);
+});
+
+test('shared mutation guard rejects a queued profile switch or deactivation', () => {
+  const {context, assertContext} = require('./guard.cjs');
+  const root = process.cwd(), settings = {activeProfileId: 'p', nextProfileId: 'p'};
+  const state = {settings: {profiles: settings, gameMode: {discovered: {g: {path: root}}}},
+    persistent: {profiles: {p: {gameId: 'g'}}}};
+  const api = {getState: () => state};
+  const selectors = {activeGameId: () => 'g', activeProfileId: s => s.settings.profiles.activeProfileId,
+    installPathForGame: () => root, downloadPathForGame: () => root};
+  const pins = context(api, selectors);
+  let probes = 0;
+  const stopped = () => { probes++; };
+  assert.doesNotThrow(() => assertContext(api, selectors, pins, stopped));
+  for (const next of ['other', undefined]) {
+    settings.nextProfileId = next;
+    assert.throws(() => assertContext(api, selectors, pins, stopped), /PROFILE_TRANSITION_PENDING/);
+  }
+  assert.equal(probes, 1);
+});
 
 test('process snapshot rejects every protected executable case-insensitively', () => {
   for (const [game, names] of Object.entries({cyberpunk2077: ['Cyberpunk2077.exe', 'REDprelauncher.exe'], assassinscreedunity: ['ACU.exe'],

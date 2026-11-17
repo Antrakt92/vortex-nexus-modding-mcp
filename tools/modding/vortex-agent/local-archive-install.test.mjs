@@ -83,7 +83,8 @@ function fixture(t, options = {}) {
             fs.copyFileSync(archivePath, imported);
           }
           if (options.contextDrift) state.session.activeProfileId = 'other';
-          const info = {};
+          const download = state.persistent.downloads.files[downloadId];
+          const info = { download: options.alternateHookPath ? { ...download, localPath: 'alternate/' + download.localPath } : download };
           await hooks.get('will-install-mod')(G, downloadId, ID, info);
           if (options.lateMetadata) info.meta = { fileId: 123 };
           if (info.meta) {
@@ -110,7 +111,7 @@ function fixture(t, options = {}) {
       if (state.session.activeProfileId !== P) throw Error('ACTIVE_PROFILE_CHANGED');
     },
     async effect(operation, verify) { verify(); effectCount++; return operation(); },
-    async admitHost() { hostChecks++; },
+    async admitHost() { hostChecks++; options.onHostAdmission?.(hostChecks, state); },
     timeoutMs: options.timeout ? 30 : 1000,
   };
   return { api, args, services, state, baseline, hooks, calls, guards, root, oldPath, gameFile,
@@ -275,6 +276,15 @@ test('rejects native metadata matches before import or installation', async t =>
   assert.equal(f.counts().effectCount, 0); assert.deepEqual(f.calls, []);
 });
 
+test('an untracked file at the import destination is never offered for replacement', async t => {
+  const f = fixture(t), existing = path.join(f.args.downloadPath, ID + '.zip');
+  fs.writeFileSync(existing, 'untracked original');
+  await assert.rejects(installLocalArchive(f.api, f.args, f.services), /LOCAL_ARCHIVE_DOWNLOAD_PATH_COLLISION/);
+  assert.equal(f.counts().effectCount, 0);
+  assert.deepEqual(f.calls, []);
+  assert.equal(fs.readFileSync(existing, 'utf8'), 'untracked original');
+});
+
 test('rejects native wrong returned ID and keeps operation held against replay', async t => {
   const f = fixture(t, { wrongId: true });
   await assert.rejects(installLocalArchive(f.api, f.args, f.services), /LOCAL_ARCHIVE_INSTALLED_IDENTITY_MISMATCH/);
@@ -335,6 +345,24 @@ test('rejects imported archive mutation or identical-byte replacement before wil
     assert.equal(fs.existsSync(path.join(f.args.stagingPath, ID)), false);
     await assert.rejects(installLocalArchive(f.api, f.args, f.services), /LOCAL_ARCHIVE_NATIVE_OPERATION_HELD/);
   }
+});
+
+test('a different imported record path cannot dispatch a native install after metadata admission', async t => {
+  const f = fixture(t, { onHostAdmission(count, state) {
+    if (count === 2) state.persistent.downloads.files.newdownload.localPath = 'alternate/' + ID + '.zip';
+  } });
+  await assert.rejects(installLocalArchive(f.api, f.args, f.services), /LOCAL_ARCHIVE_IMPORTED_IDENTITY_MISMATCH/);
+  assert.deepEqual(f.calls.map(call => call.name), ['import-downloads']);
+  assert.equal(f.state.persistent.mods[G][ID], undefined);
+});
+
+test('a native capture of a different same-basename download path refuses even when Redux is restored', async t => {
+  const f = fixture(t, { alternateHookPath: true });
+  await assert.rejects(installLocalArchive(f.api, f.args, f.services), /LOCAL_ARCHIVE_NATIVE_FAILED_RECONCILE/);
+  assert.match(f.nativeFailure().message, /LOCAL_ARCHIVE_IMPORTED_IDENTITY_MISMATCH/);
+  assert.equal(f.state.persistent.downloads.files.newdownload.localPath, ID + '.zip');
+  assert.equal(f.state.persistent.mods[G][ID], undefined);
+  assert.equal(fs.existsSync(path.join(f.args.stagingPath, ID)), false);
 });
 
 test('active profile drift before will-install aborts before staging files', async t => {

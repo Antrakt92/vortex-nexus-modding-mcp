@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {PassThrough} from 'node:stream';
+import {PassThrough, Readable, Writable} from 'node:stream';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,6 +14,18 @@ const context = {gameId: 'cyberpunk2077', profileId: 'test-profile', gamePath: '
   filesystemIds: {gamePath: '1:2', stagingPath: '1:3', downloadPath: '2:4'}};
 const unused = () => ({protocol: 'vortex-agent/1', attempt: null, completion: null, failure: null, interlock: null,
   receiptIssues: [], incompleteCompletionObserved: false, adapterTerminalReceiptObserved: false, terminalOperationVerified: false});
+
+test('stdio refuses duplicate decoded apply keys before dispatch and accepts the next frame', async () => {
+  const requests = [], responses = [];
+  const ambiguous = '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":'
+    + '{"name":"run_mod_plan","arguments":{"apply":false,"\\u0061pply":true,"plan":{}}}}\n';
+  const valid = '{"jsonrpc":"2.0","id":2,"method":"ping"}\n';
+  await runStdio(Readable.from([ambiguous, valid]), new Writable({write(bytes, _, callback) {
+    responses.push(JSON.parse(bytes)); callback();
+  }}), async request => {requests.push(request); return {jsonrpc: '2.0', id: request.id, result: {}};});
+  assert.deepEqual(requests, [{jsonrpc: '2.0', id: 2, method: 'ping'}]);
+  assert.deepEqual(responses.map(r => [r.id, r.error?.code]), [[null, -32700], [2, undefined]]);
+});
 
 test('invalid RPC IDs cannot dispatch direct mutations, reads or initialization', async () => {
   let calls = 0;

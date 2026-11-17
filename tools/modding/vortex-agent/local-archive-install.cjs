@@ -97,6 +97,10 @@ function boundaryHooks(api) {
     try {
     active.hookSeen = true;
     noNexus(info);
+    // Native captures the download when it accepts start-install-download.
+    // Rechecking Redux alone would miss an alternate path that was restored
+    // before this hook ran.
+    active.verifyDownload(info?.download);
     await active.check();
     active.permit();
     active.diagnostics.assertWork();
@@ -150,7 +154,26 @@ async function installLocalArchive(api, args, { check, checkContext = check, eff
   const active = { gameId: args.gameId, modId, downloadId: null, hookSeen: false, uncertain: false, diagnostics };
   diagnostics.onTrip(() => { active.uncertain = true; });
   let completed = false, nativeStarted = false, importedProof;
+  const currentDownload = () => api.getState().persistent.downloads?.files?.[active.downloadId];
+  active.verifyDownload = record => {
+    need(!baselineDownloadIds.has(active.downloadId) && record?.state === 'finished'
+      && Array.isArray(record.game) && record.game.length === 1 && record.game[0] === args.gameId
+      && record.localPath === name, 'LOCAL_ARCHIVE_IMPORTED_IDENTITY_MISMATCH');
+  };
+  const verifyImportedDownload = () => {
+    const record = currentDownload();
+    active.verifyDownload(record);
+    noNexus(record);
+  };
   const verifyArchives = () => { pkg.verify(); importedProof?.verify(); };
+  const importDestination = path.join(args.downloadPath, name);
+  const verifyImportDestination = () => {
+    need(!Object.values(api.getState().persistent.downloads?.files || {}).some(d =>
+      typeof d.localPath === 'string' && path.basename(d.localPath).toLowerCase() === name.toLowerCase()), 'LOCAL_ARCHIVE_ALREADY_TRACKED');
+    // Vortex prompts to replace an existing destination even when no Redux
+    // download record owns it. Refuse that path before starting native import.
+    need(!fs.lstatSync(importDestination, {throwIfNoEntry: false}), 'LOCAL_ARCHIVE_DOWNLOAD_PATH_COLLISION');
+  };
   const listeners = [];
   function arm(event, fn) {
     need(typeof api.events.prependListener === 'function' && typeof api.events.removeListener === 'function', 'LOCAL_ARCHIVE_NATIVE_GUARD_UNAVAILABLE');
@@ -172,14 +195,12 @@ async function installLocalArchive(api, args, { check, checkContext = check, eff
   active.check = admission;
   // The awaited admission returns through another microtask. Rescan immediately
   // at the final synchronous hook permission rather than reusing earlier absence.
-  active.permit = () => { diagnostics.assertWork(); check(); verifyArchives(); };
+  active.permit = () => { diagnostics.assertWork(); check(); verifyArchives(); verifyImportedDownload(); };
   holder.active = active;
   try {
     diagnostics.assertWork(); diagnostics.phase('preflight');
     await admission();
-    // Do not import another copy of an archive Vortex already owns.
-    need(!Object.values(api.getState().persistent.downloads?.files || {}).some(d =>
-      typeof d.localPath === 'string' && path.basename(d.localPath).toLowerCase() === name.toLowerCase()), 'LOCAL_ARCHIVE_ALREADY_TRACKED');
+    verifyImportDestination();
     arm('start-install', () => { active.violation = true; throw Error('LOCAL_ARCHIVE_UNOWNED_INSTALL'); });
     arm('start-install-download', (id, options) => {
       if (!(active.dispatching && id === active.downloadId && options?.allowAutoEnable === false
@@ -191,31 +212,27 @@ async function installLocalArchive(api, args, { check, checkContext = check, eff
     const ids = await effect(() => {
       nativeStarted = true;
       return native(api, 'import-downloads', cb => [[args.archivePath], values => cb(null, values), true], timeoutMs, active);
-    }, verifyArchives);
+    }, () => { verifyArchives(); verifyImportDestination(); });
     need(Array.isArray(ids) && ids.length === 1 && typeof ids[0] === 'string' && ids[0], 'LOCAL_ARCHIVE_IMPORT_RESULT_INVALID');
     active.downloadId = ids[0];
     diagnostics.phase('import_settle');
     await diagnostics.wait('import_settle', async () => {
-      while (api.getState().persistent.downloads?.files?.[active.downloadId]?.state !== 'finished') {
+      while (currentDownload()?.state !== 'finished') {
         diagnostics.assertWork(); checkContext();
         await new Promise(resolve => setTimeout(resolve, 100));
         diagnostics.assertWork();
       }
     }, timeoutMs);
     diagnostics.assertWork();
-    const record = api.getState().persistent.downloads.files[active.downloadId];
-    noNexus(record);
-    need(!baselineDownloadIds.has(active.downloadId) && Array.isArray(record.game) && record.game.length === 1
-      && record.game[0] === args.gameId && record.localPath === name, 'LOCAL_ARCHIVE_IMPORTED_IDENTITY_MISMATCH');
-    const imported = path.join(args.downloadPath, record.localPath);
-    importedProof = diagnostics.measureSync('archive_proof', () => packageProof({ ...args, archivePath: imported }));
+    verifyImportedDownload();
+    importedProof = diagnostics.measureSync('archive_proof', () => packageProof({ ...args, archivePath: importDestination }));
     await admission();
     diagnostics.phase('install');
     const installed = await effect(() => {
       active.dispatching = true;
       return native(api, 'start-install-download', cb => [active.downloadId,
         { allowAutoEnable: false, profileId: args.profileId }, cb], timeoutMs, active);
-    }, verifyArchives);
+    }, () => { verifyArchives(); verifyImportedDownload(); });
     check(); verifyArchives(); need(!active.violation && !active.uncertain, 'LOCAL_ARCHIVE_NATIVE_OPERATION_HELD');
     diagnostics.assertWork(); diagnostics.phase('staged_proof');
     need(installed === modId && active.hookSeen, 'LOCAL_ARCHIVE_INSTALLED_IDENTITY_MISMATCH');
