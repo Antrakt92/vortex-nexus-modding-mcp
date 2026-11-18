@@ -13,6 +13,18 @@ spec.loader.exec_module(r)
 
 
 class RecoveryTests(unittest.TestCase):
+    def test_configuration_check_reads_at_most_the_expected_bytes_plus_one(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'template.json'
+            path.write_bytes(b'known' + b'extra' * 10000)
+            stream = mock.Mock(wraps=io.BytesIO(path.read_bytes()))
+            stream.__enter__ = mock.Mock(return_value=stream)
+            stream.__exit__ = mock.Mock(return_value=False)
+            with mock.patch.object(Path, 'open', return_value=stream):
+                with self.assertRaisesRegex(ValueError, 'Existing file differs'):
+                    r.write_matching(path, b'known', False)
+            stream.read.assert_called_once_with(6)
+
     def test_recovery_downloads_accept_renamed_and_previous_release_origins(self):
         for repository in ['vortex-nexus-modding-mcp', 'Nexus-Modding-Tools']:
             with self.subTest(repository=repository), tempfile.TemporaryDirectory() as tmp:

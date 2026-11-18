@@ -5,6 +5,7 @@ import argparse
 import getpass
 import hashlib
 import json
+import lzma
 import os
 from pathlib import Path
 import re
@@ -12,6 +13,8 @@ import shutil
 import subprocess
 import sys
 import uuid
+import zipfile
+import zlib
 from datetime import datetime, timezone
 from contextlib import contextmanager
 from urllib.request import Request, build_opener, HTTPRedirectHandler
@@ -80,17 +83,25 @@ def preflight(manifest):
     if not isinstance(manifest["archive"], str):
         raise Blocked("Archive must be an absolute ZIP path.")
     archive = Path(manifest["archive"])
-    if not archive.is_absolute() or archive.suffix.lower() != ".zip" or not archive.is_file() or archive.is_symlink():
-        raise Blocked("Archive must be an existing absolute regular ZIP file, not a symlink.")
-    if archive.stat().st_size == 0 or sha256(archive) != manifest["sha256"]:
-        raise Blocked("Archive is empty or does not match expected SHA256.")
+    try:
+        if not archive.is_absolute() or archive.suffix.lower() != ".zip" or not archive.is_file() or archive.is_symlink():
+            raise Blocked("Archive must be an existing absolute regular ZIP file, not a symlink.")
+        if archive.stat().st_size == 0 or sha256(archive) != manifest["sha256"]:
+            raise Blocked("Archive is empty or does not match expected SHA256.")
+    except OSError:
+        raise Blocked("Archive could not be read.") from None
     # Validate container integrity without extracting or inspecting payload source.
-    import zipfile
     try:
         with zipfile.ZipFile(archive) as z:
-            if not z.infolist() or z.testzip() is not None:
-                raise Blocked("ZIP is empty or fails CRC verification.")
-    except (zipfile.BadZipFile, RuntimeError, NotImplementedError):
+            entries = z.infolist()
+            if not any(not entry.is_dir() for entry in entries):
+                raise Blocked("ZIP contains no files.")
+            # Read each exact entry rather than looking it up again by name.
+            for entry in entries:
+                with z.open(entry) as stream:
+                    while stream.read(1024 * 1024):
+                        pass
+    except (zipfile.BadZipFile, EOFError, RuntimeError, OSError, UnicodeError, zlib.error, lzma.LZMAError):
         raise Blocked("ZIP integrity validation failed.") from None
     for key in BOOL_FIELDS & set(manifest):
         if type(manifest[key]) is not bool:
@@ -589,6 +600,8 @@ def main():
     parser.add_argument("--action-dir", type=Path, default=DEFAULT_ACTION)
     parser.add_argument("--state-dir", type=Path, default=STATE, help="Persistent ledger; do not change to bypass a receipt")
     args = parser.parse_args()
+    if args.version_id is not None and not args.reconcile:
+        parser.error("--version-id requires --reconcile")
     try:
         manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
         credential = {"prompt": hidden_prompt, "windows-cli": shared_windows_credential, "github-secret": workflow_secret}.get(args.credential)

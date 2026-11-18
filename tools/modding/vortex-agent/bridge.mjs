@@ -52,6 +52,19 @@ function isLocalArchiveInstall(method, params) {
   return method === 'tools/call' && params?.name === 'install_local_archive';
 }
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+const isToolResult = value => isObject(value) && Array.isArray(value.content)
+  && (!Object.hasOwn(value, 'isError') || typeof value.isError === 'boolean');
+function requireHealth(result) {
+  if (isToolResult(result) && !result.isError) {
+    const text = result.content.find(item => item?.type === 'text')?.text;
+    if (typeof text === 'string') {
+      let info;
+      try { info = parse(text); } catch { /* Report a stable handshake diagnostic below. */ }
+      if (isObject(info) && info.protocol === 'vortex-agent/1') return;
+    }
+  }
+  throw new Error('Wrong server on port 3701: vortex-agent/1 health required');
+}
 const INSTALL_ERROR_ACTION = 'Re-read health/context, inspect external receipts and Vortex UI/log privately. Never blindly retry a mutation.';
 const INSTALL_INPUT_REFUSAL = 'Input validation error: Invalid arguments for tool install_local_archive: ';
 function isInstallInputRefusal(result) {
@@ -122,7 +135,8 @@ async function remoteRequest(method, params, fetcher, tokenProvider, onDispatch)
   if (Number(response.headers.get('content-length')) > MAX_RESPONSE_BYTES) { cancelBody(response.body); throw new UnusableResponse('MCP response too large'); }
   if (!response.body) throw new UnusableResponse();
   let message;
-  if ((response.headers.get('content-type') || '').includes('text/event-stream')) {
+  const mediaType = response.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase();
+  if (mediaType === 'text/event-stream') {
     const reader = response.body.getReader();
     const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
     let pieces = [], lineBytes = 0, dataLines = [], skipLF = false, firstLine = true, bytes = 0;
@@ -298,8 +312,7 @@ export function handler(call = remote, {journal} = {}) {
         // SDK2 stateless upstream has no initialize; terminate the legacy handshake
         // here and speak only tools/list and tools/call to HTTP.
         const health = await call('tools/call', { name: 'health', arguments: {} });
-        const info = parse(health.content?.find(c => c.type === 'text')?.text || '{}');
-        if (health.isError || info.protocol !== 'vortex-agent/1') throw new Error('Wrong server on port 3701: vortex-agent/1 health required');
+        requireHealth(health);
         initialized = true;
         result = { protocolVersion: versions.includes(request.params?.protocolVersion) ? request.params.protocolVersion : '2025-11-25', capabilities: { tools: {} }, serverInfo: { name: 'vortex-agent-bridge', version: '1.1.0' } };
       } else if (request.method === 'ping') result = {};
@@ -320,12 +333,17 @@ export function handler(call = remote, {journal} = {}) {
 }
 export async function main(argv = process.argv.slice(2)) {
   if (argv.length) {
-    if (argv[0] !== '--health' && argv[0] !== '--call') throw new Error('Usage: bridge.mjs [--health | --call TOOL JSON_ARGUMENTS]');
-    if (argv[0] === '--call' && !argv[1]) throw new Error('--call requires a tool name and optional JSON arguments');
+    const [mode, name, rawArgs] = argv;
+    if (!(mode === '--health' && argv.length === 1 || mode === '--call' && argv.length <= 3))
+      throw new Error('Usage: bridge.mjs [--health | --call TOOL [JSON_ARGUMENTS]]');
+    if (mode === '--call' && !name) throw new Error('--call requires a tool name and optional JSON arguments');
+    const args = rawArgs === undefined ? {} : parse(rawArgs, MAX_REQUEST_BYTES);
+    if (args === null || typeof args !== 'object' || Array.isArray(args))
+      throw new Error('--call arguments must be a JSON object');
     const health = await remote('tools/call', { name: 'health', arguments: {} });
-    const info = parse(health.content?.[0]?.text || '{}');
-    if (health.isError || info.protocol !== 'vortex-agent/1') throw new Error('Wrong server on port 3701');
-    const result = argv[0] === '--health' ? health : await clientRemote('tools/call', { name: argv[1], arguments: parse(argv[2] || '{}', MAX_REQUEST_BYTES) });
+    requireHealth(health);
+    const result = mode === '--health' ? health : await clientRemote('tools/call', { name, arguments: args });
+    if (!isToolResult(result)) throw new Error('Invalid Vortex tool result');
     process.stdout.write(JSON.stringify(result) + '\n');
     if (result.isError) process.exitCode = 1;
     return;

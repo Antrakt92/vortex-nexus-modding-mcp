@@ -4,7 +4,8 @@ import {PassThrough, Readable, Writable} from 'node:stream';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {handler, runStdio} from './bridge.mjs';
+import credential from './credential.cjs';
+import {handler, main, runStdio} from './bridge.mjs';
 import {createPlanJournal} from './plan-journal.mjs';
 
 const deferred = () => {let resolve; const promise = new Promise(r => {resolve = r;}); return {promise, resolve};};
@@ -14,6 +15,50 @@ const context = {gameId: 'cyberpunk2077', profileId: 'test-profile', gamePath: '
   filesystemIds: {gamePath: '1:2', stagingPath: '1:3', downloadPath: '2:4'}};
 const unused = () => ({protocol: 'vortex-agent/1', attempt: null, completion: null, failure: null, interlock: null,
   receiptIssues: [], incompleteCompletionObserved: false, adapterTerminalReceiptObserved: false, terminalOperationVerified: false});
+
+test('bridge CLI rejects invalid arguments before reading the Vortex credential', async t => {
+  const tokenReads = t.mock.method(credential, 'readToken', async () => {throw Error('unexpected credential read');});
+  for (const argv of [['--health', 'extra'], ['--call', 'health', '{}', 'extra']]) {
+    await assert.rejects(main(argv), /Usage: bridge/);
+  }
+  for (const args of ['', '{', 'null', '[]']) {
+    await assert.rejects(main(['--call', 'health', args]), /Invalid MCP JSON payload|JSON object/);
+  }
+  assert.equal(tokenReads.mock.callCount(), 0);
+});
+
+test('initialization refuses malformed health results with a stable diagnostic', async () => {
+  for (const health of [null, 'upstream', {content: {}}, reply(null), {isError: 'false', ...reply({protocol: 'vortex-agent/1'})}]) {
+    const handle = handler(async () => health);
+    const init = await handle({jsonrpc: '2.0', id: 1, method: 'initialize'});
+    assert.match(init.error.message, /Wrong server on port 3701/);
+    const next = await handle({jsonrpc: '2.0', id: 2, method: 'tools/list'});
+    assert.match(next.error.message, /Initialize the bridge first/);
+  }
+});
+
+test('bridge CLI refuses malformed tool results before stdout and preserves legitimate error status', async t => {
+  let health = reply(null), response;
+  const cliOutput = t.mock.method(process.stdout, 'write', () => true);
+  t.mock.method(credential, 'readToken', async () => 'synthetic-token');
+  t.mock.method(globalThis, 'fetch', async (_url, request) => {
+    const value = JSON.parse(request.body).params.name === 'health' ? health : response;
+    return new Response(JSON.stringify({jsonrpc: '2.0', id: 1, result: value}));
+  });
+  const exit = process.exitCode;
+  try {
+    await assert.rejects(main(['--health']), /Wrong server on port 3701/);
+    health = reply({protocol: 'vortex-agent/1'});
+    for (response of [null, 1, [], {content: null}]) {
+      await assert.rejects(main(['--call', 'list_dialogs']), /Invalid Vortex tool result/);
+    }
+    assert.equal(cliOutput.mock.callCount(), 0);
+    response = {isError: true, ...reply({error: 'TOOL_CONCURRENCY_LIMIT'})};
+    await main(['--call', 'list_dialogs']);
+    assert.equal(cliOutput.mock.callCount(), 1);
+    assert.equal(process.exitCode, 1);
+  } finally { process.exitCode = exit; }
+});
 
 test('stdio refuses duplicate decoded apply keys before dispatch and accepts the next frame', async () => {
   const requests = [], responses = [];

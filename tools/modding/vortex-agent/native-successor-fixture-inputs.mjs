@@ -60,16 +60,6 @@ export function conflictRows(data, params) {
   }
   return [];
 }
-/** Callback-free fixture physical facts are PER SDK owner, never per lifetime.
- * This does not reset any production admission, attempt or consumed-ID field. */
-export function perOwnerTerminalFacts(terminal) {
-  const states=new WeakMap();
-  const state=raw=>{let value=states.get(raw.sdk);if(!value){value={closed:false,releaseStarted:false,
-    nodeTerminal:terminal(raw.binding),workerTerminal:raw.sdk.workerTerminal};
-    Object.assign(value.workerTerminal,terminal(raw.binding));states.set(raw.sdk,value);}return value;};
-  return {state,states};
-}
-
 export function once(text,before,after) {
   assert.equal(text.split(before).length,2,'exact source fixture seam: '+before);
   return text.replace(before,after);

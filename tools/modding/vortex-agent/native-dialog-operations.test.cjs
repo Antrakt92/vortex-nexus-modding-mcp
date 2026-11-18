@@ -94,6 +94,20 @@ test('completion write failure after dismissal never claims a no-effect retry',a
   // Same request is never accepted even though the original dialog has gone.
   await assert.rejects(f.ops.respond_native_dialog(f.args(r)),/REQUEST_REPLAY/);
 });
+test('a non-Error rejection before dismissal leaves a no-effect receipt',async t=>{
+  let rejectHost=false;
+  const f=await fixture(t,{commit:async(file,...args)=>{
+    await commitCompletion(file,...args);
+    if(file.endsWith('.attempt.json')) rejectHost=true;
+  }});
+  const ops=f.fresh({nativeDialogOptions:{assertHost(){if(rejectHost)throw null;}}}), r=await f.read();
+  await assert.rejects(ops.respond_native_dialog(f.args(r)),error=>error===null);
+  assert.equal(f.calls.length,0);
+  const ledger=await ops.read_native_dialog_operation({requestId:'request_0001'});
+  assert.equal(ledger.status,'held');
+  assert.equal(ledger.held.effectsMayHaveOccurred,false);
+  assert.equal(ledger.held.errorCode,'UPSTREAM_FAILURE');
+});
 test('published completion survives cleanup errors without conflicting failure record',async t=>{
   const f=await fixture(t,{commit:async(file,value,verify,published)=>{await commitCompletion(file,value,verify,published);if(file.endsWith('.completion.json'))throw Error('CLEANUP_ERROR');}}),r=await f.read();
   await assert.rejects(f.ops.respond_native_dialog(f.args(r)),/COMPLETION_PUBLISHED_CLEANUP_PENDING/);
@@ -132,6 +146,26 @@ test('restarted control refuses a completed attempt whose file aliases an earlie
 test('own control mutex excludes concurrent clients without modifying foreign locks',async t=>{
   const f=await fixture(t),r=await f.read(),dir=path.join(f.receipts,'native-dialog-control');await fs.mkdir(dir);await fs.writeFile(path.join(dir,'mutation.lock'),'another control');
   await assert.rejects(f.ops.respond_native_dialog(f.args(r)),/CONTROL_BUSY/);assert.equal(f.calls.length,0);assert.equal(await fs.readFile(path.join(dir,'mutation.lock'),'utf8'),'another control');
+});
+test('control lock closes its descriptor when identity cannot be read',async t=>{
+  const f=await fixture(t),r=await f.read(),lock=path.join(f.receipts,'native-dialog-control','mutation.lock');
+  const open=fs.open;let lockHandle;
+  t.mock.method(fs,'open',async (file,...options)=>{
+    const handle=await open(file,...options);
+    if(file===lock){
+      lockHandle=handle;
+      handle.stat=async()=>{throw Error('LOCK_IDENTITY_UNAVAILABLE');};
+    }
+    return handle;
+  });
+  try {
+    await assert.rejects(f.ops.respond_native_dialog(f.args(r)),/LOCK_IDENTITY_UNAVAILABLE/);
+    assert.equal(lockHandle.fd,-1);
+    assert.equal(f.calls.length,0);
+    await fs.access(lock);
+  } finally {
+    if(lockHandle && lockHandle.fd !== -1) await lockHandle.close();
+  }
 });
 test('input accessors, extra action keys, traversal and corrupt ledger are refused',async t=>{
   const f=await fixture(t),r=await f.read();let accessed=0;const a=f.args(r);Object.defineProperty(a,'action',{enumerable:true,get(){accessed++;return 'cancel';}});

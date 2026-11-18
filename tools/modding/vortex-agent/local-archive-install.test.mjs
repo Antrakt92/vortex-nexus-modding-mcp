@@ -69,7 +69,7 @@ function fixture(t, options = {}) {
       if (name === 'import-downloads') {
         const [[archive], callback] = args;
         fs.copyFileSync(archive, path.join(downloadPath, path.basename(archive)));
-        state.persistent.downloads.files.newdownload = { state: 'finished', game: [G], localPath: path.basename(archive) };
+        state.persistent.downloads.files.newdownload = { state: options.importState ?? 'finished', game: [G], localPath: path.basename(archive) };
         queueMicrotask(() => callback(['newdownload']));
       } else if (name === 'start-install-download') {
         const [downloadId, installOptions, callback] = args;
@@ -285,6 +285,15 @@ test('an untracked file at the import destination is never offered for replaceme
   assert.equal(fs.readFileSync(existing, 'utf8'), 'untracked original');
 });
 
+test('reports a terminal import state without dispatching installation', async t => {
+  for (const importState of ['failed', 'paused', 'cancelled']) {
+    const f = fixture(t, { importState });
+    await assert.rejects(installLocalArchive(f.api, f.args, f.services), /LOCAL_ARCHIVE_IMPORT_REQUIRES_USER_ATTENTION/);
+    assert.deepEqual(f.calls.map(call => call.name), ['import-downloads']);
+    await assert.rejects(installLocalArchive(f.api, f.args, f.services), /LOCAL_ARCHIVE_NATIVE_OPERATION_HELD/);
+  }
+});
+
 test('rejects native wrong returned ID and keeps operation held against replay', async t => {
   const f = fixture(t, { wrongId: true });
   await assert.rejects(installLocalArchive(f.api, f.args, f.services), /LOCAL_ARCHIVE_INSTALLED_IDENTITY_MISMATCH/);
@@ -374,7 +383,7 @@ test('active profile drift before will-install aborts before staging files', asy
   assert.equal(fs.existsSync(path.join(f.args.stagingPath, ID)), false);
 });
 
-test('real operation guard retains one durable intent across import and install, then refuses replay', async t => {
+function guardedFixture(t) {
   const f = fixture(t), dir = path.join(f.root, 'receipts');
   for (const key of ['gamePath', 'stagingPath', 'downloadPath']) f.args[key] = fs.realpathSync(f.args[key]);
   f.state.settings = { gameMode: { discovered: { [G]: { path: f.args.gamePath } } } };
@@ -387,6 +396,40 @@ test('real operation guard retains one durable intent across import and install,
   f.args.filesystemIds = Object.fromEntries(['gamePath', 'stagingPath', 'downloadPath']
     .map(key => [key, guard.identity(f.args[key])]));
   f.args.requestId = 'local_archive_multistage_001';
+  const operations = guard.createOperations(f.api, {}, selectors, {
+    receipts: dir, stopped: () => {}, admitLocalInstallHost: async () => {},
+  });
+  return { ...f, dir, operations };
+}
+
+for (const [label, change, error] of [
+  ['installed flags', state => { state.persistent.profiles[P].modState[ID] = { enabled: true }; },
+    /LOCAL_ARCHIVE_INSTALLED_RECORD_UNVERIFIED/],
+  ['imported record', state => { state.persistent.downloads.files.newdownload.state = 'removed'; },
+    /LOCAL_ARCHIVE_IMPORTED_IDENTITY_MISMATCH/],
+  ['unrelated records', state => { state.persistent.mods[G].previous.state = 'removed'; },
+    /LOCAL_ARCHIVE_EXISTING_STATE_CHANGED/],
+]) {
+  test(`completion receipt rejects changed ${label} after syncing its pending record`, async t => {
+    const f = guardedFixture(t);
+    const open = fsPromises.open;
+    t.mock.method(fsPromises, 'open', async (file, ...args) => {
+      const handle = await open(file, ...args);
+      if (String(file).includes('.completion.json.pending-')) {
+        const sync = handle.sync.bind(handle);
+        handle.sync = async () => { await sync(); change(f.state); };
+      }
+      return handle;
+    });
+    await assert.rejects(f.operations.install_local_archive(f.args), error);
+    assert.deepEqual(f.calls.map(call => call.name), ['import-downloads', 'start-install-download']);
+    assert.equal(fs.existsSync(path.join(f.dir, 'unresolved.json')), true);
+    assert.equal(fs.existsSync(path.join(f.dir, f.args.requestId + '.completion.json')), false);
+  });
+}
+
+test('real operation guard retains one durable intent across import and install, then refuses replay', async t => {
+  const f = guardedFixture(t), {dir, operations} = f;
   const snapshots = [], unresolved = path.join(dir, 'unresolved.json');
   const emit = f.api.events.emit.bind(f.api.events);
   f.api.events.emit = (name, ...args) => {
@@ -397,9 +440,6 @@ test('real operation guard retains one durable intent across import and install,
     }
     return emit(name, ...args);
   };
-  const operations = guard.createOperations(f.api, {}, selectors, {
-    receipts: dir, stopped: () => {}, admitLocalInstallHost: async () => {},
-  });
   const result = await operations.install_local_archive(f.args);
   assert.equal(result.operationCompleted, true);
   assert.equal(result.modId, ID); assert.equal(result.downloadId, 'newdownload');

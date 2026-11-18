@@ -103,6 +103,29 @@ test('audit: target identity change during action cannot complete', async () => 
   await assert.rejects(f.ops.set_mods_enabled({ ...f.args, modIds: ['m'], enabled: true }), /MOD_RECORD_CHANGED/);
   await fs.access(path.join(f.dir, 'receipts/unresolved.json'));
 });
+test('audit: enable cannot publish success after the final flag changes during receipt sync', async () => {
+  const f = await fixture(async (file, state) => {
+    if (file.includes('.completion.json.pending-')) state.persistent.profiles.p.modState.m = { enabled: false };
+  });
+  await assert.rejects(f.ops.set_mods_enabled({ ...f.args, modIds: ['m'], enabled: true }), /ENABLED_FLAGS_UNVERIFIED/);
+  assert.equal(f.calls(), 1);
+  await fs.access(path.join(f.dir, 'receipts/unresolved.json'));
+  await assert.rejects(fs.access(path.join(f.dir, 'receipts', f.args.requestId + '.completion.json')), { code: 'ENOENT' });
+});
+test('audit: deploy cannot publish success after a flag changes during receipt sync', async () => {
+  const f = await fixture(async (file, state) => {
+    if (file.includes('.completion.json.pending-')) state.persistent.profiles.p.modState.m = { enabled: true };
+  });
+  f.api.ext.awaitModsDeployment = async () => {};
+  await assert.rejects(f.ops.deploy_mods(f.args), /OTHER_ENABLED_FLAGS_CHANGED/);
+  await fs.access(path.join(f.dir, 'receipts/unresolved.json'));
+});
+test('audit: download cannot publish success after an installed record changes during receipt sync', async () => {
+  const f = await fixture(async (file, state) => {
+    if (file.includes('.completion.json.pending-')) state.persistent.mods.cyberpunk2077.m.archiveId = 'updated';
+  });
+  await assert.rejects(f.ops.download_nexus(await pinned(f)), /DOWNLOAD_INSTALLED_RECORDS_CHANGED/);
+});
 test('audit: nested domain identity without game is reused without network', async () => {
   const f = await fixture(); const args = await pinned(f, { game: undefined });
   f.api.ext.nexusDownload = async () => { throw Error('NETWORK_WOULD_BE_CALLED'); };

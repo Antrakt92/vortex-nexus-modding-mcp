@@ -30,17 +30,18 @@ function recorded(value) {insist(synchronousJournal(value) === undefined, 'PLAN_
 export function createToolCaller(transport = remote) {
   return async (name, args = {}) => {
     const response = await transport('tools/call', { name, arguments: args });
-    insist(object(response), 'INVALID_TOOL_RESPONSE');
+    insist(object(response)
+      && (!Object.hasOwn(response, 'isError') || typeof response.isError === 'boolean')
+      && (!Object.hasOwn(response, 'content') || Array.isArray(response.content)), 'INVALID_TOOL_RESPONSE');
+    const texts = response.content?.filter(item => item?.type === 'text');
     if (response.isError === true) {
       let code = 'REMOTE_TOOL_FAILED';
       try {
-        const texts = response.content?.filter(item => item?.type === 'text');
         const value = texts?.length === 1 ? JSON.parse(texts[0].text) : null;
         if (typeof value?.error === 'string' && /^[A-Z][A-Z0-9_]{1,99}$/.test(value.error)) code = value.error;
       } catch { /* Never echo unstructured upstream errors or private transport text. */ }
       throw new Error(code);
     }
-    const texts = response.content?.filter(item => item?.type === 'text');
     if (Object.hasOwn(response, 'structuredContent')) {
       insist(object(response.structuredContent), 'INVALID_TOOL_RESPONSE');
       if (texts?.length) {

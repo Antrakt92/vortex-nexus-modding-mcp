@@ -9,6 +9,12 @@ const CACHE = paths.cache;
 const BUILD = paths.build;
 const source = path.dirname(fileURLToPath(import.meta.url));
 const vendor = path.join(source, '../../../dependencies/vortex-mcp');
+const packageInputs = {
+  'index.js': 'adapted-dist/index.js',
+  'LICENSE.md': 'LICENSE.md',
+  'THIRD-PARTY-NOTICES.md': 'THIRD-PARTY-NOTICES.md',
+};
+const packageNames = new Set([...Object.keys(packageInputs), 'info.json', 'provenance.json']);
 const modules = ['paths.cjs', 'paths-core.cjs', 'guard.cjs', 'extension.cjs', 'credential.cjs', 'inspection.cjs', 'lifecycle-inspection.cjs', 'native-preflight.cjs', 'serialization.cjs', 'download-identity.cjs', 'receipts.cjs', 'http-ingress.cjs', 'own-zip.cjs', 'local-archive-policy.cjs', 'local-archive-install.cjs', 'local-install-host.cjs', 'local-install-binding.cjs', 'official-vortex-hosts.cjs', 'stock-vortex-2.9.1-admission.json', 'stock-vortex-2.10.1-admission.json', 'install-diagnostics.cjs', 'installed-candidate-assessment.cjs', 'collection-wizard-controller.cjs', 'collection-wizard-dom.cjs', 'collection-wizard-native.cjs', 'collection-wizard-policy.cjs', 'collection-wizard-host.cjs', 'collection-dialog-controller.cjs', 'collection-dialog-policy.cjs', 'collection-update-prompt.cjs', 'native-dialog-controller.cjs', 'native-dialog-host-admission.cjs', 'native-dialog-operations.cjs'];
 modules.push('mod-record-fingerprints.cjs', 'strict-json.cjs');
 const sha = async file => crypto.createHash('sha256').update(await fs.readFile(file)).digest('hex');
@@ -120,8 +126,17 @@ export function assertCompileReceipt(receipt, current, bundleSha256) {
   if (!receipt || receipt.bundleSha256 !== bundleSha256 || JSON.stringify(receipt.inputs) !== JSON.stringify(current))
     throw Error('Compiled bundle/source/workspace proof differs; rebuild before packaging');
 }
-async function preservePreviousBuild() {
-  const plugin = path.join(BUILD, 'plugin/vortex-agent');
+async function checkPackageOutput(plugin) {
+  let entries;
+  try { entries = await fs.readdir(plugin, { withFileTypes: true }); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; return; }
+  for (const entry of entries) {
+    if (!entry.isFile() || !packageNames.has(entry.name))
+      throw Error('Unexpected package output: ' + entry.name);
+  }
+}
+
+async function preservePreviousBuild(plugin) {
   let previous;
   try { previous = JSON.parse(await fs.readFile(path.join(plugin, 'provenance.json'), 'utf8')); }
   catch (error) { if (error.code === 'ENOENT') return; throw error; }
@@ -129,6 +144,7 @@ async function preservePreviousBuild() {
   if (!['1.0.3', '1.0.4'].includes(previous?.version) || !previous.sources
       || typeof previous.sources !== 'object' || Array.isArray(previous.sources))
     throw Error('Unsupported previous package provenance');
+  await checkPackageOutput(plugin);
   const allowedSources = new Set([...modules, 'build.mjs', 'bridge.mjs', 'manage-install.py']);
   const sourceEntries = Object.entries(previous.sources);
   if (!sourceEntries.length || sourceEntries.some(([name, pin]) =>
@@ -208,7 +224,7 @@ if (argv.includes('--prepare')) {
 } else if (argv.includes('--regression')) {
   await fs.copyFile(path.join(source, 'regression.test.ts'), path.join(BUILD, 'upstream', 'src', 'regression.test.ts'));
 } else if (argv.includes('--patch')) {
-  await preservePreviousBuild();
+  await preservePreviousBuild(path.join(BUILD, 'plugin/vortex-agent'));
   const tree = path.join(BUILD, 'upstream');
   await checkBuildTree(tree);
   for (const name of modules) await fs.copyFile(path.join(source, name), path.join(tree, 'src', name));
@@ -228,11 +244,7 @@ if (argv.includes('--prepare')) {
   const upstream = await checkBuildTree(tree);
   const current = await compileInputs(tree);
   const packageFiles = {};
-  for (const [name, input] of Object.entries({
-    'index.js': 'adapted-dist/index.js',
-    'LICENSE.md': 'LICENSE.md',
-    'THIRD-PARTY-NOTICES.md': 'THIRD-PARTY-NOTICES.md',
-  })) {
+  for (const [name, input] of Object.entries(packageInputs)) {
     const file = path.join(tree, input);
     await noReparsePaths(file);
     packageFiles[name] = await fs.readFile(file);
@@ -259,8 +271,9 @@ if (argv.includes('--prepare')) {
     pluginSha256: bundleSha256, lockfileSha256: current.inputs['pnpm-lock.yaml'],
     upstreamControlSha256: current.inputs['src/vortexControl.ts'], sources }, null, 2);
   // A validation failure must leave any existing candidate package intact.
-  await preservePreviousBuild();
   const plugin = path.join(BUILD, 'plugin', 'vortex-agent');
+  await checkPackageOutput(plugin);
+  await preservePreviousBuild(plugin);
   await fs.mkdir(plugin, { recursive: true });
   for (const [name, data] of Object.entries(packageFiles)) {
     const destination = path.join(plugin, name);

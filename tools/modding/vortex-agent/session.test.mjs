@@ -230,6 +230,16 @@ test('one caller reuses the same transport and rejects MCP errors/malformed resp
   await assert.rejects(createToolCaller(async () => ({isError: true, content: [{type: 'text', text: '{"error":"GAME_RUNNING"}'}]}))('set_mods_enabled'), /GAME_RUNNING/);
 });
 
+test('malformed MCP result metadata fails with a stable diagnostic', async () => {
+  for (const response of [
+    {isError: 'false', content: [{type: 'text', text: '{}'}]},
+    {content: {}, structuredContent: {}},
+    {content: null, structuredContent: {}},
+  ]) {
+    await assert.rejects(createToolCaller(async () => response)('health'), /^Error: INVALID_TOOL_RESPONSE$/);
+  }
+});
+
 test('contradictory structured and text tool results are refused before being trusted', async () => {
   const response = {structuredContent: {operationCompleted: true}, content: [{type: 'text', text: '{"operationCompleted":false}'}]};
   await assert.rejects(createToolCaller(async () => response)('set_mods_enabled'), /CONTRADICTORY_TOOL_RESPONSE/);

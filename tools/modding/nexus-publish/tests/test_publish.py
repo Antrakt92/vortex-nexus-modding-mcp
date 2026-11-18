@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import lzma
 import os
 from pathlib import Path
 import subprocess
@@ -8,6 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import zipfile
+import zlib
 
 HERE = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("nexus_publish", HERE / "publish.py")
@@ -76,6 +78,45 @@ class RunnerTests(unittest.TestCase):
         self.archive.write_bytes(b"not a zip")
         self.m["sha256"] = p.sha256(self.archive)
         with self.assertRaises(p.Blocked): p.preflight(self.m)
+
+    def test_zip_requires_a_file_and_accepts_directory_entries(self):
+        with zipfile.ZipFile(self.archive, "w") as z:
+            z.writestr("folder/", "")
+        self.m["sha256"] = p.sha256(self.archive)
+        with self.assertRaisesRegex(p.Blocked, "contains no files"):
+            p.preflight(self.m)
+        with zipfile.ZipFile(self.archive, "a") as z:
+            z.writestr("folder/fixture.txt", "Synthetic file")
+        self.m["sha256"] = p.sha256(self.archive)
+        with patch.object(zipfile.ZipFile, "open", autospec=True, side_effect=zipfile.ZipFile.open) as opened:
+            self.assertEqual(p.preflight(self.m)["sha256"], self.m["sha256"])
+        members = [call.args[1] for call in opened.call_args_list]
+        self.assertTrue(all(isinstance(entry, zipfile.ZipInfo) for entry in members))
+        self.assertEqual([entry.filename for entry in members], ["folder/", "folder/fixture.txt"])
+
+    def test_zip_stream_errors_are_reported_before_credentials_or_action(self):
+        for error in (zlib.error("fixture"), lzma.LZMAError("fixture"), OSError("fixture")):
+            with self.subTest(error=type(error)), patch.object(zipfile.ZipExtFile, "read", side_effect=error), \
+                    patch.object(p, "verify_action", side_effect=AssertionError("unexpected action verification")):
+                with self.assertRaisesRegex(p.Blocked, "^ZIP integrity validation failed\\.$"):
+                    p.execute(self.m, publish=True, state=self.root, credential=lambda: self.fail("key read"))
+
+    def test_archive_read_errors_have_a_specific_message(self):
+        with patch.object(p, "sha256", side_effect=PermissionError("fixture")):
+            with self.assertRaisesRegex(p.Blocked, "^Archive could not be read\\.$"):
+                p.preflight(self.m)
+
+    def test_version_id_requires_reconciliation_before_reading_manifest(self):
+        for mode in ([], ["--publish"]):
+            with self.subTest(mode=mode):
+                result = subprocess.run(
+                    [sys.executable, "-B", str(HERE / "publish.py"),
+                     str(self.root / "missing.json"), "--version-id", "987", *mode],
+                    capture_output=True, text=True, timeout=10,
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("--version-id requires --reconcile", result.stderr)
+                self.assertEqual(result.stdout, "")
 
     def test_correct_done_requires_independent_metadata_readback(self):
         result = self.execute({"ok": True, "version_id": "987"})

@@ -126,12 +126,20 @@ function createNativeDialogSession(api, selectors, {receipts,controllerOptions={
     plainParents(control); await fs.mkdir(control,{recursive:true}); plainParents(control);
     const lock=path.join(control,'mutation.lock'); let handle;
     try { handle=await fs.open(lock,'wx'); } catch(e) { if(e.code==='EEXIST') throw Error('NATIVE_DIALOG_CONTROL_BUSY'); throw e; }
-    const owned=await handle.stat({bigint:true}); let failed=false;
-    try { await handle.writeFile(JSON.stringify({pid:process.pid,controlOnly:true})); await handle.sync(); return await fn(); }
+    let owned,failed=false;
+    try {
+      owned=await handle.stat({bigint:true});
+      await handle.writeFile(JSON.stringify({pid:process.pid,controlOnly:true})); await handle.sync(); return await fn();
+    }
     catch(e) { failed=true; throw e; }
     finally {
-      try { const now=await fs.lstat(lock,{bigint:true}); need(!now.isSymbolicLink()&&now.dev===owned.dev&&now.ino===owned.ino,'CONTROL_MUTEX_CHANGED'); await fs.unlink(lock); }
-      catch(e) { if(!failed) { failed=true; throw e; } }
+      try {
+        if(owned) {
+          const now=await fs.lstat(lock,{bigint:true});
+          need(!now.isSymbolicLink()&&now.dev===owned.dev&&now.ino===owned.ino,'CONTROL_MUTEX_CHANGED');
+          await fs.unlink(lock);
+        }
+      } catch(e) { if(!failed) { failed=true; throw e; } }
       finally { try { await handle.close(); } catch(e) { if(!failed) throw e; } }
     }
   }
@@ -167,11 +175,12 @@ function createNativeDialogSession(api, selectors, {receipts,controllerOptions={
           } catch(error) {
             // A linked completion remains authoritative even if temporary-name cleanup fails.
             if(published) throw Error('NATIVE_DIALOG_COMPLETION_PUBLISHED_CLEANUP_PENDING');
+            const message=error?.message;
             await hooks.commitCompletion(file(a.requestId,'held'),{...base,at:new Date().toISOString(),operationCompleted:false,
-              effectsMayHaveOccurred:returned||error.message==='NATIVE_DIALOG_EFFECT_UNCERTAIN_RECONCILE',inspectBeforeRetry:true,
-              errorCode:/^[A-Z][A-Z0-9_]+$/.test(error?.message||'')?error.message:'UPSTREAM_FAILURE'});
+              effectsMayHaveOccurred:returned||message==='NATIVE_DIALOG_EFFECT_UNCERTAIN_RECONCILE',inspectBeforeRetry:true,
+              errorCode:typeof message==='string'&&/^[A-Z][A-Z0-9_]+$/.test(message)?message:'UPSTREAM_FAILURE'});
             throw error;
-          } finally { /* The enclosing control scope owns current hooks. */ }
+          }
         }
         // Cancel has an independent control-plane lock. It never clears an install
         // barrier or obtains permission to install. Other actions use the ordinary guard.

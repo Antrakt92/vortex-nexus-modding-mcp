@@ -81,10 +81,17 @@ def verify(root=ROOT):
     return {'verified_files': len(seen), 'integrity_verified': True}
 
 
+def file_matches(path, expected):
+    if not path.is_file():
+        return False
+    with path.open('rb') as existing:
+        return existing.read(len(expected) + 1) == expected
+
+
 def write_matching(path, data, apply):
     no_links(path)
     if path.exists():
-        if not path.is_file() or path.read_bytes() != data:
+        if not file_matches(path, data):
             raise ValueError('Existing file differs; refusing overwrite: ' + str(path))
         return 'unchanged'
     if apply:
