@@ -5,6 +5,7 @@ const crypto = require('node:crypto');
 const { inspectOwnZip, LIMITS } = require('./own-zip.cjs');
 const { validateLocalArchiveName, assertLocalArchiveAdmission } = require('./local-archive-policy.cjs');
 const { createInstallDiagnostics } = require('./install-diagnostics.cjs');
+const { TERMINAL } = require('./download-identity.cjs');
 const need = (ok, code) => { if (!ok) throw Error(code); };
 const stamp = s => [s.dev, s.ino, s.size, s.mtimeNs, s.ctimeNs, s.nlink].join(':');
 const hooks = new WeakMap();
@@ -138,7 +139,7 @@ function native(api, event, args, timeoutMs, active) {
     throw error;
   });
 }
-async function installLocalArchive(api, args, { check, checkContext = check, effect, admitHost, timeoutMs = 120000, diagnostics = createInstallDiagnostics() }) {
+async function installLocalArchive(api, args, { check, checkContext = check, effect, beforeCompletion, admitHost, timeoutMs = 120000, diagnostics = createInstallDiagnostics() }) {
   diagnostics.assertWork();
   need(args.gameId === 'cyberpunk2077', 'LOCAL_ARCHIVE_GAME_UNSUPPORTED');
   need(typeof admitHost === 'function', 'LOCAL_ARCHIVE_SOURCE_ADMISSION_REQUIRED');
@@ -154,14 +155,14 @@ async function installLocalArchive(api, args, { check, checkContext = check, eff
   const active = { gameId: args.gameId, modId, downloadId: null, hookSeen: false, uncertain: false, diagnostics };
   diagnostics.onTrip(() => { active.uncertain = true; });
   let completed = false, nativeStarted = false, importedProof;
-  const currentDownload = () => api.getState().persistent.downloads?.files?.[active.downloadId];
+  const currentDownload = (state = api.getState()) => state.persistent.downloads?.files?.[active.downloadId];
   active.verifyDownload = record => {
     need(!baselineDownloadIds.has(active.downloadId) && record?.state === 'finished'
       && Array.isArray(record.game) && record.game.length === 1 && record.game[0] === args.gameId
       && record.localPath === name, 'LOCAL_ARCHIVE_IMPORTED_IDENTITY_MISMATCH');
   };
-  const verifyImportedDownload = () => {
-    const record = currentDownload();
+  const verifyImportedDownload = state => {
+    const record = currentDownload(state);
     active.verifyDownload(record);
     noNexus(record);
   };
@@ -217,10 +218,13 @@ async function installLocalArchive(api, args, { check, checkContext = check, eff
     active.downloadId = ids[0];
     diagnostics.phase('import_settle');
     await diagnostics.wait('import_settle', async () => {
-      while (currentDownload()?.state !== 'finished') {
-        diagnostics.assertWork(); checkContext();
-        await new Promise(resolve => setTimeout(resolve, 100));
+      while (true) {
         diagnostics.assertWork();
+        const state = currentDownload()?.state;
+        if (state === 'finished') break;
+        need(!TERMINAL.has(state), 'LOCAL_ARCHIVE_IMPORT_REQUIRES_USER_ATTENTION');
+        checkContext();
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
     }, timeoutMs);
     diagnostics.assertWork();
@@ -236,20 +240,29 @@ async function installLocalArchive(api, args, { check, checkContext = check, eff
     check(); verifyArchives(); need(!active.violation && !active.uncertain, 'LOCAL_ARCHIVE_NATIVE_OPERATION_HELD');
     diagnostics.assertWork(); diagnostics.phase('staged_proof');
     need(installed === modId && active.hookSeen, 'LOCAL_ARCHIVE_INSTALLED_IDENTITY_MISMATCH');
-    const state = api.getState(), mod = state.persistent.mods?.[args.gameId]?.[modId];
-    need(mod?.state === 'installed' && mod.installationPath === modId && mod.archiveId === active.downloadId
-      && state.persistent.profiles[args.profileId].modState?.[modId]?.enabled !== true, 'LOCAL_ARCHIVE_INSTALLED_RECORD_UNVERIFIED');
-    diagnostics.measureSync('staged_proof', () => verifyStagedPayload(path.join(args.stagingPath, modId), pkg));
-    const afterMods = structuredClone(state.persistent.mods || {}); delete afterMods[args.gameId][modId];
-    const afterProfiles = structuredClone(state.persistent.profiles || {});
-    for (const profile of Object.values(afterProfiles)) {
-      if (profile.modState?.[modId]) {
-        need(profile.id === args.profileId && profile.modState[modId].enabled !== true, 'LOCAL_ARCHIVE_OTHER_PROFILE_CHANGED');
-        delete profile.modState[modId];
+    const verifiedInstalledState = () => {
+      const state = api.getState(), mod = state.persistent.mods?.[args.gameId]?.[modId];
+      need(mod?.state === 'installed' && mod.installationPath === modId && mod.archiveId === active.downloadId
+        && state.persistent.profiles?.[args.profileId]?.modState?.[modId]?.enabled !== true, 'LOCAL_ARCHIVE_INSTALLED_RECORD_UNVERIFIED');
+      return state;
+    };
+    const verifyRecords = () => {
+      const state = verifiedInstalledState();
+      verifyImportedDownload(state);
+      const afterMods = structuredClone(state.persistent.mods || {}); delete afterMods[args.gameId][modId];
+      const afterProfiles = structuredClone(state.persistent.profiles || {});
+      for (const profile of Object.values(afterProfiles)) {
+        if (profile.modState?.[modId]) {
+          need(profile.id === args.profileId && profile.modState[modId].enabled !== true, 'LOCAL_ARCHIVE_OTHER_PROFILE_CHANGED');
+          delete profile.modState[modId];
+        }
       }
-    }
-    need(JSON.stringify(afterMods) === JSON.stringify(baseline)
-      && JSON.stringify(afterProfiles) === JSON.stringify(profiles), 'LOCAL_ARCHIVE_EXISTING_STATE_CHANGED');
+      need(JSON.stringify(afterMods) === JSON.stringify(baseline)
+        && JSON.stringify(afterProfiles) === JSON.stringify(profiles), 'LOCAL_ARCHIVE_EXISTING_STATE_CHANGED');
+    };
+    verifiedInstalledState();
+    diagnostics.measureSync('staged_proof', () => verifyStagedPayload(path.join(args.stagingPath, modId), pkg));
+    if (beforeCompletion) beforeCompletion(verifyRecords); else verifyRecords();
     diagnostics.assertWork();
     completed = true;
     return { modId, downloadId: active.downloadId, installedRecordVerified: true, enabled: false,

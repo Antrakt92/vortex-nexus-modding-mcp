@@ -31,6 +31,13 @@ for (const mode of ['length', 'json', 'sse', 'success']) {
   });
 }
 
+test('event stream responses accept mixed-case media types with parameters', async () => {
+  const body = 'data: {"jsonrpc":"2.0","id":1,"result":{"ok":true}}\n\n';
+  const headers = {'content-type': 'Text/Event-Stream; charset=UTF-8'};
+  const result = await remote('tools/call', {name: 'health'}, async () => new Response(body, {headers}), token);
+  assert.deepEqual(result, {ok: true});
+});
+
 test('rejected HTTP response cancels its unread body without awaiting the producer', async () => {
   let cancelled = false;
   const stream = new ReadableStream({ cancel() { cancelled = true; return new Promise(() => {}); } });

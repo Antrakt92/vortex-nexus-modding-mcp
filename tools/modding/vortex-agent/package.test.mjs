@@ -88,6 +88,31 @@ test('package preflight preserves the prior package when frozen compile sources 
   assert.equal(await fs.readFile(path.join(previous, 'index.js'), 'utf8'), 'prior usable bundle');
 });
 
+test('packaging refuses an existing output with unrelated contents before writing files', async t => {
+  const {root, build, run} = await buildFixture(t);
+  for (const flag of ['--prepare', '--patch']) {
+    const phase = run(flag);
+    assert.equal(phase.status, 0, phase.stderr);
+  }
+  const tree = path.join(build, 'upstream');
+  const bundle = path.join(tree, 'adapted-dist/index.js');
+  const plugin = path.join(build, 'plugin/vortex-agent');
+  await fs.mkdir(path.dirname(bundle));
+  await fs.writeFile(bundle, 'new bundle');
+  await fs.writeFile(path.join(build, 'adapted-compile.json'),
+    JSON.stringify({inputs: await compileInputs(tree, root), bundleSha256: await sha(bundle)}));
+  await fs.mkdir(plugin, {recursive: true});
+  await fs.writeFile(path.join(plugin, 'index.js'), 'previous bundle');
+  await fs.writeFile(path.join(plugin, 'notes.txt'), 'keep my notes');
+
+  const result = run('--package');
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Unexpected package output: notes\.txt/);
+  assert.deepEqual((await fs.readdir(plugin)).sort(), ['index.js', 'notes.txt']);
+  assert.equal(await fs.readFile(path.join(plugin, 'index.js'), 'utf8'), 'previous bundle');
+  assert.equal(await fs.readFile(path.join(plugin, 'notes.txt'), 'utf8'), 'keep my notes');
+});
+
 test('legacy rollback provenance refuses traversal before making any archive', async t => {
   const {root, build, run} = await buildFixture(t);
   const plugin = path.join(build, 'plugin/vortex-agent');
@@ -124,11 +149,19 @@ test('legacy archive preserves exact build inputs and refuses reuse if the archi
   const guard = await sha(path.join(build, 'upstream/src/guard.cjs'));
   await fs.writeFile(path.join(plugin, 'provenance.json'),
     JSON.stringify({version: '1.0.4', pluginSha256, sources: {'guard.cjs': guard}}));
+  const archive = path.join(build, 'archives', '1.0.4-' + pluginSha256);
+  const extra = path.join(plugin, 'notes.txt');
+  await fs.writeFile(extra, 'keep with the candidate');
+  const refused = run('--patch');
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /Unexpected package output: notes\.txt/);
+  await assert.rejects(fs.stat(archive), { code: 'ENOENT' });
+  assert.equal(await fs.readFile(extra, 'utf8'), 'keep with the candidate');
+  await fs.unlink(extra);
   for (let n = 0; n < 2; n++) {
     const result = run('--patch');
     assert.equal(result.status, 0, result.stderr);
   }
-  const archive = path.join(build, 'archives', '1.0.4-' + pluginSha256);
   assert.equal(await sha(path.join(archive, 'src/guard.cjs')), guard);
   assert.equal(await sha(path.join(archive, 'adapted-dist/index.js')), pluginSha256);
   await fs.unlink(path.join(archive, 'src/guard.cjs'));

@@ -10,7 +10,7 @@ import tarfile
 import tempfile
 import urllib.request
 
-from recovery import no_links, relative as recovery_relative
+from recovery import file_matches, no_links, relative as recovery_relative
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -90,7 +90,7 @@ def bootstrap(apply=False, archive_path=None):
             if path.is_file():
                 relative = path.relative_to(target).as_posix()
                 actual.add(relative)
-                if files.get(relative) != path.read_bytes():
+                if relative not in files or not file_matches(path, files[relative]):
                     raise ValueError('Existing local build tool differs')
         if actual != set(files):
             raise ValueError('Existing local build-tool inventory differs')

@@ -76,13 +76,27 @@ test('executable hashing streams bytes, rejects a bad pin and samples descriptor
 });
 test('outer client timeout and abort cover deferred admission and prevent late fork',async t=>{
  const {_createFileProofClientForTests}=await import('./file-proof-client.mjs');
+ t.mock.timers.enable({apis:['setTimeout']});
  for(const mode of ['timeout','abort']){
-  const f=fixture(t);let h,resolve;const controller=new AbortController();
+  const f=fixture(t);let h,releaseAdmission,now=0;const controller=new AbortController();
+  const entered=Promise.withResolvers();
   const client=_createFileProofClientForTests({roots:f.config.roots,epoch:4,hostGeneration:'own-test',timeoutMs:10},(_file,opts)=>{
-   h=fake({...f,config:opts.workerData},{admit:()=>new Promise(r=>resolve=r)});return h.adapter;
-  });
-  const promise=client.prove(f.request.rows,{signal:controller.signal});const rejected=assert.rejects(promise,/FILE_PROOF_TIMEOUT|FILE_PROOF_ABORTED/);
-  await turn();if(mode==='abort')controller.abort();await rejected;resolve(()=>assert.fail('late admission'));await client.close();
+   h=fake({...f,config:opts.workerData},{admit:()=>new Promise(resolve=>{
+    releaseAdmission=resolve;entered.resolve();
+   })});return h.adapter;
+  },{now:()=>now});
+  const promise=client.prove(f.request.rows,{signal:controller.signal});
+  const rejected=assert.rejects(promise,{message:mode==='timeout'?'FILE_PROOF_TIMEOUT':'FILE_PROOF_ABORTED'});
+  const admitted=await Promise.race([entered.promise.then(()=>true),promise.then(()=>false,()=>false)]);
+  assert.equal(admitted,true);
+  if(mode==='abort')controller.abort();
+  else {now=10;t.mock.timers.tick(10);}
+  await rejected;
+  const closed=client.close();
+  let lateChecks=0;
+  releaseAdmission(()=>{lateChecks++;});
+  assert.deepEqual(outcome(await closed),{exited:true,forced:false,uncertain:false});
+  assert.equal(lateChecks,0);
   assert.equal(h.spawned(),0);await assert.rejects(client.prove(f.request.rows),/FILE_PROOF_POISONED/);
  }
 });

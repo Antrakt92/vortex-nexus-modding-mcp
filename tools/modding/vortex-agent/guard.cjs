@@ -193,8 +193,7 @@ async function commitCompletion(file, value, verify, published = () => {}) {
   // atomic no-overwrite publication (rename() could overwrite an old request).
   const pending = file + '.pending-' + crypto.randomUUID();
   await durable(pending, value);
-  // Revalidate an asynchronous archive proof after receipt fsync, immediately
-  // before publishing its final name. Other operations retain their old route.
+  // Revalidate the operation proof after receipt fsync, before publishing its final name.
   if (verify) verify();
   await fs.link(pending, file);
   published();
@@ -417,33 +416,34 @@ function createOperations(api, actions, selectors, options = {}) {
       // (including an empty inventory) instead of claiming preflight guarantees.
       insist(false, 'INSTALL_DISABLED_NONREPLACEMENT_NOT_PROVABLE');
     }),
-    install_local_archive: args => mutate('install_local_archive', args, async (effect, _beforeCompletion, diagnostics, measuredCheck, measuredContextCheck) =>
-      installLocalArchive(api, args, { check: measuredCheck, checkContext: measuredContextCheck, effect, admitHost: options.admitLocalInstallHost, diagnostics })),
-    set_mods_enabled: args => mutate('set_mods_enabled', args, async effect => {
+    install_local_archive: args => mutate('install_local_archive', args, async (effect, beforeCompletion, diagnostics, measuredCheck, measuredContextCheck) =>
+      installLocalArchive(api, args, { check: measuredCheck, checkContext: measuredContextCheck, effect, beforeCompletion, admitHost: options.admitLocalInstallHost, diagnostics })),
+    set_mods_enabled: args => mutate('set_mods_enabled', args, async (effect, beforeCompletion) => {
       const before = flags(args);
       const identities = args.modIds.map(id => modIdentity(api.getState(), args.gameId, id));
       const eligible = () => insist(args.modIds.every((id, index) => modIdentity(api.getState(), args.gameId, id) === identities[index]), 'MOD_RECORD_CHANGED');
       const changed = args.modIds.filter(id => effectiveEnabled(api.getState(), args.profileId, id) !== args.enabled);
       if (changed.length) await effect(() => actions.setModsEnabled(api, args.profileId, changed, args.enabled,
         { allowAutoDeploy: false, reason: 'user_manual', installed: true }), eligible);
-      check(args);
-      eligible();
-      insist(args.modIds.every(id => effectiveEnabled(api.getState(), args.profileId, id) === args.enabled), 'ENABLED_FLAGS_UNVERIFIED');
-      unchangedFlags(args, before, args.modIds);
+      beforeCompletion(() => {
+        eligible();
+        insist(args.modIds.every(id => effectiveEnabled(api.getState(), args.profileId, id) === args.enabled), 'ENABLED_FLAGS_UNVERIFIED');
+        unchangedFlags(args, before, args.modIds);
+      });
       return { modIds: args.modIds, enabled: args.enabled, enabledFlagsVerified: true };
     }),
-    deploy_mods: args => mutate('deploy_mods', args, async effect => {
+    deploy_mods: args => mutate('deploy_mods', args, async (effect, beforeCompletion) => {
       const before = flags(args);
       insist(typeof api.ext.awaitModsDeployment === 'function', 'DEPLOY_API_UNAVAILABLE');
       await effect(() => api.ext.awaitModsDeployment(args.profileId));
-      check(args);
-      unchangedFlags(args, before);
+      beforeCompletion(() => unchangedFlags(args, before));
       return { deploymentPromiseResolved: true };
     }),
     download_nexus: args => mutate('download_nexus', args, async (effect, beforeCompletion) => {
       const before = flags(args);
-      const installedBefore = JSON.stringify(Object.entries(api.getState().persistent?.mods?.[args.gameId] || {})
+      const installedRecords = () => JSON.stringify(Object.entries(api.getState().persistent?.mods?.[args.gameId] || {})
         .map(([id, mod]) => [id, mod.state, mod.archiveId]).sort());
+      const installedBefore = installedRecords();
       const matchesNow = () => { const state = api.getState(); return downloads.matchingDownloads(state.persistent?.downloads?.files || {}, args, state, selectors, catalog); };
       const matches = matchesNow();
       let id = matches[0]?.[0];
@@ -475,12 +475,12 @@ function createOperations(api, actions, selectors, options = {}) {
         await sleep(options.pollIntervalMs ?? 500);
       }
       const verifyArchive = await archive(api, args, id, selectors, catalog); check(args);
-      verifyArchive();
-      beforeCompletion(verifyArchive);
-      insist(matchesNow()[0]?.[0] === id, 'NEXUS_IDS_MISMATCH');
-      unchangedFlags(args, before);
-      insist(installedBefore === JSON.stringify(Object.entries(api.getState().persistent?.mods?.[args.gameId] || {})
-        .map(([id, mod]) => [id, mod.state, mod.archiveId]).sort()), 'DOWNLOAD_INSTALLED_RECORDS_CHANGED');
+      beforeCompletion(() => {
+        verifyArchive();
+        insist(matchesNow()[0]?.[0] === id, 'NEXUS_IDS_MISMATCH');
+        unchangedFlags(args, before);
+        insist(installedBefore === installedRecords(), 'DOWNLOAD_INSTALLED_RECORDS_CHANGED');
+      });
       return { downloadId: id, reused, archiveSha256Verified: true, size: args.size, autoInstall: false,
         archiveCRCVerified: false };
     }),
