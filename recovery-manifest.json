@@ -40,7 +40,7 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256_lf": "17b63aece6481bcc33d6c021dd492f542a86e5216732f2a07d86aa5109e7ee53"
+      "sha256_lf": "81ee354936f301f94ed39743dc153bd7f7b7196154a1519a7754001808c13c41"
     },
     {
       "path": "CONTRIBUTING.md",
@@ -60,7 +60,7 @@
     },
     {
       "path": "VERSION",
-      "sha256_lf": "dc24feb5bd35084d8ae32a4eafbec12352707d4662401fcbcc9bbd696cde77a9"
+      "sha256_lf": "f4d439e0b523208a09d13862c16820cc3028fd94417310ce1d53a31d14d6a2c4"
     },
     {
       "path": "dependencies/vortex-mcp/.gitattributes",

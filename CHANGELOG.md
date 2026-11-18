@@ -8,6 +8,7 @@ embedded Vortex adapter's compatibility label.
 
 | Version | Published | Main changes |
 | --- | --- | --- |
+| [0.10.1](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.10.1) | 2026-11-18 | Vortex operation receipts, MCP error handling and ZIP validation fixes |
 | [0.10.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.10.0) | 2026-11-16 | Official Vortex 2.10.1, local collection assessment and queued installation questions |
 | [0.9.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.9.0) | 2026-11-16 | Native installation prompts, mod fingerprints and safer installation and recovery |
 | [0.8.1](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.8.1) | 2026-11-04 | Fix bounded parsing of large immutable capture records |
@@ -20,6 +21,33 @@ embedded Vortex adapter's compatibility label.
 | [0.2.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.2.0) | 2026-10-29 | Offline helper preparation, installation diagnostics and development dependencies |
 | [0.1.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.1.0) | 2026-10-29 | Combined inspection, collection download reuse and coordinated plans |
 | [Recovery sources](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/recovery-sources-20261025) | 2026-10-25 | Pinned upstream Git bundles for source recovery |
+
+## 0.10.1 — 2026-11-18
+
+Fix operation reporting and recovery across Vortex, the MCP bridge and Nexus
+publishing. Changes since [0.10.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/compare/v0.10.0...v0.10.1).
+
+### Fixed
+
+- Recheck install, enable, deploy and download state before publishing successful
+  Vortex receipts. Report failed or paused ZIP imports promptly and preserve
+  ambiguous installation and dialog attempts for reconciliation.
+- Reject invalid MCP arguments before contacting Vortex, handle malformed tool
+  replies and accept valid case variations in SSE content types. Improve
+  timeout and failure reporting for guarded installs.
+- Reject empty or damaged upload ZIPs before reading credentials. Tighten
+  upload transport checks and receipt reconciliation.
+- Validate existing package directories before overwriting or saving them as
+  rollback copies. Bound reads of existing recovery files and pinned build-tool
+  archives. Keep the Nexus CLI wrapper usable from a relocated checkout.
+
+### Verification
+
+- Repeated the cross-audit, added regressions for the affected workflows and
+  made the deferred-admission timeout and abort test deterministic.
+
+This is a source release. Rebuild and upgrade the installed Vortex adapter to
+use the runtime fixes. The adapter's compatibility label remains `1.1.0`.
 
 ## 0.10.0 — 2026-11-16
 
