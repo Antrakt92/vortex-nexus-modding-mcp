@@ -14,18 +14,21 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import { handler, remote } from './bridge.mjs';
 const artifact = process.env.VORTEX_ADAPTER_TEST_ARTIFACT || paths.build + '/upstream/adapted-dist/index.js';
 const realRequire = createRequire(artifact);
+const nativeDialogFixture = process.env.VORTEX_NATIVE_DIALOG_2101_APP_ASAR
+  ? {asar: process.env.VORTEX_NATIVE_DIALOG_2101_APP_ASAR, version: '2.10.1'}
+  : {asar: process.env.VORTEX_NATIVE_APP_ASAR, version: '2.9.1'};
 
 test('built native-dialog observation survives separate HTTP requests and current authentication',
-  {skip:!process.env.VORTEX_NATIVE_APP_ASAR},async()=>{
+  {skip:!nativeDialogFixture.asar},async()=>{
   const root=paths.build+'/tests';await fs.mkdir(root,{recursive:true});
   const modelDir=await fs.mkdtemp(root+'/native-dialog-http-'),receiptDir=modelDir+'/local-state/vortex-agent-build/receipts';
-  const exe=path.join(path.dirname(path.dirname(process.env.VORTEX_NATIVE_APP_ASAR)),'Vortex.exe');
+  const exe=path.join(path.dirname(path.dirname(nativeDialogFixture.asar)),'Vortex.exe');
   const sourceRequire=createRequire(import.meta.url),{QUESTION_TEXT}=sourceRequire('./collection-dialog-policy.cjs');
   const question=(id,version=false)=>({id,type:'question',title:version?'Existing version':'Updating may break dependencies',defaultAction:undefined,
     content:{text:version?QUESTION_TEXT:"You're updating a mod that others depend upon and the update doesn't seem to be compatible (according to the dependency information). If you continue we have to disable these dependencies, otherwise you'll continually get warnings about it.",
       options:{wrap:true},checkboxes:[{id:'remember',value:false,text:'Remember my choice'}]},
     actions:version?['Cancel','Update all profiles','Update current profile']:['Cancel','Ignore']});
-  const state={app:{appVersion:'2.9.1'},settings:{profiles:{activeProfileId:'p',nextProfileId:'p'},gameMode:{discovered:{cyberpunk2077:{path:modelDir}}}},
+  const state={app:{appVersion:nativeDialogFixture.version},settings:{profiles:{activeProfileId:'p',nextProfileId:'p'},gameMode:{discovered:{cyberpunk2077:{path:modelDir}}}},
     persistent:{profiles:{p:{id:'p',gameId:'cyberpunk2077',modState:{}}},mods:{cyberpunk2077:{}},downloads:{files:{}}},
     session:{base:{toolsRunning:{}},notifications:{dialogs:[question('cancel-one'),question('ignore-two'),question('version-three',true)]}}};
   const calls=[],disk=realRequire('node:fs');let listener,token='7'.repeat(64);
@@ -93,6 +96,7 @@ test('built extension wire: allowlist, SDK2 HTTP, legacy bridge, schemas and bro
   const api = { getState: () => state, getLoadedExtensions:()=>[{name:'wire',path:modelDir,dynamic:true}], store: { getState: () => state }, ext: {},
     events: new EventEmitter(), onAsync() {}, closeDialog() { throw Error('NO_NATIVE_RESPONSE_IN_WIRE_MODEL'); }, awaitUI: async () => {}, translate: key => key };
   const vortex = { actions: {}, selectors: { activeProfileId: () => 'p', activeGameId: () => 'cyberpunk2077',
+    profiles: () => state.persistent.profiles,
     knownGames: () => [{ id: 'cyberpunk2077' }], activeProfile: () => state.persistent.profiles.p,
     installPathForGame: () => modelDir, downloadPathForGame: () => modelDir }, util: {}, fs: {}, log: () => {} };
   let nativeVersion = '2.9.1', nativeUpdaterFailure = false, nativeGetterCalls = 0;
@@ -305,6 +309,67 @@ test('built extension wire: allowlist, SDK2 HTTP, legacy bridge, schemas and bro
     state.persistent.downloads.files.d = { state: 'finished', localPath: 'synthetic.zip', size: 12, modInfo: { nexus: { ids: { gameId: 'cyberpunk2077', modId: 42, fileId: 43 } } } };
     const downloads = await call('tools/call', { name: 'list_downloads', arguments: {} });
     const projected = JSON.parse(downloads.content[0].text)[0]; assert.equal(projected.nexusModId, 42); assert.equal(projected.identityVerified, true);
+    const read = async (name, args = {}) => {
+      const reply = await call('tools/call', {name, arguments: args});
+      assert.notEqual(reply.isError, true, name + ': ' + JSON.stringify(reply));
+      return JSON.parse(reply.content[0].text);
+    };
+    const profile = state.persistent.profiles.p;
+    profile.lastActivated = 10;
+    profile.modState.inactive = {enabled: true};
+    profile.modState.candidate = {enabled: true};
+    state.persistent.profiles.other.pendingRemove = true;
+    assert.deepEqual(await read('list_profiles', {gameId: 'cyberpunk2077'}), [
+      {id: 'p', name: 'modeled', gameId: 'cyberpunk2077', active: true, modCount: 2, enabledModCount: 2, lastActivated: 10},
+    ]);
+    assert.deepEqual(await read('list_profiles', {gameId: 'skyrimse'}), []);
+
+    const candidate = state.persistent.mods.cyberpunk2077.candidate;
+    candidate.installationPath = 'candidate';
+    candidate.rules = [{type: 'conflicts', reference: {id: 'inactive'}}];
+    assert.deepEqual(await read('list_mod_rules', {modId: 'candidate'}), [
+      {type: 'conflicts', targetId: 'inactive', targetName: 'inactive'},
+    ]);
+    assert.deepEqual(await read('find_mod_dependents', {modId: 'inactive'}), [
+      {modId: 'candidate', modName: 'candidate', ruleType: 'conflicts', enabled: true},
+    ]);
+    assert.deepEqual(await read('list_known_mod_conflicts'), [
+      {modId: 'candidate', modName: 'candidate', targetId: 'inactive', targetName: 'inactive', targetEnabled: true},
+    ]);
+    const missingMod = await call('tools/call', {name: 'list_mod_rules', arguments: {modId: 'missing'}});
+    assert.equal(missingMod.isError, true);
+
+    for (const dir of ['inactive', 'candidate']) {
+      await fs.mkdir(path.join(modelDir, dir));
+      await fs.writeFile(path.join(modelDir, dir, 'shared.txt'), dir);
+    }
+    const observedFiles = await read('list_file_conflicts');
+    assert.deepEqual(observedFiles, {
+      conflicts: [{path: 'shared.txt', modIds: ['inactive', 'candidate']}],
+      totalCount: 1, truncated: false, entriesScanned: 2, winnerVerified: false,
+    });
+    assert.deepEqual((await read('list_file_conflicts', {nameFilter: 'absent'})).conflicts, []);
+
+    state.session.dependencies = {unsolvedConflictsCount: 0, hasUnsolvedConflicts: false, conflicts: {}};
+    state.session.collections = {activeSession: {installedCount: 2, stalled: false}};
+    state.session.mods = {changes: [{filePath: path.join(modelDir, 'changed.txt'), type: 'changed', ignoredField: 'unpublished detail'}]};
+    assert.deepEqual(await read('list_unsolved_conflicts'), []);
+    assert.deepEqual(await read('list_external_changes'), [{filePath: path.join(modelDir, 'changed.txt'), type: 'changed'}]);
+    const inspected = await handle({jsonrpc: '2.0', id: 'inspect', method: 'tools/call',
+      params: {name: 'inspect_session', arguments: {diagnostics: true}}});
+    assert.equal(inspected.result?.structuredContent.status, 'ok', JSON.stringify(inspected));
+    assert.equal(inspected.result.structuredContent.results.read_collection_health.collectionSession.counters.installedCount, 2);
+    assert.equal(inspected.result.structuredContent.results.read_collection_health.diskDeploymentVerified, false);
+    const lookup = await handle({jsonrpc: '2.0', id: 'lookup', method: 'tools/call',
+      params: {name: 'find_collection_downloads', arguments: {gameId: 'cyberpunk2077',
+        files: [{nexusModId: 42, nexusFileId: 43}, {nexusModId: 42, nexusFileId: 44}]}}});
+    assert.deepEqual(lookup.result?.structuredContent.files.map(file => file.availability),
+      ['finished', 'not_observed'], JSON.stringify(lookup));
+    const receipts = await read('reconcile_operation', {requestId: 'own-wire-unobserved-request'});
+    assert.equal(receipts.adapterTerminalReceiptObserved, false);
+    assert.equal(receipts.attempt, null);
+    assert.equal(receipts.completion, null);
+    assert.equal(receipts.failure, null);
     const dialogResult = await call('tools/call', { name: 'list_dialogs', arguments: {} });
     assert.ok(!JSON.stringify(dialogResult).includes('unknown-sensitive-value'));
     assert.ok(!JSON.stringify(dialogResult).includes('unknown-default'));

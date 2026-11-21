@@ -95,6 +95,7 @@ function fixture(t, options = {}) {
           const staged = path.join(stagingPath, ID, payloadPath);
           fs.mkdirSync(path.dirname(staged), { recursive: true }); fs.writeFileSync(staged, payload);
           state.persistent.mods[G][ID] = { id: ID, state: 'installed', installationPath: ID, archiveId: downloadId };
+          if (options.installedLink !== undefined) download.installed = options.installedLink;
           state.persistent.profiles[installOptions.profileId].modState[ID] = { enabled: false };
           if (options.mutatePrevious) state.persistent.mods[G].previous.installationPath = 'changed';
           callback(null, options.wrongId ? 'different-mod' : ID);
@@ -118,6 +119,19 @@ function fixture(t, options = {}) {
     installationStarted, nativeFailure: () => nativeError,
     counts: () => ({ effectCount, checkCount, hostChecks, replacementReached }) };
 }
+
+test('completion accepts only the exact stock local download installation link', async t => {
+  const link = {gameId: G, modId: ID};
+  const accepted = fixture(t, {installedLink: link});
+  const result = await installLocalArchive(accepted.api, accepted.args, accepted.services);
+  assert.equal(result.installedRecordVerified, true);
+  for (const installedLink of [{...link, modId: 'other'}, {...link, gameId: 'other'},
+    {...link, fileId: 123}, null]) {
+    const refused = fixture(t, {installedLink});
+    await assert.rejects(installLocalArchive(refused.api, refused.args, refused.services),
+      /LOCAL_ARCHIVE_METADATA_UNSAFE/);
+  }
+});
 
 test('installs verified archive disabled while preserving existing mods, profiles and files', async t => {
   const f = fixture(t), unrelated = () => {};

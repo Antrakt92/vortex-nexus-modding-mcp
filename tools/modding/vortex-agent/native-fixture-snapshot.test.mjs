@@ -1,9 +1,51 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import vm from 'node:vm';
 import path from 'node:path';
-import { ORDINARY_MOD_LIMIT, assertOrdinaryModSnapshot, ordinaryProcessesPreserved, stoppedOrdinaryCohort } from './native-fixture-snapshot.mjs';
+import { ORDINARY_MOD_LIMIT, assertOrdinaryModSnapshot, observeOrdinaryHold, ordinaryProcessesPreserved, stoppedOrdinaryCohort } from './native-fixture-snapshot.mjs';
+
+function holdFixture(t) {
+  const root = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'vortex-fixture-hold-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const parent = path.join(root, 'receipts');
+  fs.mkdirSync(parent);
+  return { root, parent, file: path.join(parent, 'unresolved.json') };
+}
+
+test('absent ordinary operation marker is pinned, and appearance is visible', t => {
+  const { file } = holdFixture(t);
+  const absent = observeOrdinaryHold(file);
+  assert.equal(absent.present, false);
+  assert.deepEqual(observeOrdinaryHold(file), absent);
+  fs.writeFileSync(file, '{"pending":true}');
+  const present = observeOrdinaryHold(file);
+  assert.deepEqual(Object.keys(present), ['file', 'generation', 'sha256']);
+  assert.match(present.sha256, /^[0-9a-f]{64}$/);
+  fs.writeFileSync(file, '{"pending":false}');
+  assert.notDeepEqual(observeOrdinaryHold(file), present);
+});
+
+test('absence requires the same ordinary parent, and rejects missing or aliased parents', t => {
+  const { root, parent, file } = holdFixture(t);
+  const absent = observeOrdinaryHold(file);
+  const moved = path.join(root, 'retired');
+  fs.renameSync(parent, moved);
+  assert.throws(() => observeOrdinaryHold(file), { code: 'ENOENT' });
+  fs.symlinkSync(moved, parent, 'junction');
+  assert.throws(() => observeOrdinaryHold(file), /STOPPED_ORDINARY_FILE_ALIAS/);
+  if (process.platform === 'win32') fs.rmdirSync(parent);
+  else fs.unlinkSync(parent);
+  fs.mkdirSync(parent);
+  assert.notDeepEqual(observeOrdinaryHold(file), absent);
+});
+
+test('an existing nonordinary marker does not count as absent', t => {
+  const { file } = holdFixture(t);
+  fs.mkdirSync(file);
+  assert.throws(() => observeOrdinaryHold(file), /STOPPED_ORDINARY_FILE_REFUSED/);
+});
 
 test('ordinary process preservation rejects PID reuse, missing generations and changed identities', () => {
   const row = {pid:123,parent:1,exe:'C:/Vortex.exe',type:'',generation:'639000000000000000'};
