@@ -211,6 +211,19 @@ The native dialog read identified a startup error outside the reviewed
 installation questions and left its queue intact. The official 2.10.1
 collection wizard and prompt transitions still require live acceptance.
 
+On 2026-11-21, the stopped-ordinary mode also passed on official 2.10.1 with
+no pending ordinary operation. The verifier checked authenticated profile, mod,
+download, lifecycle and fingerprint reads before activation. Stock Vortex writes
+the local `installed.gameId` and `installed.modId` association on the download
+record after installation. Completion accepts that association only for the
+verified installed mod and continues rejecting Nexus metadata.
+
+The built HTTP dialog test can use the official 2.10.1 installation as its
+source pin. Set `VORTEX_NATIVE_DIALOG_2101_APP_ASAR` to its `resources/app.asar`
+and run `node --test tools/modding/vortex-agent/wire.test.mjs` with the built
+artifact and prepared vendor tree. This test exercises modeled Cancel, Ignore
+and Update current profile callbacks through the compiled MCP and its receipts.
+
 ## Verification boundary
 
 On 2026-11-03, an isolated instance of official Vortex 2.9.1 passed:

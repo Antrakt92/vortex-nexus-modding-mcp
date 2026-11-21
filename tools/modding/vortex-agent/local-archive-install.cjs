@@ -161,10 +161,19 @@ async function installLocalArchive(api, args, { check, checkContext = check, eff
       && Array.isArray(record.game) && record.game.length === 1 && record.game[0] === args.gameId
       && record.localPath === name, 'LOCAL_ARCHIVE_IMPORTED_IDENTITY_MISMATCH');
   };
-  const verifyImportedDownload = state => {
+  const verifyImportedDownload = (state, installedLocalMod = false) => {
     const record = currentDownload(state);
     active.verifyDownload(record);
-    noNexus(record);
+    if (installedLocalMod && Object.hasOwn(record, 'installed')) {
+      // Stock Vortex writes this local archive-to-mod association on completion.
+      const { installed, ...metadata } = record;
+      need(installed && typeof installed === 'object' && Object.keys(installed).length === 2
+        && Object.hasOwn(installed, 'gameId') && Object.hasOwn(installed, 'modId')
+        && installed.gameId === args.gameId && installed.modId === modId, 'LOCAL_ARCHIVE_METADATA_UNSAFE');
+      noNexus(metadata);
+    } else {
+      noNexus(record);
+    }
   };
   const verifyArchives = () => { pkg.verify(); importedProof?.verify(); };
   const importDestination = path.join(args.downloadPath, name);
@@ -248,7 +257,7 @@ async function installLocalArchive(api, args, { check, checkContext = check, eff
     };
     const verifyRecords = () => {
       const state = verifiedInstalledState();
-      verifyImportedDownload(state);
+      verifyImportedDownload(state, true);
       const afterMods = structuredClone(state.persistent.mods || {}); delete afterMods[args.gameId][modId];
       const afterProfiles = structuredClone(state.persistent.profiles || {});
       for (const profile of Object.values(afterProfiles)) {

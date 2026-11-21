@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import paths from './paths.cjs';
 import receipts from './receipts.cjs';
 import { validInstallDiagnostics } from './install-diagnostics.cjs';
-import { assertOrdinaryModSnapshot, ordinaryProcessesPreserved } from './native-fixture-snapshot.mjs';
+import { assertOrdinaryModSnapshot, observeOrdinaryHold, ordinaryProcessesPreserved } from './native-fixture-snapshot.mjs';
 const base = path.join(paths.workspace, 'local-state/vortex-agent-native-fixture');
 const root = path.resolve(process.argv[2] || '');
 const rel = path.relative(base, root);
@@ -52,6 +52,17 @@ function checkLoadOrderBarrier(barrier) {
   }
 }
 const install = event('native-install-only'), deploy = event('independent-disk-deployment-proof'), rollback = event('independent-rollback-proof');
+if (input.installedReadbackRequired === true) {
+  assert.equal(hash(path.join(root, 'userdata/plugins/native-agent-fixture/index.js')), input.fixtureWorkerSha256);
+  const readback = event('authenticated-installed-readback');
+  const health = event('authenticated-native-health').health;
+  assert.deepEqual(readback.reads, ['list_profiles', 'list_mods', 'list_downloads', 'read_mod_lifecycle', 'read_mod_record_fingerprints']);
+  assert.equal(readback.gameId, health.gameId); assert.equal(readback.profileId, health.profileId);
+  assert.equal(readback.modId, install.modId); assert.equal(readback.downloadId, install.downloadId);
+  assert.equal(readback.enabled, false);
+  assert.ok(receipt.events.indexOf(install) < receipt.events.indexOf(readback));
+  assert.ok(receipt.events.indexOf(readback) < receipt.events.indexOf(event('set_mods_enabled_enable')));
+}
 assert.equal(deploy.manifest.files.length, 1);
 assert.equal(deploy.manifest.files[0].source, install.installationPath);
 assert.equal(deploy.manifest.deploymentMethod, 'hardlink_activator');
@@ -356,17 +367,20 @@ if (before.mode === 'stopped') {
   assert.equal(result.stoppedObservationFailure, undefined);
   assert.deepEqual(before.processes, []);
   assert.deepEqual(after, before);
-  for (const pin of [before.executable, before.appAsar, before.manifest, before.hold]) assert.equal(hash(pin.file), pin.sha256);
+  for (const pin of [before.executable, before.appAsar, before.manifest]) assert.equal(hash(pin.file), pin.sha256);
+  assert.deepEqual(observeOrdinaryHold(before.hold.file), before.hold);
 } else {
   assert.deepEqual(before.health, after.health); assert.deepEqual(before.profiles, after.profiles); assert.deepEqual(before.mods, after.mods);
   assert.equal(before.manifestSha256, after.manifestSha256);
   assert.equal(ordinaryProcessesPreserved(before.processes, after.processes), true, 'Ordinary process generations changed or unavailable');
   if (input.hostVersion) {
     assert.equal(before.processes.length, after.processes.length, 'Unexpected Vortex process remained');
-    for (const key of ['executable', 'appAsar', 'manifest', 'hold']) {
+    for (const key of ['executable', 'appAsar', 'manifest']) {
       assert.deepEqual(before[key], after[key]);
       assert.equal(hash(before[key].file), before[key].sha256);
     }
+    assert.deepEqual(before.hold, after.hold);
+    assert.deepEqual(observeOrdinaryHold(before.hold.file), before.hold);
   }
 }
 const log = fs.readFileSync(path.join(root, 'userdata/vortex.log'), 'utf8');
@@ -392,13 +406,14 @@ const proof = { passed: true, root, checks: ['native import/install', 'authentic
   input.ownLocalPlan ? 'eleven durable completions without unresolved marker' : completionSuffixes.length === 5 ? 'five durable completions without unresolved marker' : 'four durable completions without unresolved marker',
   ...(input.withExistingMod ? ['existing mod/flags/staged identity preserved', 'same-archive collision refused before effects'] : []),
   ...(input.installRoute === 'mcp-local-archive' ? ['live bounded install diagnostics and retained sidecar bound to original attempt'] : []),
+  ...(input.installedReadbackRequired ? ['authenticated profile, mod, download, lifecycle and fingerprint readback before activation'] : []),
   ...(input.ownLocalPlan ? ['actual two-ZIP runPlan with disabled installation checkpoints, strict receipts/journal, one final deployment and independent restoration'] : []),
   ...(input.candidateAssessment ? ['built native candidate assessment: compatible/conflict/choices/ignored/pending-profile, immutable state and no payload authority'] : []),
   ...(before.mode === 'stopped'
-    ? ['ordinary host stayed stopped at observation checkpoints', 'ordinary deployment manifest and unresolved operation preserved',
+    ? ['ordinary host stayed stopped at observation checkpoints', 'ordinary deployment manifest and operation-marker state preserved',
       ...(input.installRoute === 'mcp-local-archive' ? ['authenticated local install readiness and inactive fixture collection session'] : [])]
     : ['ordinary health/profile/mod inventory/manifest/process preservation',
-      ...(input.hostVersion ? ['reviewed host files and unresolved operation preserved',
+      ...(input.hostVersion ? ['reviewed host files and operation-marker state preserved',
         'authenticated local install readiness and inactive fixture collection session'] : [])]),
   ...(nativeDialogObserved ? ['authenticated native dialog queue read'] : []),
   'clean native shutdown'], nexusReuse: receipt.nexusReuse, at: new Date().toISOString() };

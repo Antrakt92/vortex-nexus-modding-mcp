@@ -477,6 +477,29 @@ async function run(api) {
     const staged = contained(path.join(input.stage, mod.installationPath, input.payloadPath));
     must(sha(staged) === input.payloadSha256 && sha(target) === input.sentinelSha256, 'INSTALL_ONLY_BYTES_MISMATCH');
     note('native-install-only', { modId, installationPath: mod.installationPath, downloadId, staged: diskProof(staged), original: diskProof(target) });
+    if (input.installRoute === 'mcp-local-archive') {
+      // Query the installed fixture through the public reads before enabling it.
+      const reads = ['list_profiles', 'list_mods', 'list_downloads', 'read_mod_lifecycle', 'read_mod_record_fingerprints'];
+      const [profiles, mods, downloads, lifecycle, fingerprints] = await Promise.all([
+        rpc(token, reads[0], { gameId: G }),
+        rpc(token, reads[1], { gameId: G, limit: 20 }),
+        rpc(token, reads[2], { gameId: G, states: ['finished'], limit: 20 }),
+        rpc(token, reads[3], { gameId: G, modIds: [modId] }),
+        rpc(token, reads[4], { gameId: G, profileId: P, modIds: [modId] }),
+      ]);
+      must(profiles.some(row => row.id === P && row.gameId === G && row.active === true)
+        && mods.some(row => row.id === modId && row.installed === true && row.enabled === false)
+        && downloads.some(row => row.id === downloadId && row.state === 'finished')
+        && lifecycle.gameId === G && lifecycle.profileId === P && lifecycle.mods.length === 1
+        && lifecycle.mods[0].id === modId && lifecycle.mods[0].archiveId === downloadId
+        && lifecycle.mods[0].activeEnabled !== true
+        && fingerprints.schema === 'mod-record-fingerprints/1' && fingerprints.gameId === G
+        && fingerprints.profileId === P && fingerprints.nativeEffects === false
+        && fingerprints.records.length === 1 && fingerprints.records[0].modId === modId,
+        'FIXTURE_INSTALLED_READBACK_MISMATCH');
+      boundary();
+      note('authenticated-installed-readback', { reads, gameId: G, profileId: P, modId, downloadId, enabled: false });
+    }
     if (existingBaseline) {
       note('existing-mod-preserved-after-install', verifyExisting(modId));
       const modsBefore = JSON.stringify(api.getState().persistent.mods), profilesBefore = JSON.stringify(api.getState().persistent.profiles);

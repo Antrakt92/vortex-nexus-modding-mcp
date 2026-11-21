@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { remote } from './bridge.mjs';
 import paths from './paths.cjs';
 import credential from './credential.cjs';
-import { ORDINARY_MOD_LIMIT, assertOrdinaryModSnapshot, ordinaryProcessesPreserved, stoppedOrdinaryCohort } from './native-fixture-snapshot.mjs';
+import { ORDINARY_MOD_LIMIT, assertOrdinaryModSnapshot, observeOrdinaryHold, ordinaryProcessesPreserved, pinOrdinaryFile, stoppedOrdinaryCohort } from './native-fixture-snapshot.mjs';
 const base = path.join(paths.workspace, 'local-state/vortex-agent-native-fixture');
 const here = path.dirname(fileURLToPath(import.meta.url));
 const must = (ok, code) => { if (!ok) throw Error(code); };
@@ -106,31 +106,6 @@ function zip(name, data) {
   end.writeUInt32LE(0x06054b50); end.writeUInt16LE(1, 8); end.writeUInt16LE(1, 10); end.writeUInt32LE(second.length, 12); end.writeUInt32LE(first.length, 16);
   return Buffer.concat([first, second, end]);
 }
-function pinnedFile(file, limit) {
-  for (let name = file; ; name = path.dirname(name)) {
-    must(!fs.lstatSync(name).isSymbolicLink() && fs.realpathSync.native(name).toLowerCase() === name.toLowerCase(),
-      'STOPPED_ORDINARY_FILE_ALIAS');
-    if (name === path.dirname(name)) break;
-  }
-  const fd = fs.openSync(file, 'r');
-  try {
-    const current = fs.fstatSync(fd, { bigint: true });
-    const pin = value => [value.dev, value.ino, value.size, value.mtimeNs, value.ctimeNs, value.nlink].join(':');
-    must(current.isFile() && current.size > 0 && current.size <= BigInt(limit) && current.nlink === 1n,
-      'STOPPED_ORDINARY_FILE_REFUSED');
-    const digest = crypto.createHash('sha256'), buffer = Buffer.alloc(256 * 1024);
-    for (let remaining = Number(current.size); remaining > 0;) {
-      const count = fs.readSync(fd, buffer, 0, Math.min(buffer.length, remaining), null);
-      must(count > 0, 'STOPPED_ORDINARY_FILE_CHANGED');
-      digest.update(buffer.subarray(0, count));
-      remaining -= count;
-    }
-    const generation = pin(current);
-    must(generation === pin(fs.fstatSync(fd, { bigint: true }))
-      && generation === pin(fs.lstatSync(file, { bigint: true })), 'STOPPED_ORDINARY_FILE_CHANGED');
-    return { file, generation, sha256: digest.digest('hex') };
-  } finally { fs.closeSync(fd); }
-}
 function absentOrdinaryListener() {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection(3701, '127.0.0.1');
@@ -153,11 +128,11 @@ async function observeFixtureCohort(fixturePid) {
   }
 }
 function hostPins(config) {
-  const executable = pinnedFile(config.exe, 256 * 1024 * 1024);
+  const executable = pinOrdinaryFile(config.exe, 256 * 1024 * 1024);
   must(executable.sha256 === config.expectedExe, 'ORDINARY_VORTEX_EXECUTABLE_CHANGED');
-  const appAsar = pinnedFile(path.join(path.dirname(config.exe), 'resources/app.asar'), 512 * 1024 * 1024);
+  const appAsar = pinOrdinaryFile(path.join(path.dirname(config.exe), 'resources/app.asar'), 512 * 1024 * 1024);
   must(appAsar.sha256 === config.expectedAsar, 'ORDINARY_VORTEX_APP_ASAR_CHANGED');
-  return { executable, appAsar, hold: pinnedFile(config.hold, 1024 * 1024) };
+  return { executable, appAsar, hold: observeOrdinaryHold(config.hold) };
 }
 function loadFixtureAdmission(version) {
   must(['2.9.1', '2.10.1'].includes(version), 'FIXTURE_HOST_VERSION_UNREVIEWED');
@@ -191,7 +166,7 @@ async function stoppedSnapshot(config) {
   const cohort = processes(true);
   must(stoppedOrdinaryCohort(cohort), 'ORDINARY_VORTEX_NOT_STOPPED');
   await absentOrdinaryListener();
-  const manifest = pinnedFile(config.manifest, 64 * 1024 * 1024);
+  const manifest = pinOrdinaryFile(config.manifest, 64 * 1024 * 1024);
   return { mode: 'stopped', processes: cohort, ...hostPins(config), manifest, manifestSha256: manifest.sha256 };
 }
 async function pairedSnapshot(config) {
@@ -199,7 +174,7 @@ async function pairedSnapshot(config) {
   const mains = baseline.processes.filter(p => p.type === '');
   must(mains.length === 1 && path.normalize(mains[0].exe).toLowerCase() === config.exe.toLowerCase(),
     'ORDINARY_VORTEX_EXECUTABLE_UNVERIFIABLE');
-  const manifest = pinnedFile(baseline.manifestPath, 64 * 1024 * 1024);
+  const manifest = pinOrdinaryFile(baseline.manifestPath, 64 * 1024 * 1024);
   must(manifest.sha256 === baseline.manifestSha256, 'ORDINARY_VORTEX_MANIFEST_CHANGED');
   return { ...baseline, ...hostPins(config), manifest };
 }
@@ -328,13 +303,15 @@ async function main() {
   must(provenance.sources?.['paths.cjs'] && original.includes('module.exports.start = start;'), 'UNEXPECTED_RUNTIME_BUNDLE');
   const runtime = original;
   fs.writeFileSync(path.join(driver, 'runtime.cjs'), runtime, { flag: 'wx' });
-  fs.copyFileSync(path.join(here, 'native-fixture-worker.cjs'), path.join(driver, 'index.js'), fs.constants.COPYFILE_EXCL);
+  const fixtureWorker = fs.readFileSync(path.join(here, 'native-fixture-worker.cjs'));
+  input.fixtureWorkerSha256 = sha(fixtureWorker);
+  input.installedReadbackRequired = input.installRoute === 'mcp-local-archive';
+  fs.writeFileSync(path.join(driver, 'index.js'), fixtureWorker, { flag: 'wx' });
+  must(sha(fs.readFileSync(path.join(driver, 'index.js'))) === input.fixtureWorkerSha256, 'FIXTURE_WORKER_COPY_CHANGED');
   if (input.ownLocalPlan) {
-    input.fixtureWorkerSha256 = sha(fs.readFileSync(path.join(driver, 'index.js')));
     must(JSON.stringify(planClientSources()) === JSON.stringify(input.planClientSources), 'FIXTURE_CLIENT_SOURCE_CHANGED');
   }
   if (input.candidateAssessment) {
-    input.fixtureWorkerSha256 = sha(fs.readFileSync(path.join(driver, 'index.js')));
     input.candidateAssessmentSourceSha256 = provenance.sources['installed-candidate-assessment.cjs'];
     must(/^[a-f0-9]{64}$/.test(input.candidateAssessmentSourceSha256 || '')
       && input.candidateAssessmentSourceSha256 === sha(fs.readFileSync(path.join(here, 'installed-candidate-assessment.cjs'))),
