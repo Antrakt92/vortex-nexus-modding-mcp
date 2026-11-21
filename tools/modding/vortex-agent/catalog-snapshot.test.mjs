@@ -21,6 +21,19 @@ test('inventory reads a numeric game catalogue once per projection, never across
   assert.equal(reads, 2);
 });
 
+test('inventory filters excluded download states before resolving their catalogue', () => {
+  const pending = {...item(), state: 'started'};
+  const finished = item(44);
+  delete finished.modInfo.meta;
+  const api = {getState: () => ({persistent: {downloads: {files: {pending, finished}}}})};
+  let reads = 0;
+  const catalogue = () => { reads++; return []; };
+  const rows = listDownloads(api, selectors, {states: ['finished']}, catalogue);
+  assert.deepEqual(rows.map(row => row.id), ['finished']);
+  assert.equal(rows[0].identityVerified, true);
+  assert.equal(reads, 0);
+});
+
 test('matching uses one fresh catalogue per scan and observes drift on the next scan', () => {
   const files = {unrelated: item(99), exact: item()}; let reads = 0, domain = 'cyberpunk2077';
   const catalog = () => {reads++; return [{id: 3333, domain_name: domain}];};

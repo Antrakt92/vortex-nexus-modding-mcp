@@ -7,6 +7,8 @@ import path from 'node:path';
 import {clientRemote as rawClientRemote, handler as rawHandler, runStdio} from './bridge.mjs';
 import { createToolCaller, inspectSession, main as rawMain, runPlan as rawRunPlan, validatePlan } from './session.mjs';
 import {createPlanJournal} from './plan-journal.mjs';
+import lifecycle from './lifecycle-inspection.cjs';
+import serialization from './serialization.cjs';
 
 const privateRoots = [];
 function privateJournal() {
@@ -238,6 +240,28 @@ test('malformed MCP result metadata fails with a stable diagnostic', async () =>
   ]) {
     await assert.rejects(createToolCaller(async () => response)('health'), /^Error: INVALID_TOOL_RESPONSE$/);
   }
+});
+
+test('text fallback refuses a JSON number outside the finite range', async () => {
+  const call = createToolCaller(async () => ({content: [{type: 'text', text: '{"count":1e400}'}]}));
+  await assert.rejects(call('read_collection_health'), /^Error: INVALID_TOOL_RESPONSE$/);
+});
+
+test('text fallback accepts a large supported lifecycle projection', async () => {
+  const gameId = 'cyberpunk2077';
+  const ids = Array.from({length: 1000}, (_, i) => 'mod-' + i);
+  const selected = ids.slice(0, 5);
+  const mods = Object.fromEntries(ids.map(id => [id, {state: 'installed', type: '', archiveId: 'shared-archive',
+    rules: [{type: 'requires', reference: {id: 'test-reference'}}]}]));
+  const modState = Object.fromEntries(selected.map(id => [id, {enabled: true}]));
+  const profiles = Object.fromEntries(ids.map((_, i) => ['profile-' + i, {gameId, modState}]));
+  const api = {getState: () => ({persistent: {mods: {[gameId]: mods}, profiles}})};
+  const selectors = {activeGameId: () => gameId, activeProfileId: () => 'profile-0'};
+  const payload = lifecycle.readModLifecycle(api, selectors, {testModReference: () => true}, {modIds: selected});
+  const expected = serialization.safe(payload, api, 'read_mod_lifecycle');
+  assert.equal(expected.mods.reduce((n, mod) => n + mod.incomingRequires.length, 0), 5000);
+  const call = createToolCaller(async () => ({content: [{type: 'text', text: JSON.stringify(expected)}]}));
+  assert.deepEqual(await call('read_mod_lifecycle'), expected);
 });
 
 test('contradictory structured and text tool results are refused before being trusted', async () => {

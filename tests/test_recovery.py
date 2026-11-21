@@ -2,6 +2,7 @@ import importlib.util
 import io
 import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -13,6 +14,32 @@ spec.loader.exec_module(r)
 
 
 class RecoveryTests(unittest.TestCase):
+    def test_interrupted_recovery_write_can_be_retried(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / 'template.json'
+            with mock.patch('os.fsync', side_effect=OSError('interrupted write')):
+                with self.assertRaisesRegex(OSError, 'interrupted write'):
+                    r.write_matching(target, b'complete content', True)
+            self.assertEqual(list(Path(tmp).iterdir()), [])
+            self.assertEqual(r.write_matching(target, b'complete content', True), 'created')
+            self.assertEqual(target.read_bytes(), b'complete content')
+
+    def test_recovery_preserves_a_destination_created_before_publication(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / 'template.json'
+            owner, method = (Path, 'rename') if os.name == 'nt' else (os, 'link')
+            publish = getattr(owner, method)
+
+            def concurrent_create(source, destination):
+                destination.write_bytes(b'concurrent content')
+                return publish(source, destination)
+
+            with mock.patch.object(owner, method, new=concurrent_create):
+                with self.assertRaises(FileExistsError):
+                    r.write_matching(target, b'recovery content', True)
+            self.assertEqual(target.read_bytes(), b'concurrent content')
+            self.assertEqual(list(Path(tmp).iterdir()), [target])
+
     def test_configuration_check_reads_at_most_the_expected_bytes_plus_one(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'template.json'

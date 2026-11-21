@@ -293,6 +293,8 @@ helper is not invoked by this action. No dependency or bundle changes were made.
 - GET-only reconciliation can confirm an independently identified version and
   clear that exact target lock after the action returned. It cannot clear an active
   operation. It does not re-upload or replay changelogs.
+  An explicit version ID may fill a missing ID. It must agree with any ID already
+  recorded in the receipt or its matching lock.
   `action_complete: false` remains false after partial-action reconciliation.
 - If no version can be independently identified, or a lock exists without a valid
   matching receipt, stop for investigation. There is no force-retry/reset command.

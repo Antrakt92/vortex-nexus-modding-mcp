@@ -41,12 +41,19 @@ function createNativeDialogController(api,{selectors,assertRead,assertRespond,pe
   if(!queue.length)return{context,ids,front:null};const front=snapshot(field(queue,'0'));return{context,ids,front,fingerprint:digest({context,front})};
  }
  function unchanged(a,b){need(digest(a.context)===digest(b.context),'CONTEXT_CHANGED');need(a.front&&b.front&&a.fingerprint===b.fingerprint,'FRONT_CHANGED');}
+ function retainTail(previous,current){
+  const tail=previous.ids.slice(1), retained=new Set(tail);
+  const observedTail=current.ids.filter(id=>retained.has(id));
+  need(tail.length===observedTail.length&&tail.every((id,i)=>observedTail[i]===id),'OTHER_DIALOG_CHANGED');
+ }
  async function bounded(task,deadline){const budget=deadline-now();need(budget>0,'DISMISSAL_TIMEOUT');let timer;try{return await Promise.race([Promise.resolve().then(task),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('NATIVE_DIALOG_DISMISSAL_TIMEOUT')),budget);})]);}finally{clearTimeout(timer);}}
  function evidence(){return{callbackOriginVerified:false,targetArchiveIdentityVerified:false,installationCompleted:false,dialogDismissalOnly:true};}
  return Object.freeze({
-  async read(args){need(!busy,'ACTION_PENDING');const a=request(args);await assertRead(a);const first=capture(a);await assertRead(a);const current=capture(a);need(digest(first)===digest(current),'READ_CHANGED');observed=null;
+  async read(args){need(!busy,'ACTION_PENDING');busy=true;try{
+   const a=request(args);await assertRead(a);const first=capture(a);await assertRead(a);const current=capture(a);need(digest(first)===digest(current),'READ_CHANGED');observed=null;
    if(!current.front)return{schema:'native-dialog-readiness/1',status:'empty',queueSize:0,eligibleActions:[],...evidence()};
    const target=classify(current.front);observed={...current,at:now(),family:target.family,actions:target.actions};return{schema:'native-dialog-readiness/1',status:'ready',gameId:a.gameId,profileId:a.profileId,dialogId:current.front.id,fingerprint:current.fingerprint,family:target.family,title:current.front.title,queueSize:current.ids.length,eligibleActions:Object.keys(target.actions),...evidence()};
+  }finally{busy=false;}
   },
   async respond(args,context){need(!busy,'ACTION_PENDING');busy=true;let attempted=false;try{
    const a=request(args,true),r=observed;need(r&&r.front.id===a.dialogId&&r.fingerprint===a.fingerprint&&now()-r.at>=0&&now()-r.at<=30000,'FRESH_OBSERVATION_REQUIRED');
@@ -55,9 +62,11 @@ function createNativeDialogController(api,{selectors,assertRead,assertRespond,pe
    // Cancel is abort-only: its caller must admit it despite a retained failed
    // GLOBAL marker, without clearing that marker or granting mutation authority.
    const scope=Object.freeze({abortOnly:a.action==='cancel',dialogDismissalOnly:true});
-   await assertRespond(a,context,scope);unchanged(r,capture(a));await assertRespond(a,context,scope);unchanged(r,capture(a));methods();
+   let latest=r;
+   const refresh=()=>{const current=capture(a);unchanged(r,current);retainTail(latest,current);latest=current;};
+   await assertRespond(a,context,scope);refresh();await assertRespond(a,context,scope);refresh();methods();
    let delegateOpen=true,invokeCalls=0;
-   const eligible=()=>{need(delegateOpen&&!attempted,'RESPONSE_NOT_ELIGIBLE');need(now()-r.at>=0&&now()-r.at<=30000,'FRESH_OBSERVATION_REQUIRED');unchanged(r,capture(a));methods();need(!used.has(key),'REPLAY_REFUSED');need(used.size<4096,'ATTEMPT_LIMIT');return true;};
+   const eligible=()=>{need(delegateOpen&&!attempted,'RESPONSE_NOT_ELIGIBLE');need(now()-r.at>=0&&now()-r.at<=30000,'FRESH_OBSERVATION_REQUIRED');refresh();methods();need(!used.has(key),'REPLAY_REFUSED');need(used.size<4096,'ATTEMPT_LIMIT');return true;};
    const invoke=()=>{invokeCalls++;need(invokeCalls===1,'MULTIPLE_RESPONSES_REFUSED');eligible();used.add(key);observed=null;attempted=true;return closeDialog.call(api,a.dialogId,r.actions[a.action],{remember:false});};
    // Only this source-captured seam may arm a normal durable operation. It must
    // call the synchronous eligibility check and fixed invocation inside its
@@ -65,12 +74,10 @@ function createNativeDialogController(api,{selectors,assertRead,assertRespond,pe
    try{await performResponse(invoke,eligible,context,scope);}finally{delegateOpen=false;}
    need(invokeCalls===1&&attempted,'RESPONSE_NOT_INVOKED');
    const deadline=now()+transitionTimeoutMs;while(true){await bounded(()=>assertRead({gameId:a.gameId,profileId:a.profileId}),deadline);const current=capture(a);need(digest(current.context)===digest(r.context),'CONTEXT_CHANGED');
+    // A response can enqueue a follow-up anywhere. Preserve every other
+    // question observed before dispatch in its original relative order.
+    retainTail(latest,current);
     if(!current.ids.includes(a.dialogId)){
-     // Resolving a question can synchronously enqueue the next question before
-     // the retained tail. Prove the untouched dialogs survived in order.
-     const tail=r.ids.slice(1), retained=new Set(tail);
-     const observedTail=current.ids.filter(id=>retained.has(id));
-     need(tail.length===observedTail.length&&tail.every((id,i)=>observedTail[i]===id),'OTHER_DIALOG_CHANGED');
      return{schema:'native-dialog-response/1',action:a.action,dialogId:a.dialogId,nativeDialogDismissalVerified:true,remember:false,abortOnly:scope.abortOnly,...evidence()};
     }
     need(current.fingerprint===r.fingerprint,'FRONT_CHANGED');need(now()<deadline,'DISMISSAL_TIMEOUT');await bounded(()=>sleep(pollMs),deadline);

@@ -96,6 +96,14 @@ test('an appended question observed before respond cannot disappear during nativ
   f.close=()=>{f.state.session.notifications.dialogs=[];};f.c.respond(f.args);
   await assert.rejects(f.c.waitForTransition(f.args),/OTHER_DIALOG_ANSWERED/);assert.equal(f.calls.length,1);
 });
+test('a question observed by an earlier validation cannot disappear before native response',async()=>{
+  const f=fixture();await f.observe();await f.c.prepare(f.args);
+  f.state.session.notifications.dialogs.push(dialog('tail','New legitimate question'));
+  assert.equal(f.c.validate(f.args),true);
+  f.state.session.notifications.dialogs.pop();
+  assert.throws(()=>f.c.respond(f.args),/PREPARATION_CHANGED/);
+  assert.equal(f.calls.length,0);
+});
 test('source admission failure before native answer can recover with a fresh ID after cause is fixed',async()=>{
   const f=fixture();await f.observe();f.source=false;await assert.rejects(f.c.prepare(f.args));assert.equal(f.calls.length,0);
   f.source=true;await assert.rejects(f.c.prepare(f.args),/REQUEST_ALREADY_USED/);

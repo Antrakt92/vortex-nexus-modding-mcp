@@ -28,13 +28,32 @@ test('bridge CLI rejects invalid arguments before reading the Vortex credential'
 });
 
 test('initialization refuses malformed health results with a stable diagnostic', async () => {
-  for (const health of [null, 'upstream', {content: {}}, reply(null), {isError: 'false', ...reply({protocol: 'vortex-agent/1'})}]) {
+  const accepted = reply({protocol: 'vortex-agent/1'});
+  const other = reply({protocol: 'different-adapter'});
+  for (const health of [null, 'upstream', {content: {}}, reply(null), {isError: 'false', ...accepted},
+    {content: [...accepted.content, ...other.content]}, {...accepted, structuredContent: {protocol: 'different-adapter'}}]) {
     const handle = handler(async () => health);
     const init = await handle({jsonrpc: '2.0', id: 1, method: 'initialize'});
     assert.match(init.error.message, /Wrong server on port 3701/);
     const next = await handle({jsonrpc: '2.0', id: 2, method: 'tools/list'});
     assert.match(next.error.message, /Initialize the bridge first/);
   }
+});
+
+test('MCP tool calls refuse malformed results and preserve valid tool errors', async () => {
+  let response;
+  const handle = handler(async (_method, params) =>
+    params.name === 'health' ? reply({protocol: 'vortex-agent/1'}) : response);
+  const init = await handle({jsonrpc: '2.0', id: 1, method: 'initialize'});
+  assert.equal(init.error, undefined);
+  const request = {jsonrpc: '2.0', id: 2, method: 'tools/call', params: {name: 'list_dialogs', arguments: {}}};
+  for (response of [null, [], {content: null}, {isError: 'false', ...reply([])}]) {
+    const rejected = await handle(request);
+    assert.equal(rejected.error?.message, 'Invalid Vortex tool result');
+    assert.equal(Object.hasOwn(rejected, 'result'), false);
+  }
+  response = {isError: true, ...reply({error: 'TOOL_CONCURRENCY_LIMIT'})};
+  assert.deepEqual((await handle(request)).result, response);
 });
 
 test('bridge CLI refuses malformed tool results before stdout and preserves legitimate error status', async t => {

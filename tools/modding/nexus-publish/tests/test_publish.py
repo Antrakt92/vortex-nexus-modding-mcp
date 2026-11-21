@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import zipfile
@@ -141,6 +142,35 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(result["outcome"], "done")
         self.assertFalse(result["action_complete"])
 
+    def test_reconcile_refuses_to_replace_existing_version_id(self):
+        result = self.execute({"ok": True, "version_id": "987"})
+        self.assertEqual(result["outcome"], "done")
+        path = p.receipt_path(self.m, self.root)
+        previous = path.read_bytes()
+        with self.assertRaisesRegex(p.Blocked, "version ID conflicts"):
+            p.reconcile(self.m, state=self.root, version_id="988",
+                        credential=lambda: self.fail("credential read for a different version ID"))
+        self.assertEqual(path.read_bytes(), previous)
+
+    def test_reconcile_uses_durable_lock_version_when_receipt_is_missing_it(self):
+        self.execute({"ok": False, "version_id": "987"})
+        path = p.receipt_path(self.m, self.root)
+        p.write_receipt(path, {**p.load_receipt(path, self.m), "version_id": None})
+        result = p.reconcile(self.m, state=self.root, key="mock-secret-never-log", read=self.read)
+        self.assertEqual(result["outcome"], "done")
+        self.assertEqual(result["version_id"], "987")
+        self.assertFalse(p.target_lock_path(self.m, self.root).exists())
+
+    def test_reconcile_refuses_conflicting_durable_versions_before_credentials(self):
+        self.execute({"ok": False, "version_id": "987"})
+        lock = p.target_lock_path(self.m, self.root)
+        p.write_receipt(lock, {**p.load_receipt(lock, self.m), "version_id": "988"})
+        previous = lock.read_bytes()
+        with self.assertRaisesRegex(p.Blocked, "version ID conflicts"):
+            p.reconcile(self.m, state=self.root,
+                        credential=lambda: self.fail("credential read with conflicting ledger evidence"))
+        self.assertEqual(lock.read_bytes(), previous)
+
     def test_attempt_survives_crash_and_hash_change_cannot_bypass(self):
         path = p.receipt_path(self.m, self.root)
         p.write_receipt(path, p.record(self.m, "attempt"), exclusive=True)
@@ -184,14 +214,25 @@ class RunnerTests(unittest.TestCase):
         with self.assertRaises(p.Blocked):
             p.validate_target(self.m, "mock-secret-never-log", duplicate)
 
+    def test_malformed_remote_version_listing_cannot_admit_upload(self):
+        for legacy_version in (None, False, 123, {}):
+            def read(route, key):
+                if route.endswith("/versions"):
+                    return {"versions": [{"version": "1.0.0"}, {"version": legacy_version}]}
+                return self.read(route, key)
+
+            with self.subTest(version=legacy_version), self.assertRaisesRegex(p.Blocked, "version-list schema"):
+                p.validate_target(self.m, "mock-secret-never-log", read)
+
     def test_exclusive_attempt_receipt(self):
         path = p.receipt_path(self.m, self.root)
         p.write_receipt(path, p.record(self.m, "attempt"), exclusive=True)
         with self.assertRaises(FileExistsError): p.write_receipt(path, {}, exclusive=True)
 
     def test_environment_is_allowlisted(self):
-        with patch.dict(os.environ, {"NODE_OPTIONS": "--import evil", "NEXUSMODS_API_BASE": "https://evil",
-                                     "GITHUB_OUTPUT": "private.txt", "ACTIONS_STEP_DEBUG": "true", "OTHER_SECRET": "private"}):
+        fixture = {"NODE_OPTIONS": "--import ignored", "NEXUSMODS_API_BASE": "https://example.invalid",
+                   "GITHUB_OUTPUT": "private.txt", "ACTIONS_STEP_DEBUG": "true", "OTHER_SECRET": "private"}
+        with patch.object(p, "os", SimpleNamespace(environ=fixture)):
             env = p.child_environment(self.m, "mock-secret-never-log")
         for k in ["NODE_OPTIONS", "NEXUSMODS_API_BASE", "GITHUB_OUTPUT", "ACTIONS_STEP_DEBUG", "OTHER_SECRET"]:
             self.assertNotIn(k, env)
@@ -206,7 +247,9 @@ class RunnerTests(unittest.TestCase):
             (destination / "fixture.zip").write_bytes(self.archive.read_bytes())
             (destination / "publication.json").write_text(json.dumps(self.m))
             return subprocess.CompletedProcess(command, 0, b"", b"")
-        with patch.dict(os.environ, env), patch.object(assets.subprocess, "run", side_effect=download), patch.dict(sys.modules, {"publish": p}):
+        with (patch.object(assets, "os", SimpleNamespace(environ=env)),
+              patch.object(assets.subprocess, "run", side_effect=download),
+              patch.dict(sys.modules, {"publish": p})):
             self.assertEqual(assets.main(), 0)
         result = json.loads((self.root / "nexus-publish-assets/manifest.json").read_text())
         self.assertEqual(result["archive"], str((self.root / "nexus-publish-assets/fixture.zip").resolve()))
@@ -218,11 +261,16 @@ class RunnerTests(unittest.TestCase):
         env = {"RELEASE_TAG": "--delete", "ARCHIVE_ASSET": "fixture.zip", "MANIFEST_ASSET": "publication.json",
                "GH_REPO": "example/mod", "RUNNER_TEMP": str(self.root)}
         stderr = io.StringIO()
-        with patch.dict(os.environ, env), patch.object(assets.subprocess, "run") as call, contextlib.redirect_stderr(stderr):
+        with (patch.object(assets, "os", SimpleNamespace(environ=env)),
+              patch.object(assets.subprocess, "run") as call,
+              contextlib.redirect_stderr(stderr)):
             self.assertEqual(assets.main(), 2)
             call.assert_not_called()
         env["RELEASE_TAG"] = "v1.2.3"
-        with patch.dict(os.environ, env), contextlib.redirect_stderr(stderr), patch.object(assets.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, b"mock-secret", b"https://private.invalid")):
+        with (patch.object(assets, "os", SimpleNamespace(environ=env)),
+              contextlib.redirect_stderr(stderr),
+              patch.object(assets.subprocess, "run", return_value=subprocess.CompletedProcess(
+                  [], 1, b"mock-secret", b"https://private.invalid"))):
             self.assertEqual(assets.main(), 2)
         self.assertNotIn("mock-secret", stderr.getvalue())
         self.assertNotIn("https://", stderr.getvalue())

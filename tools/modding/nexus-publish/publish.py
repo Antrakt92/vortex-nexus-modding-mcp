@@ -260,7 +260,10 @@ def validate_target(manifest, key, read=api_read):
         versions = read("/mod-files/" + manifest["file_id"] + "/versions", key)["versions"]
         if not isinstance(versions, list) or not versions:
             raise Blocked("Existing file / mod / game relationship could not be verified.")
-        if any(v["version"] == manifest["version"] for v in versions):
+        labels = [entry["version"] for entry in versions]
+        if not all(isinstance(label, str) for label in labels):
+            raise Blocked("Invalid target or version-list schema.")
+        if manifest["version"] in labels:
             raise Blocked("This version already exists; reconcile instead of uploading again.")
     except (KeyError, TypeError):
         raise Blocked("Invalid target or version-list schema.") from None
@@ -527,6 +530,7 @@ def reconcile_locked(manifest, key, state, version_id, read, credential):
     try:
         data = load_receipt(path, manifest)
         lock = target_lock_path(manifest, state)
+        recorded_id = data["version_id"]
         if data["action_running"]:
             raise Blocked("Interrupted running attempt: independently establish uploader termination before deliberate ledger recovery; automatic lock clearing refused.")
         if lock.exists():
@@ -535,9 +539,15 @@ def reconcile_locked(manifest, key, state, version_id, read, credential):
                 raise Blocked("Attempt ownership changed; reconciliation refused.")
             if locked["action_running"]:
                 raise Blocked("Interrupted running attempt: automatic lock clearing refused.")
+            locked_id = locked["version_id"]
+            if recorded_id is not None and locked_id is not None and recorded_id != locked_id:
+                raise Blocked("The version ID conflicts between the durable receipt and lock.")
+            recorded_id = recorded_id or locked_id
         elif data["outcome"] != "done":
             raise Blocked("Unresolved receipt has no matching durable lock; investigate ledger integrity.")
-        identifier = version_id or data.get("version_id")
+        if version_id is not None and recorded_id is not None and version_id != recorded_id:
+            raise Blocked("The supplied version ID conflicts with the durable attempt.")
+        identifier = version_id if version_id is not None else recorded_id
         if not valid_id(identifier):
             raise Blocked("Supply an independently identified v3 version ID; no upload retry is available.")
         if key is None:

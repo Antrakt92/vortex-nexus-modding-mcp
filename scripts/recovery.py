@@ -96,8 +96,23 @@ def write_matching(path, data, apply):
         return 'unchanged'
     if apply:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open('xb') as out:
-            out.write(data)
+        no_links(path)
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(prefix='.recovery-', dir=path.parent, delete=False) as out:
+                temporary = Path(out.name)
+                out.write(data)
+                out.flush()
+                os.fsync(out.fileno())
+            no_links(path)
+            # Both publication paths refuse to replace a newly created destination.
+            if os.name == 'nt':
+                temporary.rename(path)
+            else:
+                os.link(temporary, path)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
     return 'created' if apply else 'would_create'
 
 
@@ -191,8 +206,7 @@ def fetch_sources(workspace, archive_dir=None, apply=False):
                 data = response.read(row['bytes'] + 1)
             if len(data) != row['bytes'] or digest(data) != row['sha256']:
                 raise ValueError('Recovery download failed size/hash verification')
-            with bundle.open('xb') as out:
-                out.write(data)
+            write_matching(bundle, data, True)
         if bundle.stat().st_size != row['bytes'] or digest(bundle.read_bytes()) != row['sha256']:
             raise ValueError('Recovery bundle changed')
         # Publish a checkout only after verification, so failed Git operations

@@ -190,6 +190,10 @@ async function preservePreviousBuild(plugin) {
 }
 const run = (cmd, args, cwd = BUILD) => execFileSync(cmd, args, { cwd, stdio: 'inherit', shell: process.platform === 'win32' && cmd.endsWith('.cmd') });
 export async function main(argv = process.argv.slice(2)) {
+  const phases = ['--prepare', '--regression', '--patch', '--compile', '--package'];
+  const [phase] = argv;
+  if (argv.length !== 1 || !phases.includes(phase))
+    throw Error('Usage: build.mjs ' + phases.join(' | '));
   // COPYFILE_EXCL protects new files only. Existing adapted inputs and outputs
   // also need ancestry checks before any write can follow a planted link.
   const buildTree = path.join(BUILD, 'upstream');
@@ -198,7 +202,7 @@ export async function main(argv = process.argv.slice(2)) {
     path.join(buildTree, 'tsup.adapted.config.ts'));
   await noReparseTree(path.join(buildTree, 'adapted-dist'));
   await noReparseTree(path.join(BUILD, 'plugin/vortex-agent'));
-if (argv.includes('--prepare')) {
+if (phase === '--prepare') {
   await fs.mkdir(BUILD, { recursive: true });
   const tree = path.join(BUILD, 'upstream');
   try { await fs.access(tree); throw new Error('Build tree already exists; inspect it rather than overwrite'); }
@@ -221,9 +225,9 @@ if (argv.includes('--prepare')) {
     run('git', ['checkout', '--detach', PIN], tree);
     await checkBuildTree(tree);
   }
-} else if (argv.includes('--regression')) {
+} else if (phase === '--regression') {
   await fs.copyFile(path.join(source, 'regression.test.ts'), path.join(BUILD, 'upstream', 'src', 'regression.test.ts'));
-} else if (argv.includes('--patch')) {
+} else if (phase === '--patch') {
   await preservePreviousBuild(path.join(BUILD, 'plugin/vortex-agent'));
   const tree = path.join(BUILD, 'upstream');
   await checkBuildTree(tree);
@@ -231,7 +235,7 @@ if (argv.includes('--prepare')) {
   await fs.writeFile(path.join(tree, 'src', 'adapted.cjs'), "const { start } = require('./extension.cjs');\nmodule.exports = function(context) { context.once(() => start(context.api)); return true; };\nmodule.exports.start = start;\n");
   const config = await fs.readFile(path.join(tree, 'tsup.config.ts'), 'utf8');
   await fs.writeFile(path.join(tree, 'tsup.adapted.config.ts'), adaptedConfig(config));
-} else if (argv.includes('--compile')) {
+} else if (phase === '--compile') {
   const tree = path.join(BUILD, 'upstream');
   await checkBuildTree(tree);
   const inputs = await compileInputs(tree);
@@ -239,7 +243,7 @@ if (argv.includes('--prepare')) {
   if (JSON.stringify(await compileInputs(tree)) !== JSON.stringify(inputs)) throw Error('Build inputs changed while compiling');
   await fs.writeFile(path.join(BUILD, 'adapted-compile.json'), JSON.stringify({ inputs,
     bundleSha256: await sha(path.join(tree, 'adapted-dist/index.js')) }, null, 2));
-} else if (argv.includes('--package')) {
+} else if (phase === '--package') {
   const tree = path.join(BUILD, 'upstream');
   const upstream = await checkBuildTree(tree);
   const current = await compileInputs(tree);
@@ -281,7 +285,7 @@ if (argv.includes('--prepare')) {
     await fs.writeFile(destination, data);
   }
   console.log(plugin);
-} else throw new Error('Usage: build.mjs --prepare | --regression | --patch | --compile | --package');
+}
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(error => {
   process.stderr.write(error.message + '\n'); process.exitCode = 1;
