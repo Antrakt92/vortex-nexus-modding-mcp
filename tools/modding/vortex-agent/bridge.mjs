@@ -56,11 +56,12 @@ const isToolResult = value => isObject(value) && Array.isArray(value.content)
   && (!Object.hasOwn(value, 'isError') || typeof value.isError === 'boolean');
 function requireHealth(result) {
   if (isToolResult(result) && !result.isError) {
-    const text = result.content.find(item => item?.type === 'text')?.text;
-    if (typeof text === 'string') {
+    const texts = result.content.filter(item => item?.type === 'text');
+    if (texts.length === 1 && typeof texts[0].text === 'string') {
       let info;
-      try { info = parse(text); } catch { /* Report a stable handshake diagnostic below. */ }
-      if (isObject(info) && info.protocol === 'vortex-agent/1') return;
+      try { info = parse(texts[0].text); } catch { /* Report a stable handshake diagnostic below. */ }
+      if (isObject(info) && info.protocol === 'vortex-agent/1'
+        && (!Object.hasOwn(result, 'structuredContent') || isDeepStrictEqual(info, result.structuredContent))) return;
     }
   }
   throw new Error('Wrong server on port 3701: vortex-agent/1 health required');
@@ -324,6 +325,7 @@ export function handler(call = remote, {journal} = {}) {
           try {result = await clientRemote(request.method, request.params, call, {signal: controller.signal, journal});}
           finally {plans.delete(request.id);}
         } else result = await clientRemote(request.method, request.params || {}, call, {journal});
+        if (request.method === 'tools/call' && !isToolResult(result)) throw new Error('Invalid Vortex tool result');
       } else return { jsonrpc: '2.0', id: request.id, error: { code: -32601, message: 'Method not found' } };
       return { jsonrpc: '2.0', id: request.id, result };
     } catch (error) { return { jsonrpc: '2.0', id: request.id, error: { code: -32000, message: error.message } }; }

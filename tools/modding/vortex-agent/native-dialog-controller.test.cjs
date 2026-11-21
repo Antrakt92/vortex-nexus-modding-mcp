@@ -38,6 +38,55 @@ test('dismissal accepts a new follow-up ahead of the retained queue',async()=>{
 
 test('empty queue does not create a usable observed target',async()=>{const f=fixture({queue:[]}),r=await f.read();assert.equal(r.status,'empty');assert.deepEqual(r.eligibleActions,[]);assert.equal(f.calls.length,0);});
 
+test('dismissal retains questions queued during admission',async()=>{
+ const later=dialog('version','queued-during-admission');
+ for(const retain of [false,true]){
+  const f=fixture({
+   admit(state,_args,_scope,n){if(n===2)state.session.notifications.dialogs.push(later);},
+   close(state){state.session.notifications.dialogs=retain?[later]:[];},
+  });
+  const r=await f.read();
+  const response=f.controller.respond(f.args(r,'cancel'),'owned');
+  if(retain)assert.equal((await response).nativeDialogDismissalVerified,true);
+  else await assert.rejects(response,/EFFECT_UNCERTAIN/);
+  assert.equal(f.calls.length,1);
+ }
+});
+
+test('a question already observed in the tail cannot disappear before dispatch',async()=>{
+ const tail=dialog('version','tail');
+ const f=fixture({queue:[dialog(),tail],admit(state,_args,_scope,n){
+  if(n===2)state.session.notifications.dialogs.pop();
+ }});
+ const r=await f.read();
+ await assert.rejects(f.controller.respond(f.args(r,'cancel'),'owned'),/OTHER_DIALOG_CHANGED/);
+ assert.equal(f.calls.length,0);
+});
+
+test('a pending read blocks an answer based on an earlier observation',async()=>{
+ const f=fixture();
+ let gate;
+ const controller=createNativeDialogController(f.api,{selectors:f.selectors,assertRead(){
+  const pending=gate;gate=undefined;return pending?.promise;
+ },assertRespond(){}});
+ const args={gameId:'game',profileId:'profile'};
+ const first=await controller.read(args);
+ const pending=Promise.withResolvers();
+ gate=pending;
+ const read=controller.read(args);
+ try{
+  await assert.rejects(controller.respond(f.args(first,'cancel'),'owned'),/ACTION_PENDING/);
+  assert.equal(f.calls.length,0);
+ }finally{
+  gate=undefined;
+  pending.resolve();
+ }
+ const fresh=await read;
+ const response=await controller.respond(f.args(fresh,'cancel'),'owned');
+ assert.equal(response.nativeDialogDismissalVerified,true);
+ assert.equal(f.calls.length,1);
+});
+
 test('pinned native question expressions and actual notification callbacks resolve each typed action',
  {skip:!process.env.VORTEX_NATIVE_APP_ASAR||!process.env.VORTEX_TYPESCRIPT},async()=>{
  const fs=require('node:fs'),crypto=require('node:crypto'),H=b=>crypto.createHash('sha256').update(b).digest('hex');

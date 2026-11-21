@@ -249,8 +249,10 @@ class PristineCacheTests(unittest.TestCase):
         self.assertNotIn('requiredTypesVerified', result); self.assertEqual(before, self.tree())
 
     def test_source_default_workspace_uses_environment_then_project_root(self):
-        for environment, expected in [({'NEXUS_WORKSPACE': str(self.work)}, self.work), ({'NEXUS_WORKSPACE': ''}, Path(m.__file__).absolute().parents[2])]:
-            with patch.dict(os.environ, environment), patch.object(m, 'inspect_cache', return_value={'state': 'absent'}) as inspect, contextlib.redirect_stdout(io.StringIO()):
+        for workspace, expected in [(str(self.work), self.work), ('', Path(m.__file__).absolute().parents[2])]:
+            # Restoring process-wide empty environment values can unset them on Windows.
+            with patch.object(m, 'os', wraps=os) as local_os, patch.object(m, 'inspect_cache', return_value={'state': 'absent'}) as inspect, contextlib.redirect_stdout(io.StringIO()):
+                local_os.environ = {'NEXUS_WORKSPACE': workspace}
                 self.assertEqual(m.main([]), 0)
             self.assertEqual(inspect.call_args.args[0], expected)
 

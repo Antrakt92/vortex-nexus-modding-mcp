@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { remote } from './bridge.mjs';
+import { MAX_RESPONSE_BYTES, remote } from './bridge.mjs';
 import {CONTEXT_KEYS, ROOTS, validateContext, validatePlan, planQueue} from './plan-contract.mjs';
 import {canonicalPlanId, createPlanJournal} from './plan-journal.mjs';
 import strictJSON from './strict-json.cjs';
@@ -26,6 +26,12 @@ function synchronousJournal(value) {
   return value;
 }
 function recorded(value) {insist(synchronousJournal(value) === undefined, 'PLAN_JOURNAL_INVALID_WRITER');}
+function parseToolText(text) {
+  insist(typeof text === 'string', 'INVALID_TOOL_RESPONSE');
+  // Large lifecycle projections can exceed the default JSON token budget.
+  try {return strictJSON.parseStrictJSON(Buffer.from(text), {maxBytes: MAX_RESPONSE_BYTES, maxTokens: 1_000_000});}
+  catch {throw Error('INVALID_TOOL_RESPONSE');}
+}
 
 export function createToolCaller(transport = remote) {
   return async (name, args = {}) => {
@@ -37,7 +43,7 @@ export function createToolCaller(transport = remote) {
     if (response.isError === true) {
       let code = 'REMOTE_TOOL_FAILED';
       try {
-        const value = texts?.length === 1 ? JSON.parse(texts[0].text) : null;
+        const value = texts?.length === 1 ? parseToolText(texts[0].text) : null;
         if (typeof value?.error === 'string' && /^[A-Z][A-Z0-9_]{1,99}$/.test(value.error)) code = value.error;
       } catch { /* Never echo unstructured upstream errors or private transport text. */ }
       throw new Error(code);
@@ -45,15 +51,13 @@ export function createToolCaller(transport = remote) {
     if (Object.hasOwn(response, 'structuredContent')) {
       insist(object(response.structuredContent), 'INVALID_TOOL_RESPONSE');
       if (texts?.length) {
-        insist(texts.length === 1 && typeof texts[0].text === 'string', 'INVALID_TOOL_RESPONSE');
-        let fallback;
-        try { fallback = JSON.parse(texts[0].text); } catch { throw new Error('INVALID_TOOL_RESPONSE'); }
-        insist(same(response.structuredContent, fallback), 'CONTRADICTORY_TOOL_RESPONSE');
+        insist(texts.length === 1, 'INVALID_TOOL_RESPONSE');
+        insist(same(response.structuredContent, parseToolText(texts[0].text)), 'CONTRADICTORY_TOOL_RESPONSE');
       }
       return response.structuredContent;
     }
-    insist(Array.isArray(texts) && texts.length === 1 && typeof texts[0].text === 'string', 'INVALID_TOOL_RESPONSE');
-    try { return JSON.parse(texts[0].text); } catch { throw new Error('INVALID_TOOL_RESPONSE'); }
+    insist(texts?.length === 1, 'INVALID_TOOL_RESPONSE');
+    return parseToolText(texts[0].text);
   };
 }
 

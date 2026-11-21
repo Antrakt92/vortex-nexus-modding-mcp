@@ -46,10 +46,20 @@ async function buildFixture(t) {
     await fs.rm(root, { recursive: true, force: true });
   });
   const env = { ...process.env, NEXUS_WORKSPACE: root, NEXUS_RUNTIME_WORKSPACE: root };
-  const run = flag => spawnSync(process.execPath, [fileURLToPath(new URL('./build.mjs', import.meta.url)), flag],
+  const run = (...args) => spawnSync(process.execPath, [fileURLToPath(new URL('./build.mjs', import.meta.url)), ...args],
     { env, encoding: 'utf8', windowsHide: true });
   return {root, build: path.join(root, 'local-state/vortex-agent-build'), run};
 }
+
+test('builder accepts exactly one phase before creating build output', async t => {
+  const {root, run} = await buildFixture(t);
+  for (const args of [[], ['--prepare', '--compile'], ['--prepare', '--unknown']]) {
+    const result = run(...args);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Usage: build\.mjs/);
+    assert.deepEqual(await fs.readdir(root), []);
+  }
+});
 
 test('build refusal preserves files aliased to a generated regression fixture', async t => {
   const {root, build, run} = await buildFixture(t);

@@ -14,8 +14,9 @@ function listDownloads(api, selectors, args, catalog) {
   insist(typeof gameId === 'string' && (selectors.knownGames?.(state) || []).some(g => g.id === gameId), 'UNKNOWN_GAME');
   const states = new Set(args.states || ['finished', 'started', 'paused', 'failed', 'init', 'finalizing']);
   const snapshot = catalogSnapshot(catalog);
-  return Object.entries(state.persistent?.downloads?.files || {}).map(([id, item]) => ({ id, item, identity: resolveDownload(item, state, selectors, snapshot) }))
-    .filter(({ item, identity }) => states.has(item?.state) && (identity.gameId === gameId || identity.games.includes(gameId)))
+  return Object.entries(state.persistent?.downloads?.files || {}).filter(([, item]) => states.has(item?.state))
+    .map(([id, item]) => ({ id, item, identity: resolveDownload(item, state, selectors, snapshot) }))
+    .filter(({ identity }) => identity.gameId === gameId || identity.games.includes(gameId))
     .sort((a, b) => (Number(b.item.startTime) || 0) - (Number(a.item.startTime) || 0)).slice(0, args.limit || 100)
     .map(({ id, item, identity }) => ({ id, name: typeof item.modInfo?.name === 'string' ? item.modInfo.name : typeof item.localPath === 'string' ? item.localPath : id,
       state: item.state, size: Number.isSafeInteger(item.size) && item.size >= 0 ? item.size : null,
@@ -159,4 +160,4 @@ async function conflicts(api, selectors, args) {
   return { conflicts: all.slice(0, args.limit || 100), totalCount: all.length,
     truncated: all.length > (args.limit || 100), entriesScanned: entries, winnerVerified: false };
 }
-module.exports = { dialogs, conflicts, externalChanges, listDownloads, scanScope, collectionHealth, unresolvedConflicts };
+module.exports = { dialogs, conflicts, externalChanges, listDownloads, collectionHealth, unresolvedConflicts };

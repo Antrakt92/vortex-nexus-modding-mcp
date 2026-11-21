@@ -160,7 +160,7 @@ function createCollectionDialogController(api,{selectors,util,getBinding,admit,a
       need(now.stamp===r.stamp&&now.attempt===r.attempt,'PREPARATION_CHANGED');
       need(now.queue.length>=r.queue.length&&fingerprint(now.queue.slice(0,r.queue.length))===fingerprint(r.queue),'PREPARATION_CHANGED');
       writeAdmission.revalidate(r.proof);
-      methods();need(prepared===r&&r.phase==='prepared','PREPARATION_CHANGED');r.latestQueue=now.queue;r.checking=false;return true;
+      methods();need(prepared===r&&r.phase==='prepared','PREPARATION_CHANGED');r.queue=now.queue;r.checking=false;return true;
     }catch(error){if(r)r.checking=false;return hold(r,error);}
   }
   function checkTransition(r){
@@ -203,7 +203,7 @@ function createCollectionDialogController(api,{selectors,util,getBinding,admit,a
       }catch(e){hold(r,e);}
     },
     validate,
-    respond(args){validate(args);const r=prepared;r.queue=r.latestQueue;r.phase='waiting';
+    respond(args){validate(args);const r=prepared;r.phase='waiting';
       try{closeDialog.call(api,r.target.dialogId,'Update current profile',{remember:false});}
       catch(e){hold(r,e);}
     },
