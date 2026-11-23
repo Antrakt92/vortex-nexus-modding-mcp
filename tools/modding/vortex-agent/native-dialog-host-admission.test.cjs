@@ -55,3 +55,11 @@ test('official host proofs bind version to exact source and cannot cross version
   assert.throws(fixture(t,{hash}).admit,/HOST_SOURCE_UNREVIEWED/);
   assert.throws(fixture(t,{version}).admit,/HOST_SOURCE_UNREVIEWED/);
 });
+
+test('official 2.11.0 dialog admission accepts only its reviewed stock ASAR',t=>{
+  const version='2.11.0';
+  const hash='5b9e9d725775e1c7f507680fc89840cbad7e8a4c83e410b7be22ef66009c7e4d';
+  assert.equal(fixture(t,{version,hash}).admit().variant,'official-2.11.0');
+  assert.throws(fixture(t,{version:'2.10.1',hash}).admit,/HOST_SOURCE_UNREVIEWED/);
+  assert.throws(fixture(t,{version,hash:'f'.repeat(64)}).admit,/HOST_SOURCE_UNREVIEWED/);
+});

@@ -33,10 +33,22 @@ Eligible actions describe what the question supports, not which mod caused it.
 Before ignoring dependencies or updating, establish that it belongs to the
 authorized installation and assess the affected dependencies separately.
 
-The native source admission supports the reviewed Vortex 2.9.1 packages and official Vortex 2.10.1. Unknown
-source, changed context, unsupported question shapes, stale observations and
+The native source admission supports the reviewed Vortex 2.9.1 packages and
+official Vortex 2.10.1 and 2.11.0. Unknown source, changed context, unsupported
+question shapes, stale observations and
 ambiguous dialog IDs refuse before a response. No generic dispatcher, arbitrary
 code, keyboard input or window automation is involved.
+
+For official 2.11.0, the ASAR's renderer source map matches upstream commit
+`9c785f8ae3741def2421d6a1ed66cf52b1035414` for `InstallManager.ts`,
+`ExtensionManager.ts` and `actions/notifications.ts`. The two admitted question
+shapes and `api.closeDialog` callback contract match the controller. Run
+`wire.test.mjs` with `VORTEX_NATIVE_DIALOG_2110_APP_ASAR` set to the stock
+`resources/app.asar` to check supported actions through the compiled MCP.
+Add `--native-dialog-probe` to the paired 2.11.0 [native fixture](STOCK-LOCAL-INSTALL.md)
+to exercise Cancel on a synthetic question in the official renderer and verify
+that the ordinary profile stays intact. This probe does not start a tracked
+Nexus installation or grant collection wizard admission.
 
 A successful response proves that the selected question disappeared. It does not
 prove callback origin, archive identity, installation completion, rollback or disk

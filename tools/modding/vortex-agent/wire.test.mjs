@@ -14,12 +14,14 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import { handler, remote } from './bridge.mjs';
 const artifact = process.env.VORTEX_ADAPTER_TEST_ARTIFACT || paths.build + '/upstream/adapted-dist/index.js';
 const realRequire = createRequire(artifact);
-const nativeDialogFixture = process.env.VORTEX_NATIVE_DIALOG_2101_APP_ASAR
-  ? {asar: process.env.VORTEX_NATIVE_DIALOG_2101_APP_ASAR, version: '2.10.1'}
-  : {asar: process.env.VORTEX_NATIVE_APP_ASAR, version: '2.9.1'};
+const nativeDialogFixture = [
+  {asar: process.env.VORTEX_NATIVE_DIALOG_2110_APP_ASAR, version: '2.11.0'},
+  {asar: process.env.VORTEX_NATIVE_DIALOG_2101_APP_ASAR, version: '2.10.1'},
+  {asar: process.env.VORTEX_NATIVE_APP_ASAR, version: '2.9.1'},
+].find(fixture => fixture.asar);
 
 test('built native-dialog observation survives separate HTTP requests and current authentication',
-  {skip:!nativeDialogFixture.asar},async()=>{
+  {skip:!nativeDialogFixture},async()=>{
   const root=paths.build+'/tests';await fs.mkdir(root,{recursive:true});
   const modelDir=await fs.mkdtemp(root+'/native-dialog-http-'),receiptDir=modelDir+'/local-state/vortex-agent-build/receipts';
   const exe=path.join(path.dirname(path.dirname(nativeDialogFixture.asar)),'Vortex.exe');

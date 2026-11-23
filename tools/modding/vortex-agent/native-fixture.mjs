@@ -199,6 +199,8 @@ async function main() {
   };
   const hostVersion = option('--host-version');
   const curated = process.argv.includes('--mcp-local-archive');
+  const nativeDialogProbe = process.argv.includes('--native-dialog-probe');
+  must(!nativeDialogProbe || (hostVersion === '2.11.0' && curated), 'NATIVE_DIALOG_PROBE_REQUIRES_STOCK_211');
   must(!process.argv.includes('--host-version') || (hostVersion && curated
     && !process.argv.includes('--source-admission') && !process.argv.includes('--source-admission-sha256')),
     'FIXTURE_HOST_VERSION_REQUIRES_REVIEWED_CURATED_ROUTE');
@@ -256,6 +258,7 @@ async function main() {
   input.installRoute = process.argv.includes('--mcp-local-archive') ? 'mcp-local-archive'
     : process.argv.includes('--local-archive') ? 'local-archive' : 'tracked-download';
   input.withExistingMod = process.argv.includes('--with-existing-mod');
+  input.nativeDialogProbe = nativeDialogProbe;
   input.candidateAssessment = process.argv.includes('--candidate-assessment');
   input.ownLocalPlan = process.argv.includes('--own-local-plan');
   if (input.ownLocalPlan) {
