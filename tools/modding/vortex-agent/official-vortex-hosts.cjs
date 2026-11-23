@@ -9,4 +9,9 @@ function officialVortexHost(version) {
   return hosts.get(version);
 }
 
-module.exports = { officialVortexHost };
+function officialLocalInstallHost(version) {
+  if (version === '2.11.0') return require('./stock-vortex-2.11.0-admission.json');
+  return officialVortexHost(version);
+}
+
+module.exports = { officialVortexHost, officialLocalInstallHost };

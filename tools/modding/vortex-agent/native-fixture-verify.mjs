@@ -22,7 +22,8 @@ if (input.runtimeVersion) {
 function eventVersion(value) { return value.events.find(item => item.phase === 'authenticated-native-health')?.health?.extensionVersion; }
 assert.equal(receipt.status, 'passed'); assert.equal(result.fixtureExited, true); assert.equal(result.ordinaryUnchanged, true); assert.deepEqual(result.remainingFixturePids, []);
 const event = phase => { const found = receipt.events.filter(e => e.phase === phase); assert.equal(found.length, 1, phase); return found[0]; };
-const namedArchiveOrder = input.hostVersion === '2.10.1';
+const stock211 = input.hostVersion === '2.11.0';
+const namedArchiveOrder = stock211 || input.hostVersion === '2.10.1';
 const expectedOrder = namedArchiveOrder
   ? [input.payloadPath, ...(input.planPackages || []).map(item => item.payloadPath)].map(file => path.basename(file)).sort()
   : [];
@@ -38,8 +39,9 @@ function checkLoadOrderBarrier(barrier) {
       if (order.validationRequired) assert.equal(order.validationObserved, true);
     }
     assert.deepEqual(barrier.sourceBlobs, {
-      profiles: '6e8ba559e24efe4522019f41211469336f5e39fc',
-      installManager: '41889630b3ebc826e3ef8e3847bc6706bee9fa48', activity: '250cf30f897938ed1705cfec654b3b6b4f79d598',
+      profiles: stock211 ? '8093d79474e8dafdfdd66c3e52a9588b1b8ee624' : '6e8ba559e24efe4522019f41211469336f5e39fc',
+      installManager: stock211 ? 'e4f9054700ed02e6d344489d958092ce0212f74a' : '41889630b3ebc826e3ef8e3847bc6706bee9fa48',
+      activity: '250cf30f897938ed1705cfec654b3b6b4f79d598',
       loadOrder: '493e510f653e5736de484e143dde7e57fd77a18e', loadOrderAction: '7ab7ff28037ab6a143cb783f8ede85145f617854',
       namedLoadOrderReducer: '02675b153879c7cc809dcb3f59fe36c6b4cefeb5',
       validationAction: '3546403b98078e3e8904c1c99a6ddc4b04a04603',
@@ -349,10 +351,13 @@ if (before.mode !== 'stopped') {
   assertOrdinaryModSnapshot(after.mods);
 }
 if (input.hostVersion) {
-  assert.ok(['2.9.1', '2.10.1'].includes(input.hostVersion));
+  assert.ok(['2.9.1', '2.10.1', '2.11.0'].includes(input.hostVersion));
   const reviewedPath = new URL('./stock-vortex-' + input.hostVersion + '-admission.json', import.meta.url);
   assert.equal(hash(reviewedPath), input.sourceAdmissionSHA256);
+  const reviewed = JSON.parse(fs.readFileSync(reviewedPath, 'utf8'));
+  assert.equal(input.appAsarSha256, reviewed.appAsarSha256);
   assert.equal(before.appAsar.sha256, input.appAsarSha256);
+  if (stock211) assert.equal(before.executable.sha256, reviewed.provenance.vortexExeSha256);
   const readiness = event('authenticated-local-install-readiness').readiness;
   assert.equal(readiness.sourceAdmissionVerified, true);
   assert.equal(readiness.hostVersion, input.hostVersion);
@@ -386,7 +391,8 @@ if (before.mode === 'stopped') {
 const log = fs.readFileSync(path.join(root, 'userdata/vortex.log'), 'utf8');
 assert.match(log, /clean application end/);
 const nativeDialogObserved = receipt.events.some(row => row.phase === 'authenticated-native-dialog-readiness');
-if (namedArchiveOrder && (nativeDialogObserved || input.ownLocalPlan || input.candidateAssessment)) {
+if (stock211) assert.equal(nativeDialogObserved, false);
+if (input.hostVersion === '2.10.1' && (nativeDialogObserved || input.ownLocalPlan || input.candidateAssessment)) {
   const observed = event('authenticated-native-dialog-readiness');
   const dialog = observed.nativeDialog;
   if (dialog.refused) {

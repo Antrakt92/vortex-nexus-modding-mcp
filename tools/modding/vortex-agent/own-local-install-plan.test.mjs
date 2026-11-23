@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath, pathToFileURL} from 'node:url';
 import {canonicalPlanId, createPlanJournal} from './plan-journal.mjs';
 import {planQueue, validatePlan} from './plan-contract.mjs';
 import {runPlan, inspectPlan} from './session.mjs';
@@ -51,6 +53,59 @@ function fixture(t, hooks = {}) {
   return {journal, calls, writes, stored, call, run: (value = plan(), options = {}) => runPlan(value, {apply: true, call, journal, ...options})};
 }
 
+test('direct session CLI validates a local-install reply and finishes its plan journal', async t => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'own-install-cli-'));
+  t.after(() => fs.rmSync(workspace, {recursive: true}));
+  const value = {...plan(), steps: [install()], deploy: null};
+  const [{args}] = planQueue(value);
+  const mock = fixture(t);
+  const acknowledgement = await mock.call('install_local_archive', args);
+  delete acknowledgement.installDiagnostics;
+  const completed = await mock.call('reconcile_operation', {requestId: args.requestId});
+  const planFile = path.join(workspace, 'plan.json'), preload = path.join(workspace, 'preload.mjs');
+  fs.writeFileSync(planFile, JSON.stringify(value));
+  const script = new URL('./session.mjs', import.meta.url);
+  const replies = [
+    ['reconcile_operation', unused()],
+    ['read_local_install_readiness', readiness()],
+    ['reconcile_operation', unused()],
+    ['health', {protocol: 'vortex-agent/1', ...context()}],
+    ['install_local_archive', acknowledgement],
+    ['reconcile_operation', completed],
+  ];
+  fs.writeFileSync(preload, `
+    import assert from 'node:assert/strict';
+    import credential from ${JSON.stringify(new URL('./credential.cjs', import.meta.url).href)};
+    credential.readToken = async () => 'synthetic-test-token';
+    const replies = ${JSON.stringify(replies)};
+    globalThis.fetch = async (url, options) => {
+      assert.equal(url, 'http://127.0.0.1:3701/mcp');
+      assert.equal(options.headers.Authorization, 'Bearer synthetic-test-token');
+      const request = JSON.parse(options.body);
+      const [name, value] = replies.shift();
+      assert.equal(request.method, 'tools/call');
+      assert.equal(request.params.name, name);
+      if (name === 'install_local_archive') {
+        assert.deepEqual(request.params.arguments, ${JSON.stringify(args)});
+      }
+      return Response.json({jsonrpc: '2.0', id: request.id, result: {
+        structuredContent: value, content: [{type: 'text', text: JSON.stringify(value)}],
+      }});
+    };
+  `);
+  const child = spawnSync(process.execPath, ['--import', pathToFileURL(preload).href,
+    fileURLToPath(script), 'plan', planFile, '--apply'], {
+    env: {...process.env, NEXUS_WORKSPACE: workspace}, encoding: 'utf8', timeout: 15_000,
+  });
+  assert.ifError(child.error);
+  assert.equal(child.status, 0, child.stderr);
+  const result = JSON.parse(child.stdout);
+  assert.equal(result.status, 'completed');
+  assert.deepEqual(result.completed.map(item => [item.requestId, item.adapterReceiptVerified]), [[args.requestId, true]]);
+  const store = createPlanJournal({root: path.join(workspace, 'local-state/vortex-agent-build/plan-journals')});
+  assert.equal(store.read(result.planId).state, 'completed');
+});
+
 test('new local install step is strict, detached and advertised through the existing plan tool', async () => {
   const value = plan(), validated = validatePlan(value), queue = planQueue(value);
   assert.equal(validated.version, 1); assert.deepEqual(queue.map(r => r.operation), ['install_local_archive', 'set_mods_enabled', 'deploy_mods']);
@@ -61,6 +116,22 @@ test('new local install step is strict, detached and advertised through the exis
   let calls = 0;
   const result = await runPlan(validated, {call: async () => {calls++; throw Error('must not call');}});
   assert.equal(result.status, 'validated'); assert.equal(calls, 0);
+});
+
+test('local plan accepts reviewed 2.11.0 readiness and holds an unknown host before writes', async t => {
+  for (const [hostVersion, expected] of [['2.11.0', 'completed'], ['2.11.1', 'stopped']]) {
+    const f = fixture(t, {before(name) {
+      if (name === 'read_local_install_readiness') return {...readiness(), hostVersion};
+    }});
+    const result = await f.run();
+    assert.equal(result.status, expected);
+    if (expected === 'completed') {
+      assert.deepEqual(f.writes.map(item => item.name), ['install_local_archive', 'set_mods_enabled', 'deploy_mods']);
+    } else {
+      assert.equal(result.code, 'LOCAL_INSTALL_READINESS_UNCERTAIN');
+      assert.equal(f.writes.length, 0);
+    }
+  }
 });
 
 test('unsafe pins, paths, filenames, options and unsupported games refuse offline', () => {
