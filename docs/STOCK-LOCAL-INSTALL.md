@@ -233,8 +233,9 @@ closures for the official bundled extensions. Cyberpunk Support 0.13.3 retains
 its reviewed bytes. The manifest also covers the exact installed Unity 1.0.7
 and Far Cry 6 1.2.4 extensions, whose installers and relevant listeners are
 scoped to their own game IDs. An unlisted extension or changed source refuses
-installation. Collection controls and native dialog admission retain their
-existing version scopes.
+installation. Collection controls retain their separate version scope.
+See [native questions](NATIVE-DIALOGS.md) for 2.11.0 dialog admission and the
+optional paired Cancel probe.
 
 Use the paired fixture command above with `--host-version 2.11.0` and the
 executable and Cyberpunk Support pins from the new manifest. The independent

@@ -391,11 +391,12 @@ if (before.mode === 'stopped') {
 const log = fs.readFileSync(path.join(root, 'userdata/vortex.log'), 'utf8');
 assert.match(log, /clean application end/);
 const nativeDialogObserved = receipt.events.some(row => row.phase === 'authenticated-native-dialog-readiness');
-if (stock211) assert.equal(nativeDialogObserved, false);
-if (input.hostVersion === '2.10.1' && (nativeDialogObserved || input.ownLocalPlan || input.candidateAssessment)) {
+if (stock211) assert.equal(nativeDialogObserved, input.nativeDialogProbe === true);
+if (input.nativeDialogProbe || (input.hostVersion === '2.10.1' && (nativeDialogObserved || input.ownLocalPlan || input.candidateAssessment))) {
   const observed = event('authenticated-native-dialog-readiness');
   const dialog = observed.nativeDialog;
   if (dialog.refused) {
+    assert.notEqual(input.nativeDialogProbe, true);
     assert.ok(['NATIVE_DIALOG_QUESTION_INVALID', 'NATIVE_DIALOG_UNSUPPORTED_QUESTION'].includes(dialog.refused));
     assert.ok(Number.isSafeInteger(observed.unchangedQueueSize)
       && observed.unchangedQueueSize > 0 && observed.unchangedQueueSize <= 128);
@@ -407,6 +408,26 @@ if (input.hostVersion === '2.10.1' && (nativeDialogObserved || input.ownLocalPla
     assert.deepEqual(dialog.eligibleActions, []);
     assert.equal(dialog.installationCompleted, false);
   }
+}
+if (input.nativeDialogProbe) {
+  const observed = event('authenticated-native-dialog-cancel');
+  assert.equal(observed.requestId, input.runId + '_dialog_cancel');
+  assert.equal(observed.dialogId, input.runId + '_synthetic_question');
+  assert.equal(observed.response.dialogId, observed.dialogId);
+  assert.equal(observed.response.action, 'cancel');
+  assert.equal(observed.response.nativeDialogDismissalVerified, true);
+  assert.equal(observed.response.abortOnly, true);
+  assert.equal(observed.response.installationCompleted, false);
+  assert.deepEqual(observed.native, { action: 'Cancel', input: { remember: false } });
+  assert.equal(observed.ledgerStatus, 'complete');
+  const stem = path.join('local-state/vortex-agent-build/receipts/native-dialog-control', observed.requestId);
+  const attempt = read(stem + '.attempt.json');
+  const completion = read(stem + '.completion.json');
+  assert.equal(attempt.noReplay, true);
+  assert.equal(attempt.requestId, observed.requestId);
+  assert.equal(attempt.parametersDigest, completion.parametersDigest);
+  assert.equal(attempt.dialogId, observed.dialogId);
+  assert.deepEqual(completion.response, observed.response);
 }
 const proof = { passed: true, root, checks: ['native import/install', 'authenticated compiled agent enable/deploy/disable/restore', 'manifest ownership', 'deployed hardlink identity', 'original hash and filesystem identity restored', 'post-shutdown game/staging hashes', 'ZIP size/SHA-256/CRC',
   input.ownLocalPlan ? 'eleven durable completions without unresolved marker' : completionSuffixes.length === 5 ? 'five durable completions without unresolved marker' : 'four durable completions without unresolved marker',
@@ -422,6 +443,7 @@ const proof = { passed: true, root, checks: ['native import/install', 'authentic
       ...(input.hostVersion ? ['reviewed host files and operation-marker state preserved',
         'authenticated local install readiness and inactive fixture collection session'] : [])]),
   ...(nativeDialogObserved ? ['authenticated native dialog queue read'] : []),
+  ...(input.nativeDialogProbe ? ['authenticated Cancel reached the stock renderer callback with remember=false'] : []),
   'clean native shutdown'], nexusReuse: receipt.nexusReuse, at: new Date().toISOString() };
 fs.writeFileSync(path.join(root, 'independent-verification.json'), JSON.stringify(proof, null, 2), { flag: 'wx' });
 console.log(JSON.stringify(proof));

@@ -243,6 +243,16 @@ async function run(api) {
     await wait(() => util.getGames().filter(g => g.id === G).length === 1 && typeof api.ext.awaitModsDeployment === 'function', 'PROVIDER_TIMEOUT');
     must(Object.keys(api.getState().persistent.profiles || {}).length === 0, 'NONEMPTY_FIXTURE_PROFILES');
     must(Object.keys(api.getState().persistent.mods?.[G] || {}).length === 0, 'NONEMPTY_FIXTURE_MODS');
+    if (input.nativeDialogProbe) {
+      // Stock Vortex checks both tags during activation, before the dialog probe.
+      // Initialize markers only in fresh synthetic fixture directories.
+      const instance = api.getState().app.instanceId;
+      must(typeof instance === 'string' && instance.length > 0, 'FIXTURE_INSTANCE_UNAVAILABLE');
+      const tag = contained(path.join(input.stage, '__vortex_staging_folder'));
+      fs.writeFileSync(tag, JSON.stringify({ instance, game: G }), { flag: 'wx' });
+      const downloadsTag = contained(path.join(path.dirname(input.downloads), '__vortex_downloads_folder'));
+      fs.writeFileSync(downloadsTag, JSON.stringify({ instance }), { flag: 'wx' });
+    }
     for (const name of ['setAutoDeployment', 'setAutoInstall', 'setAutoEnable', 'setAutoStart', 'setConfirmPurge']) api.store.dispatch(actions[name](false));
     api.store.dispatch(actions.addDiscoveredGame(G, { path: input.game, pathSetManually: true, store: 'steam', executable: 'bin/x64/Cyberpunk2077.exe' }));
     api.store.dispatch(actions.setInstallPath(G, input.stage));
@@ -279,7 +289,7 @@ async function run(api) {
         && collectionHealth.collectionSession.present === false, 'FIXTURE_COLLECTION_CONTEXT_MISMATCH');
       note('authenticated-collection-health', { collectionHealth });
     }
-    if (input.hostVersion === '2.10.1') {
+    if (input.hostVersion === '2.10.1' || input.nativeDialogProbe) {
       const queue = await rpc(token, 'list_dialogs');
       must(Array.isArray(queue) && queue.length <= 128, 'FIXTURE_NATIVE_DIALOG_QUEUE_INVALID');
       const nativeDialog = await rpc(token, 'read_native_dialog', { gameId: G, profileId: P },
@@ -301,6 +311,32 @@ async function run(api) {
           && nativeDialog.eligibleActions.length === 0 && nativeDialog.installationCompleted === false,
         'FIXTURE_NATIVE_DIALOG_QUEUE_NOT_EMPTY');
         note('authenticated-native-dialog-readiness', { nativeDialog });
+      }
+      if (input.nativeDialogProbe) {
+        must(nativeDialog.status === 'empty', 'FIXTURE_DIALOG_PROBE_REQUIRES_EMPTY_QUEUE');
+        const title = 'Updating may break dependencies';
+        const requestId = input.runId + '_dialog_cancel';
+        const dialogId = input.runId + '_synthetic_question';
+        const callback = api.showDialog('question', title, {
+          text: "You're updating a mod that others depend upon and the update doesn't seem to be compatible (according to the dependency information). If you continue we have to disable these dependencies, otherwise you'll continually get warnings about it.",
+          options: { wrap: true },
+          checkboxes: [{ id: 'remember', value: false, text: 'Remember my choice' }],
+        }, [{ label: 'Cancel' }, { label: 'Ignore' }], dialogId);
+        const active = await rpc(token, 'read_native_dialog', { gameId: G, profileId: P });
+        must(active.dialogId === dialogId && active.family === 'dependency_warning'
+          && active.queueSize === 1, 'FIXTURE_DIALOG_PROBE_WRONG_QUESTION');
+        const pins = Object.fromEntries(['gameId', 'profileId', 'gamePath', 'stagingPath', 'downloadPath', 'filesystemIds'].map(k => [k, health[k]]));
+        const response = await rpc(token, 'respond_native_dialog', {
+          ...pins, requestId, dialogId, fingerprint: active.fingerprint, action: 'cancel',
+        });
+        const native = await bounded(callback, 'FIXTURE_DIALOG_CALLBACK_TIMEOUT', 5000);
+        const ledger = await rpc(token, 'read_native_dialog_operation', { requestId });
+        must(response.nativeDialogDismissalVerified === true && response.abortOnly === true
+          && response.installationCompleted === false && native.action === 'Cancel'
+          && native.input.remember === false && ledger.status === 'complete',
+        'FIXTURE_DIALOG_PROBE_CANCEL_NOT_VERIFIED');
+        must((await rpc(token, 'list_dialogs')).length === 0, 'FIXTURE_DIALOG_PROBE_QUEUE_NOT_EMPTY');
+        note('authenticated-native-dialog-cancel', { requestId, dialogId, response, native, ledgerStatus: ledger.status });
       }
     }
     const target = contained(path.join(input.game, input.payloadPath));

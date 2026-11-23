@@ -6,6 +6,7 @@ const SOURCES = Object.freeze({
   ec3a29d58ea65a1ca84e456742c894a19efe96920a6710063d221d451a26d59a: 'official-2.9.1',
   ba2d8017558beabdd804aeaec182c0b949b2ce425b924e38c4807c8c29023060: 'reviewed-custom-2.9.1',
   '0e308d6589719c5d68236c0930efda803e19ff41a3bbe8bd09330311c004fb95': 'official-2.10.1',
+  '5b9e9d725775e1c7f507680fc89840cbad7e8a4c83e410b7be22ef66009c7e4d': 'official-2.11.0',
 });
 const need = (v, c) => { if (!v) throw Error('NATIVE_DIALOG_' + c); };
 const stamp = s => `${s.dev}:${s.ino}:${s.size}:${s.mtimeNs}:${s.ctimeNs}:${s.nlink}`;
@@ -52,7 +53,7 @@ function createNativeDialogHostAdmission(api, {io=fs, processInfo=process, hash=
   return function assertHost() {
     need(typeof getPath === 'function' && api.getPath === getPath, 'HOST_API_CHANGED');
     const version = api.getState()?.app?.appVersion;
-    need(version === '2.9.1' || version === '2.10.1', 'HOST_VERSION_UNSUPPORTED');
+    need(version === '2.9.1' || version === '2.10.1' || version === '2.11.0', 'HOST_VERSION_UNSUPPORTED');
     const exe = getPath.call(api, 'exe');
     need(typeof exe === 'string' && path.isAbsolute(exe) && path.basename(exe).toLowerCase() === 'vortex.exe', 'HOST_EXE_INVALID');
     const executable = io.lstatSync(exe, {bigint:true});
