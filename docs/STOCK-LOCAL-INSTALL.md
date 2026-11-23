@@ -5,7 +5,7 @@ official Vortex installer. It leaves the mod disabled and does not deploy it.
 The extension stays installed; agents do not generate a temporary plugin or
 restart Vortex for each mod.
 
-This path supports the reviewed **official Vortex 2.9.1 and 2.10.1** packages
+This path supports the reviewed **official Vortex 2.9.1, 2.10.1 and 2.11.0** packages
 and extension sources. It does not require a Vortex fork, application patch or UI automation.
 The stock event/callback approach was investigated from
 [Doodlebot](https://github.com/doodlum/vortex-doodlebot/tree/3b78fdfba1d1d07858908fffea53b32d46033df1).
@@ -223,6 +223,29 @@ source pin. Set `VORTEX_NATIVE_DIALOG_2101_APP_ASAR` to its `resources/app.asar`
 and run `node --test tools/modding/vortex-agent/wire.test.mjs` with the built
 artifact and prepared vendor tree. This test exercises modeled Cancel, Ignore
 and Update current profile callbacks through the compiled MCP and its receipts.
+
+## Verify official Vortex 2.11.0
+
+The [2.11.0 admission manifest](../tools/modding/vortex-agent/stock-vortex-2.11.0-admission.json)
+applies to own-local Cyberpunk ZIP installation. It pins the signed Windows
+release installer, exact executable and ASAR, and the reviewed executable
+closures for the official bundled extensions. Cyberpunk Support 0.13.3 retains
+its reviewed bytes. The manifest also covers the exact installed Unity 1.0.7
+and Far Cry 6 1.2.4 extensions, whose installers and relevant listeners are
+scoped to their own game IDs. An unlisted extension or changed source refuses
+installation. Collection controls and native dialog admission retain their
+existing version scopes.
+
+Use the paired fixture command above with `--host-version 2.11.0` and the
+executable and Cyberpunk Support pins from the new manifest. The independent
+verifier binds the fixture to the reviewed executable, ASAR and source
+manifest, then checks disabled installation, deployment and restoration.
+
+The 23 November 2026 paired run on the official 2.11.0 host verified one-ZIP
+and two-ZIP plans, collision refusal, eleven durable completions, deployed
+hardlinks and restoration of original files and identities. The fixture
+closed normally. The ordinary active profile, mod projection, process
+cohort and deployment manifest were preserved.
 
 ## Verification boundary
 

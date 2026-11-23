@@ -63,6 +63,22 @@ test('new local install step is strict, detached and advertised through the exis
   assert.equal(result.status, 'validated'); assert.equal(calls, 0);
 });
 
+test('local plan accepts reviewed 2.11.0 readiness and holds an unknown host before writes', async t => {
+  for (const [hostVersion, expected] of [['2.11.0', 'completed'], ['2.11.1', 'stopped']]) {
+    const f = fixture(t, {before(name) {
+      if (name === 'read_local_install_readiness') return {...readiness(), hostVersion};
+    }});
+    const result = await f.run();
+    assert.equal(result.status, expected);
+    if (expected === 'completed') {
+      assert.deepEqual(f.writes.map(item => item.name), ['install_local_archive', 'set_mods_enabled', 'deploy_mods']);
+    } else {
+      assert.equal(result.code, 'LOCAL_INSTALL_READINESS_UNCERTAIN');
+      assert.equal(f.writes.length, 0);
+    }
+  }
+});
+
 test('unsafe pins, paths, filenames, options and unsupported games refuse offline', () => {
   for (const change of [s => {s.size = 0;}, s => {s.size = 64 * 1024 * 1024 + 1;}, s => {s.sha256 = 'A'.repeat(64);},
     s => {s.archivePath = 'Own-One.zip';}, s => {s.archivePath = 'F:Own-One.zip';}, s => {s.archivePath = '//server/share/Own-One.zip';},

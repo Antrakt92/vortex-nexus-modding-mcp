@@ -2,12 +2,12 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { createLocalInstallHostAdmission } = require('./local-install-host.cjs');
-const { officialVortexHost } = require('./official-vortex-hosts.cjs');
+const { officialLocalInstallHost } = require('./official-vortex-hosts.cjs');
 const admissions = new WeakMap();
 function localInstallAdmission(api, util, bindingOverride) {
   return async () => {
     const hostVersion = api.getState()?.app?.appVersion;
-    const manifest = officialVortexHost(hostVersion);
+    const manifest = officialLocalInstallHost(hostVersion);
     if (!manifest) throw Error('LOCAL_INSTALL_HOST_UNREVIEWED_VERSION');
     if (!admissions.has(api)) {
       // Shipped maintainer-reviewed sources, never hashes supplied by an agent's

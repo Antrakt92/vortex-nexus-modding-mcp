@@ -112,3 +112,19 @@ test('2.10.1 host reports its admitted version and refuses to use the 2.9.1 pin'
   await assert.rejects(mismatch.read({ packagePath: path.join(path.dirname(f.app), 'resources/app.asar'),
     expected: { appAsarSha256: manifest.appAsarSha256, dynamic: [] } })(), /UNREVIEWED_VERSION/);
 });
+
+test('2.11.0 admission is scoped to local install and uses only its own exact package pin', async () => {
+  const { officialVortexHost, officialLocalInstallHost } = require('./official-vortex-hosts.cjs');
+  assert.equal(officialVortexHost('2.11.0'), undefined);
+  assert.equal(officialLocalInstallHost('2.11.1'), undefined);
+  const pinned = require('./stock-vortex-2.11.0-admission.json');
+  assert.equal(officialLocalInstallHost('2.11.0'), pinned);
+  const f = fixture('2.11.0');
+  const verified = await f.read()();
+  assert.equal(verified.hostVersion, '2.11.0');
+  assert.equal(f.calls[0].expected.appAsarSha256, pinned.appAsarSha256);
+  const mismatch = fixture('2.11.0');
+  await assert.rejects(mismatch.read({ packagePath: path.join(path.dirname(f.app), 'resources/app.asar'),
+    expected: { appAsarSha256: officialVortexHost('2.10.1').appAsarSha256, dynamic: [] } })(),
+  /LOCAL_INSTALL_HOST_UNREVIEWED_VERSION/);
+});

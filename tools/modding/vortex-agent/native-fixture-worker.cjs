@@ -36,13 +36,15 @@ function diagnosticProof(value, completed = false) {
     'INSTALL_DIAGNOSTICS_COUNTS_INVALID');
   }
 }
-const namedArchiveOrder = input.hostVersion === '2.10.1';
+const stock211 = input.hostVersion === '2.11.0';
+const namedArchiveOrder = stock211 || input.hostVersion === '2.10.1';
 const archiveOrderId = namedArchiveOrder ? 'cyberpunk2077-archive' : undefined;
 const expectedOrder = namedArchiveOrder
   ? [input.payloadPath, ...(input.planPackages || []).map(item => item.payloadPath)].map(file => path.basename(file)).sort()
   : [];
 const orderSourceBlobs = namedArchiveOrder ? {
-  profiles: '6e8ba559e24efe4522019f41211469336f5e39fc', installManager: '41889630b3ebc826e3ef8e3847bc6706bee9fa48',
+  profiles: stock211 ? '8093d79474e8dafdfdd66c3e52a9588b1b8ee624' : '6e8ba559e24efe4522019f41211469336f5e39fc',
+  installManager: stock211 ? 'e4f9054700ed02e6d344489d958092ce0212f74a' : '41889630b3ebc826e3ef8e3847bc6706bee9fa48',
   activity: '250cf30f897938ed1705cfec654b3b6b4f79d598', loadOrder: '493e510f653e5736de484e143dde7e57fd77a18e',
   loadOrderAction: '7ab7ff28037ab6a143cb783f8ede85145f617854',
   namedLoadOrderReducer: '02675b153879c7cc809dcb3f59fe36c6b4cefeb5',

@@ -135,7 +135,7 @@ function hostPins(config) {
   return { executable, appAsar, hold: observeOrdinaryHold(config.hold) };
 }
 function loadFixtureAdmission(version) {
-  must(['2.9.1', '2.10.1'].includes(version), 'FIXTURE_HOST_VERSION_UNREVIEWED');
+  must(['2.9.1', '2.10.1', '2.11.0'].includes(version), 'FIXTURE_HOST_VERSION_UNREVIEWED');
   const bytes = fs.readFileSync(path.join(here, 'stock-vortex-' + version + '-admission.json'));
   const admission = JSON.parse(bytes);
   must(admission.schema === 'stock-vortex-source-admission/1' && admission.vortexVersion === version
@@ -207,6 +207,9 @@ async function main() {
   if (stockReview) {
     const ordinary = paths.absolute(option('--ordinary-workspace'), 'ORDINARY_WORKSPACE');
     const expectedExe = option('--vortex-exe-sha256');
+    if (hostVersion === '2.11.0') {
+      must(expectedExe === stockReview.admission.provenance.vortexExeSha256, 'FIXTURE_EXECUTABLE_NOT_STOCK_REVIEWED');
+    }
     const outside = (parent, child) => {
       const relative = path.relative(parent, child);
       return path.isAbsolute(relative) || relative === '..' || relative.startsWith('..' + path.sep);

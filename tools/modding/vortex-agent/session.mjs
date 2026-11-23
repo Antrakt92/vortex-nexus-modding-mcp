@@ -223,7 +223,7 @@ export async function runPlan(input, {apply = false, call = createToolCaller(), 
       checkCancellation();
       const readiness = await call('read_local_install_readiness', {});
       insist(object(readiness) && readiness.localArchiveInstallSupported === true && readiness.sourceAdmissionVerified === true
-        && hosts.officialVortexHost(readiness.hostVersion) !== undefined && readiness.nativeEffects === false
+        && hosts.officialLocalInstallHost(readiness.hostVersion) !== undefined && readiness.nativeEffects === false
         && Number.isSafeInteger(readiness.reviewedDynamicExtensions) && readiness.reviewedDynamicExtensions >= 0
         && readiness.reviewedDynamicExtensions <= 256, 'LOCAL_INSTALL_READINESS_UNCERTAIN');
       checkCancellation();
