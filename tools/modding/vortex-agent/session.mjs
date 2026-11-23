@@ -346,4 +346,9 @@ export async function main(argv = process.argv.slice(2), {call = createToolCalle
   return ['ok', 'validated', 'completed'].includes(result.status) ? 0 : 1;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) process.exitCode = await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  // The bridge imports this module to validate local-install replies.
+  // Let module evaluation finish before waiting for the CLI result.
+  process.exitCode = 1;
+  void main().then(code => { process.exitCode = code; });
+}
