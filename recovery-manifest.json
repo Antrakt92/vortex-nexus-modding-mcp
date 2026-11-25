@@ -280,7 +280,7 @@
     },
     {
       "path": "docs/LIFECYCLE-PERFORMANCE.md",
-      "sha256_lf": "d89b56003a768a0edb900467f7c6aa21bb73588652b27f522ef40b1f6272d83d"
+      "sha256_lf": "6b6848d6355aca9208b69c13b3dbdafdf5eec3007f5750f412832a14fcfbfbfa"
     },
     {
       "path": "docs/LOCAL-CLEANUP.md",
@@ -1088,15 +1088,15 @@
     },
     {
       "path": "tools/modding/vortex-agent/lifecycle-inspection.cjs",
-      "sha256_lf": "8e0da4be2dd52773875e8448c3973c914ef5704acb3defe3810d06e419da5619"
+      "sha256_lf": "d415a4783e81d7ad2fa1146074d44568606d447d5666abfe3117970d233c555f"
     },
     {
       "path": "tools/modding/vortex-agent/lifecycle-inspection.test.cjs",
-      "sha256_lf": "656766fd9e9d9dadc111b66594303110f20c2c2b3d6ffbd4ea3443f3039b897d"
+      "sha256_lf": "ea6821cf8e4e10d83853235a4d8f8a97abd7f976dd61594492347d0701925c6e"
     },
     {
       "path": "tools/modding/vortex-agent/lifecycle-serialization.test.cjs",
-      "sha256_lf": "0ef52be49b69647c2509f1ba918b0e604ee824b2edbd382e50f6cbf988a88250"
+      "sha256_lf": "e80a8f14fc5610c9d83968e7014d2a448cedf5a51627aa960dc8d26d0475c603"
     },
     {
       "path": "tools/modding/vortex-agent/live-check.mjs",

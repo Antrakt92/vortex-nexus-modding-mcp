@@ -8,7 +8,7 @@ const id = value => typeof value === 'string' && value.length > 0 && value.lengt
 const archiveId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 const type = value => typeof value === 'string' && value.length <= 200 && !/[\x00-\x1f\x7f]/.test(value);
 const insist = (ok, code) => {if (!ok) throw Error(code);};
-const exactFileId = reference => {
+const recordedFileId = reference => {
   const fileId = reference.repo?.fileId;
   if (typeof reference.repo?.repository !== 'string' || !reference.repo.repository.length
       || !['string', 'number'].includes(typeof fileId)
@@ -16,6 +16,15 @@ const exactFileId = reference => {
   const value = Number(fileId);
   return Number.isSafeInteger(value) && value > 0 ? value : null;
 };
+function exactFileId(reference, util, fileId) {
+  // Vortex checks a matching tag before applying the repository file pin.
+  if (fileId === null || reference.tag != null) return null;
+  const version = reference.versionMatch;
+  if (version == null || version === '') return fileId;
+  if (typeof version !== 'string' || typeof util.isFuzzyVersion !== 'function') return null;
+  try { return util.isFuzzyVersion(version) === false ? fileId : null; }
+  catch { return null; }
+}
 
 function readModLifecycle(api, selectors, util, args) {
   insist(object(args) && Object.keys(args).every(key => ['gameId', 'modIds'].includes(key))
@@ -82,6 +91,7 @@ function readModLifecycle(api, selectors, util, args) {
         insist(object(rule) && typeof rule.type === 'string', 'LIFECYCLE_STATE_INVALID');
         if (rule.type !== 'requires') continue;
         insist(object(rule.reference), 'LIFECYCLE_STATE_INVALID');
+        let fileIds;
         for (const target of selected) {
           insist(++matcherChecks <= LIMITS.matcherChecks, 'LIFECYCLE_READ_LIMIT');
           let matched;
@@ -92,9 +102,13 @@ function readModLifecycle(api, selectors, util, args) {
           insist(typeof matched === 'boolean', 'LIFECYCLE_MATCHER_INVALID');
           if (!matched) continue;
           insist(++incomingCount <= LIMITS.incomingRequires, 'LIFECYCLE_READ_LIMIT');
+          if (fileIds === undefined) {
+            const recorded = recordedFileId(rule.reference);
+            fileIds = {recordedFileId: recorded, exactFileId: exactFileId(rule.reference, util, recorded)};
+          }
           target.result.incomingRequires.push({ownerId: modId, ownerType: record.type,
             ignored: rule.ignored === undefined ? false : typeof rule.ignored === 'boolean' ? rule.ignored : null,
-            exactFileId: exactFileId(rule.reference)});
+            ...fileIds});
         }
       }
     }

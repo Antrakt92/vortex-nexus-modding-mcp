@@ -35,7 +35,8 @@ test('one native snapshot finds repository exact-file requires without idHint an
   before.persistent.mods[game].collection.rules[0].comment = 'private text must never be copied';
   const result = f.read();
   assert.equal(f.stateReads, 1); assert.equal(f.matches, 1);
-  assert.deepEqual(result.mods[0].incomingRequires, [{ownerId: 'collection', ownerType: 'collection', ignored: false, exactFileId: 170152}]);
+  assert.deepEqual(result.mods[0].incomingRequires, [{ownerId: 'collection', ownerType: 'collection', ignored: false,
+    recordedFileId: 170152, exactFileId: 170152}]);
   assert.deepEqual(result.mods[0].archiveReferences, [{gameId: game, modId: f.target}]);
   assert.equal(result.mods[0].activeEnabled, false); assert.equal(result.profileCount, 2);
   assert.equal(result.metadataOnly, true); assert.equal(result.effectsAllowed, false);
@@ -43,6 +44,34 @@ test('one native snapshot finds repository exact-file requires without idHint an
   assert.equal(result.diskDeploymentVerified, false);
   assert(!JSON.stringify(result).includes('private text'));
   assert.deepEqual(f.state, before);
+});
+
+test('fuzzy and tagged stock requires expose the recorded file without calling it exact', () => {
+  const f = fixture(), mods = f.state.persistent.mods[game];
+  mods[f.target].attributes.referenceTag = 'collection-shared-member';
+  const versionChecks = [];
+  f.util.isFuzzyVersion = version => {
+    versionChecks.push(version);
+    return version === '*' || version.endsWith('+prefer');
+  };
+  f.util.testModReference = (candidate, ref) => {
+    // Stock Vortex matches a shared tag before enforcing the exact repo file.
+    if (ref.tag === candidate.attributes.referenceTag) return true;
+    return ref.repo.modId === String(candidate.attributes.modId)
+      && (ref.versionMatch === '*' || ref.versionMatch.endsWith('+prefer')
+        || ref.repo.fileId === String(candidate.attributes.fileId));
+  };
+  mods.collection.rules = [
+    {...mods.collection.rules[0], reference: {...reference(), versionMatch: '3.4.0'}},
+    {type: 'requires', reference: {...reference(), versionMatch: '*', repo: {...reference().repo, fileId: '100'}}},
+    {type: 'requires', reference: {...reference(), versionMatch: '>=3.0.0+prefer', repo: {...reference().repo, fileId: '101'}}},
+    {type: 'requires', reference: {...reference(), versionMatch: '3.0.0', tag: 'collection-shared-member', repo: {...reference().repo, fileId: '102'}}},
+  ];
+  const pins = () => f.read().mods[0].incomingRequires.map(row => [row.recordedFileId, row.exactFileId]);
+  assert.deepEqual(pins(), [[170152, 170152], [100, null], [101, null], [102, null]]);
+  assert.deepEqual(versionChecks, ['3.4.0', '*', '>=3.0.0+prefer']);
+  delete f.util.isFuzzyVersion;
+  assert.deepEqual(pins(), [[170152, null], [100, null], [101, null], [102, null]]);
 });
 
 test('one twenty-target batch preserves individual details while reducing state snapshots from twenty to one', () => {
