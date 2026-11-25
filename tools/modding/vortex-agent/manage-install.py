@@ -514,6 +514,11 @@ def sync_provenance(expected_sha, package_root=None):
         if installed['licenseFileSHA256'] != provenance['licenseFileSHA256']:
             raise RuntimeError('Installed license files differ from source provenance')
         target_identity = directory_identity(target)
+        installed_file = target / 'provenance.json'
+        installed_bytes = installed_file.read_bytes()
+        installed_generation = prepared_receipt_generation(installed_file, installed_bytes)
+        if installed_generation is None or json.loads(installed_bytes) != installed:
+            raise RuntimeError('Installed provenance changed before metadata sync')
         verify_runtime_workspace(provenance)
         verify_sources(provenance)
         pins = receipt_pins()
@@ -526,11 +531,15 @@ def sync_provenance(expected_sha, package_root=None):
         no_reparse(temp_parent)
         temp_parent.mkdir(exist_ok=True)
         temp = temp_parent / ('vortex-agent-provenance-' + uuid.uuid4().hex + '.tmp')
+        staged_generation = None
         try:
             with temp.open('xb') as handle:
                 handle.write(metadata)
                 handle.flush()
                 os.fsync(handle.fileno())
+            staged_generation = prepared_receipt_generation(temp, metadata)
+            if staged_generation is None:
+                raise RuntimeError('Prepared provenance changed during metadata staging')
             if receipt_pins() != pins:
                 raise RuntimeError('Receipt pins changed before metadata sync')
             verify_runtime_workspace(provenance)
@@ -539,10 +548,35 @@ def sync_provenance(expected_sha, package_root=None):
                 raise RuntimeError('Source provenance changed during metadata staging')
             if directory_identity(target) != target_identity or package(target, expected_sha, '1.1.0') != installed:
                 raise RuntimeError('Installed plugin changed during metadata staging')
-            os.replace(temp, target / 'provenance.json')
-        finally:
-            if temp.exists():
-                temp.unlink()
+            if prepared_receipt_generation(installed_file, installed_bytes) != installed_generation:
+                raise RuntimeError('Installed provenance changed during metadata staging')
+            if prepared_receipt_generation(temp, metadata) != staged_generation:
+                raise RuntimeError('Prepared provenance changed before metadata sync')
+            try:
+                os.replace(temp, installed_file)
+            except OSError as error:
+                if prepared_receipt_generation(temp, metadata) == staged_generation and \
+                        prepared_receipt_generation(installed_file, installed_bytes) == installed_generation:
+                    raise
+                raise RuntimeError('Provenance sync outcome uncertain; inspect installed package') from error
+
+            try:
+                verified = (receipt_pins() == pins and directory_identity(target) == target_identity
+                            and prepared_receipt_generation(installed_file, metadata) == staged_generation
+                            and package(target, expected_sha, '1.1.0') == provenance
+                            and prepared_receipt_generation(installed_file, metadata) == staged_generation
+                            and not os.path.lexists(temp))
+            except (OSError, RuntimeError, ValueError, TypeError, KeyError) as error:
+                raise RuntimeError('Provenance sync outcome uncertain; inspect installed package') from error
+            if not verified:
+                raise RuntimeError('Provenance sync outcome uncertain; inspect installed package')
+        except BaseException as error:
+            if staged_generation is not None and prepared_receipt_generation(temp, metadata) == staged_generation:
+                try:
+                    temp.unlink()
+                except OSError:
+                    error.add_note('Prepared provenance cleanup failed; staging file retained')
+            raise
     print(json.dumps({'provenance_synced': True, 'runtime_bundle_changed': False, 'sha256': expected_sha}))
 
 def main(argv=None):

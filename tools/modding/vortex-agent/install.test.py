@@ -667,6 +667,67 @@ class UpgradeTests(unittest.TestCase):
         self.assertEqual(receipt.read_bytes(), original)
         self.assertEqual({p.name for p in receipt.parent.iterdir()}, {'index.js', 'LICENSE.md', 'THIRD-PARTY-NOTICES.md', 'info.json', 'provenance.json'})
 
+    def test_metadata_sync_does_not_publish_changed_staged_metadata(self):
+        receipt = self.matching_target()
+        original = receipt.read_bytes()
+        pins = upgrade.receipt_pins
+        before = pins()
+
+        def change_staged_metadata():
+            for staged in (self.plugins.parent / 'temp').glob('vortex-agent-provenance-*.tmp'):
+                staged.write_bytes(b'{}\n')
+            return pins()
+
+        stdout = io.StringIO()
+        with patch.object(upgrade, 'receipt_pins', change_staged_metadata), contextlib.redirect_stdout(stdout):
+            with self.assertRaisesRegex(RuntimeError, 'Prepared provenance changed'):
+                upgrade.sync_provenance(self.new)
+        self.assertEqual(stdout.getvalue(), '')
+        self.assertEqual(receipt.read_bytes(), original)
+        self.assertEqual(pins(), before)
+
+    def test_metadata_sync_cleanup_failure_preserves_original_replace_error(self):
+        receipt = self.matching_target()
+        original = receipt.read_bytes()
+        unlink = Path.unlink
+
+        def fail_cleanup(file, *args, **kwargs):
+            if file.name.startswith('vortex-agent-provenance-'):
+                raise PermissionError('synthetic staging cleanup failure')
+            return unlink(file, *args, **kwargs)
+
+        stdout = io.StringIO()
+        with patch.object(upgrade.os, 'replace', side_effect=OSError('synthetic replace failure')), \
+                patch.object(Path, 'unlink', fail_cleanup), contextlib.redirect_stdout(stdout):
+            with self.assertRaisesRegex(OSError, 'synthetic replace failure') as failure:
+                upgrade.sync_provenance(self.new)
+        self.assertEqual(failure.exception.__notes__, ['Prepared provenance cleanup failed; staging file retained'])
+        self.assertEqual(stdout.getvalue(), '')
+        self.assertEqual(receipt.read_bytes(), original)
+        staged, = (self.plugins.parent / 'temp').glob('vortex-agent-provenance-*.tmp')
+        self.assertEqual(staged.read_bytes(), (self.source / 'provenance.json').read_bytes())
+
+    def test_metadata_sync_refuses_success_after_unverified_replacement(self):
+        receipt = self.matching_target()
+        publish = upgrade.os.replace
+        kept = self.root / 'retained-result'
+
+        def move_replaced_metadata(source, destination):
+            publish(source, destination)
+            receipt.rename(kept)
+            receipt.write_bytes(kept.read_bytes())
+            self.assertFalse(receipt.samefile(kept))
+
+        stdout = io.StringIO()
+        pins = upgrade.receipt_pins()
+        with patch.object(upgrade.os, 'replace', side_effect=move_replaced_metadata), contextlib.redirect_stdout(stdout):
+            with self.assertRaisesRegex(RuntimeError, 'Provenance sync outcome uncertain'):
+                upgrade.sync_provenance(self.new)
+        self.assertEqual(stdout.getvalue(), '')
+        self.assertEqual(receipt.read_bytes(), kept.read_bytes())
+        self.assertFalse(receipt.samefile(kept))
+        self.assertEqual(upgrade.receipt_pins(), pins)
+
     def test_metadata_sync_rechecks_maintained_sources_after_staging_metadata(self):
         receipt = self.matching_target()
         original = receipt.read_bytes()
