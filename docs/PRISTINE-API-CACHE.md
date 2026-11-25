@@ -48,7 +48,10 @@ provenance and tool compatibility before generation.
 
 New attempts use a full semantic cache key and an exclusive immutable slot.
 The intent precedes the tool call, each attempt keeps its own log/output and the
-acceptance receipt is published last. Existing failure or partial evidence for
+acceptance receipt is flushed and verified as `receipt.json.pending` before
+atomic publication without overwrite. The exact intent, output and log are
+checked before publication. Extra files and a retained pending receipt block
+reuse and regeneration. Existing failure or partial evidence for
 the same input/tool cannot be bypassed by using the new directory layout. There
 is no automatic retry, stale-lock takeover, overwrite or cleanup. A timeout or
 failure preserves evidence for investigation.

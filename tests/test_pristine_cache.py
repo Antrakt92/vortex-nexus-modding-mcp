@@ -229,6 +229,98 @@ class PristineCacheTests(unittest.TestCase):
         self.assertEqual(self.calls, 0); self.assertTrue(self.snap()['slot'].is_dir())
         self.assertFalse(m.inspect_cache(self.work, self.game, self.digest)['cacheReusable'])
 
+    def test_acceptance_receipt_fsync_failure_keeps_outputs_held(self):
+        write = m.durable_new
+
+        def fail_receipt_flush(path, data):
+            if path.name.startswith('receipt.json'):
+                with patch.object(m.os, 'fsync', side_effect=OSError('modeled acceptance flush failure')):
+                    return write(path, data)
+            return write(path, data)
+
+        with patch.object(m, 'durable_new', side_effect=fail_receipt_flush):
+            with self.assertRaises(OSError):
+                m.generate_cache(self.work, self.game, self.digest, _run=self.runner)
+        slot = self.snap()['slot']
+        status = m.inspect_cache(self.work, self.game, self.digest)
+        self.assertEqual((status['state'], status['code']), ('held', 'CACHE_RECEIPT_PUBLICATION_PENDING'))
+        self.assertFalse(status['cacheReusable'])
+        self.assertFalse(status['generationAllowed'])
+        self.assertFalse((slot / 'receipt.json').exists())
+        self.assertTrue((slot / 'receipt.json.pending').is_file())
+        self.assertTrue((slot / 'vanilla.reds').is_file())
+        self.assertTrue((slot / 'decompile.log').is_file())
+        with self.assertRaisesRegex(m.CacheError, 'CACHE_RECEIPT_PUBLICATION_PENDING'):
+            m.generate_cache(self.work, self.game, self.digest, _run=self.runner)
+        self.assertEqual(self.calls, 1)
+
+    def test_receipt_publication_refuses_competing_final_file(self):
+        owner, name = (Path, 'rename') if os.name == 'nt' else (m.os, 'link')
+        publish = getattr(owner, name)
+        foreign = b'separately retained metadata'
+
+        def competing_receipt(source, target):
+            if Path(target).name == 'receipt.json':
+                with Path(target).open('xb') as stream:
+                    stream.write(foreign)
+            return publish(source, target)
+
+        with patch.object(owner, name, competing_receipt):
+            with self.assertRaises(FileExistsError):
+                m.generate_cache(self.work, self.game, self.digest, _run=self.runner)
+        slot = self.snap()['slot']
+        self.assertEqual((slot / 'receipt.json').read_bytes(), foreign)
+        self.assertTrue((slot / 'receipt.json.pending').is_file())
+        self.assertEqual(m.inspect_cache(self.work, self.game, self.digest)['code'], 'CACHE_RECEIPT_PUBLICATION_PENDING')
+        self.assertEqual(self.calls, 1)
+
+    def test_successful_runner_with_unexpected_artifact_has_no_final_receipt(self):
+        def runner(command, **kwargs):
+            result = self.runner(command, **kwargs)
+            (kwargs['cwd'] / 'tool-diagnostic.tmp').write_bytes(b'own diagnostic output')
+            return result
+
+        with self.assertRaisesRegex(m.CacheError, 'CACHE_UNKNOWN_ENTRY'):
+            m.generate_cache(self.work, self.game, self.digest, _run=runner)
+        slot = self.snap()['slot']
+        self.assertFalse((slot / 'receipt.json').exists())
+        self.assertEqual((slot / 'tool-diagnostic.tmp').read_bytes(), b'own diagnostic output')
+        self.assertFalse(m.inspect_cache(self.work, self.game, self.digest)['generationAllowed'])
+        self.assertEqual(self.calls, 1)
+
+    def test_runner_changes_attempt_intent_before_acceptance(self):
+        def runner(command, **kwargs):
+            result = self.runner(command, **kwargs)
+            (kwargs['cwd'] / 'intent.json').write_bytes(b'{}\n')
+            return result
+
+        with self.assertRaisesRegex(m.CacheError, 'CACHE_RECEIPT_MISMATCH'):
+            m.generate_cache(self.work, self.game, self.digest, _run=runner)
+        slot = self.snap()['slot']
+        self.assertFalse((slot / 'receipt.json').exists())
+        self.assertEqual((slot / 'intent.json').read_bytes(), b'{}\n')
+        self.assertFalse(m.inspect_cache(self.work, self.game, self.digest)['cacheReusable'])
+        self.assertEqual(self.calls, 1)
+
+    def test_output_changed_while_staging_receipt_stays_held(self):
+        write = m.durable_new
+        changed = b'class ItemModeGridView {}\nclass InventoryItemModeLogicController {}\n// extra'
+
+        def update_output(path, data):
+            stamp = write(path, data)
+            if path.name == 'receipt.json.pending':
+                (path.parent / 'vanilla.reds').write_bytes(changed)
+            return stamp
+
+        with patch.object(m, 'durable_new', side_effect=update_output):
+            with self.assertRaisesRegex(m.CacheError, 'CACHE_FILE_CHANGED'):
+                m.generate_cache(self.work, self.game, self.digest, _run=self.runner)
+        slot = self.snap()['slot']
+        self.assertFalse((slot / 'receipt.json').exists())
+        self.assertTrue((slot / 'receipt.json.pending').is_file())
+        self.assertEqual((slot / 'vanilla.reds').read_bytes(), changed)
+        self.assertEqual(m.inspect_cache(self.work, self.game, self.digest)['state'], 'held')
+
     def test_modern_receipt_json_scalar_types_are_exact(self):
         result = m.generate_cache(self.work, self.game, self.digest, _run=self.runner)
         path = Path(result['receipt']); receipt = json.loads(path.read_text())

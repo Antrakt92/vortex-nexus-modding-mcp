@@ -25,8 +25,12 @@ retiring exact admitted leaves. It publishes a minimal `pre-commit` that runs
 operations. Unknown hooks, sample files and `.rusty-hook.toml` are preserved.
 Task-specific tests still run in the authoritative source project.
 
-Each leaf transition is checked; the whole multi-file migration is not atomic.
+Each active hook and its exact retained backup are checked again before removal.
+The whole multi-file migration is not atomic.
 Failure can leave partial active hooks. The attempt and backups remain for
-inspection, and another apply is refused. Do not delete the record to retry.
+inspection, and another apply is refused. The completion receipt is flushed
+and verified, then the active hooks and backups are rechecked before publication
+without overwrite. A retained
+`completed.json.pending` requires inspection. Do not delete the record to retry.
 The retained originals permit a separately reviewed manual restoration; no
 automatic rollback overwrites concurrent hook changes.

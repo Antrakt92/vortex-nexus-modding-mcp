@@ -133,6 +133,27 @@ class RetireRustyHooksTests(unittest.TestCase):
         for name, data in self.content.items(): self.assertEqual((backup / name).read_bytes(), data)
         with self.assertRaisesRegex(m.RetirementError, 'HOOK_RETIREMENT_ALREADY_ATTEMPTED'): m.apply(self.root)
 
+    def test_moved_backup_leaf_preserves_its_active_original(self):
+        unlink = Path.unlink
+        first, second = list(self.content)[:2]
+
+        def remove(path, *args, **kwargs):
+            if path == self.hooks / first:
+                backup = next(self.git.glob('rusty-hook-backup-*'))
+                (backup / second).rename(backup / 'retained-moved-hook')
+            return unlink(path, *args, **kwargs)
+
+        with patch.object(Path, 'unlink', remove):
+            with self.assertRaises(OSError):
+                m.apply(self.root)
+        backup = next(self.git.glob('rusty-hook-backup-*'))
+        self.assertFalse((self.hooks / first).exists())
+        self.assertEqual((self.hooks / second).read_bytes(), self.content[second])
+        self.assertEqual((backup / 'retained-moved-hook').read_bytes(), self.content[second])
+        self.assertFalse((backup / 'completed.json').exists())
+        with self.assertRaisesRegex(m.RetirementError, 'HOOK_RETIREMENT_ALREADY_ATTEMPTED'):
+            m.apply(self.root)
+
     def test_publication_race_never_overwrites_foreign_precommit(self):
         link = os.link
         def race(source, destination, *args, **kwargs):
@@ -150,6 +171,86 @@ class RetireRustyHooksTests(unittest.TestCase):
             with self.assertRaises(OSError): m.apply(self.root)
         self.assertEqual(before, {name: (self.hooks / name).read_bytes() for name in self.content})
         self.assertTrue((self.git / m.LEDGER).exists())
+
+    def test_failed_completion_flush_preserves_attempt_without_final_receipt(self):
+        write = m.new_file
+
+        def fail_completion_flush(path, data, mode=0o600):
+            if path.name.startswith('completed.json'):
+                with patch.object(m.os, 'fsync', side_effect=OSError('modeled completion flush failure')):
+                    return write(path, data, mode)
+            return write(path, data, mode)
+
+        with patch.object(m, 'new_file', side_effect=fail_completion_flush):
+            with self.assertRaises(OSError):
+                m.apply(self.root)
+        backup = next(self.git.glob('rusty-hook-backup-*'))
+        self.assertFalse((backup / 'completed.json').exists())
+        self.assertTrue((backup / 'completed.json.pending').is_file())
+        self.assertTrue((self.git / m.LEDGER).is_file())
+        for name, data in self.content.items():
+            self.assertEqual((backup / name).read_bytes(), data)
+        with self.assertRaisesRegex(m.RetirementError, 'HOOK_RETIREMENT_ALREADY_ATTEMPTED'):
+            m.apply(self.root)
+
+    def test_completion_publication_refuses_competing_final_file(self):
+        owner, name = (Path, 'rename') if os.name == 'nt' else (m.os, 'link')
+        publish = getattr(owner, name)
+        foreign = b'separately retained metadata'
+
+        def competing_receipt(source, target):
+            if Path(target).name == 'completed.json':
+                with Path(target).open('xb') as stream:
+                    stream.write(foreign)
+            return publish(source, target)
+
+        with patch.object(owner, name, competing_receipt):
+            with self.assertRaises(FileExistsError):
+                m.apply(self.root)
+        backup = next(self.git.glob('rusty-hook-backup-*'))
+        self.assertEqual((backup / 'completed.json').read_bytes(), foreign)
+        self.assertTrue((backup / 'completed.json.pending').is_file())
+        with self.assertRaisesRegex(m.RetirementError, 'HOOK_RETIREMENT_ALREADY_ATTEMPTED'):
+            m.apply(self.root)
+
+    def assert_final_input_change_holds_completion(self, change, expected):
+        write = m.new_file
+
+        def change_after_staging(path, data, mode=0o600):
+            proof = write(path, data, mode)
+            if path.name == 'completed.json.pending':
+                change(path.parent)
+            return proof
+
+        with patch.object(m, 'new_file', side_effect=change_after_staging):
+            with self.assertRaisesRegex(m.RetirementError, expected):
+                m.apply(self.root)
+        backup = next(self.git.glob('rusty-hook-backup-*'))
+        self.assertFalse((backup / 'completed.json').exists())
+        self.assertTrue((backup / 'completed.json.pending').is_file())
+        with self.assertRaisesRegex(m.RetirementError, 'HOOK_RETIREMENT_ALREADY_ATTEMPTED'):
+            m.apply(self.root)
+
+    def test_backup_change_during_completion_staging_stays_held(self):
+        changed = b'changed retained backup'
+        self.assert_final_input_change_holds_completion(
+            lambda backup: (backup / 'pre-push').write_bytes(changed), 'HOOK_BACKUP_CHANGED')
+        backup = next(self.git.glob('rusty-hook-backup-*'))
+        self.assertEqual((backup / 'pre-push').read_bytes(), changed)
+
+    def test_active_hook_reappearance_during_completion_staging_stays_held(self):
+        active = self.hooks / 'pre-push'
+        changed = b'new useful active hook'
+        self.assert_final_input_change_holds_completion(
+            lambda _: active.write_bytes(changed), 'HOOK_RETIREMENT_CHANGED')
+        self.assertEqual(active.read_bytes(), changed)
+
+    def test_changed_ledger_during_completion_staging_stays_held(self):
+        ledger = self.git / m.LEDGER
+        changed = b'retained separate review'
+        self.assert_final_input_change_holds_completion(
+            lambda _: ledger.write_bytes(changed), 'HOOK_FILE_CHANGED')
+        self.assertEqual(ledger.read_bytes(), changed)
 
     def test_cli_reports_only_safe_code_for_private_error(self):
         with contextlib.redirect_stdout(io.StringIO()) as out:

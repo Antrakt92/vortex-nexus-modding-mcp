@@ -250,6 +250,7 @@ def validate_slot(s, slot, modern):
     pins = ancestors(slot)
     files = slot_files(slot)
     require(not exists(slot / 'writer.lock'), 'CACHE_LOCKED')
+    require(not modern or 'receipt.json.pending' not in files, 'CACHE_RECEIPT_PUBLICATION_PENDING')
     allowed = {'receipt.json', 'vanilla.reds', 'decompile.log'} | ({'intent.json'} if modern else set())
     require(set(files) <= allowed, 'CACHE_UNKNOWN_ENTRY')
     receipt = slot / 'receipt.json'
@@ -323,6 +324,7 @@ def inspect_cache(workspace, game=None, expected_sha256=None):
                     'PRISTINE_WORKSPACE_UNAVAILABLE': 'workspace_missing', 'PRISTINE_GAME_UNAVAILABLE': 'game_missing',
                     'PRISTINE_INPUT_UNAVAILABLE': 'input_missing', 'CACHE_TOOL_MANIFEST_UNAVAILABLE': 'tool_manifest_missing',
                     'CACHE_TOOL_MANIFEST_INVALID': 'tool_manifest_invalid', 'CACHE_TOOL_UNAVAILABLE': 'tool_missing',
+                    'CACHE_RECEIPT_PUBLICATION_PENDING': 'receipt_publication_pending',
                     'CACHE_OUTPUT_MISSING': 'output_missing', 'CACHE_INVALID_JSON': 'invalid_receipt'}.get(code, 'incomplete')
         result.update(state='held' if s else 'blocked', code=code, failureClass=category)
         if isinstance(error, HeldCacheAttempt):
@@ -345,6 +347,27 @@ def durable_new(path, data):
     proof, physical, actual = stable_file(path, max(MAX_JSON, len(data)), True)
     require(physical[:2] == node and actual == data, 'CACHE_FILE_CHANGED')
     check_dirs(pins)
+    return physical
+
+
+def publish_receipt(path, data, verify_inputs):
+    pins = ancestors(path.parent)
+    pending = path.with_name(path.name + '.pending')
+    staged = durable_new(pending, data)
+    check_dirs(pins)
+    verify_inputs(pending.name)
+    if os.name == 'nt':
+        # An existing destination is refused by the Windows rename.
+        pending.rename(path)
+    else:
+        os.link(pending, path)
+    _, published, actual = stable_file(path, MAX_JSON, True)
+    require(published[:2] == staged[:2] and actual == data, 'CACHE_FILE_CHANGED')
+    check_dirs(pins)
+    if os.name != 'nt':
+        _, source, staged_bytes = stable_file(pending, MAX_JSON, True)
+        require(source == published and staged_bytes == data, 'CACHE_FILE_CHANGED')
+        pending.unlink()
 
 
 @contextmanager
@@ -387,7 +410,9 @@ def generate_cache(workspace, game, expected_sha256, *, _run=subprocess.run):
     cpins = ancestors(s['cache']); recheck(s)
     s['slot'].mkdir()  # Atomic exclusive reservation; no stale takeover or cleanup.
     slotpins = ancestors(s['slot'])
-    durable_new(s['slot'] / 'intent.json', encode({'schema': 'pristine-cache-attempt/1', 'binding': s['binding']}))
+    intent = s['slot'] / 'intent.json'
+    intent_bytes = encode({'schema': 'pristine-cache-attempt/1', 'binding': s['binding']})
+    intent_generation = durable_new(intent, intent_bytes)
     with exclusive_cache(s['slot']):
         result, log = s['slot'] / 'vanilla.reds', s['slot'] / 'decompile.log'
         recheck(s); check_dirs(cpins + slotpins)
@@ -402,10 +427,23 @@ def generate_cache(workspace, game, expected_sha256, *, _run=subprocess.run):
         require(identity(ordinary(log)) == lognode, 'CACHE_LOG_CHANGED')
         require(type(proc.returncode) is int and proc.returncode == 0, 'CACHE_DECOMPILER_FAILED')
         check_dirs(cpins + slotpins); recheck(s)
+        files = slot_files(s['slot'])
+        require(result.name in files, 'CACHE_OUTPUT_MISSING')
+        require(set(files) == {intent.name, 'writer.lock', result.name, log.name}, 'CACHE_UNKNOWN_ENTRY')
+        _, current_intent, current_bytes = stable_file(intent, MAX_JSON, True)
+        require(current_intent == intent_generation and current_bytes == intent_bytes, 'CACHE_RECEIPT_MISMATCH')
         check_log(s['slot'], required=True)
         output = stable_file(result, validate_types=True)[0]; require(output['bytes'] > 0, 'CACHE_OUTPUT_MISMATCH')
-        durable_new(s['slot'] / 'receipt.json', encode({'schema': 'pristine-cache-receipt/1', 'binding': s['binding'],
-                    'output': output, 'exitCode': 0, 'scope': SCOPE, 'requiredTypesVerified': True, 'coverageVerified': False}))
+
+        def verify_inputs(pending_name):
+            check_dirs(cpins + slotpins)
+            current = slot_files(s['slot'])
+            require(set(current) == set(files) | {pending_name}, 'CACHE_UNKNOWN_ENTRY')
+            require(all(current[name] == stamp for name, stamp in files.items()), 'CACHE_FILE_CHANGED')
+
+        receipt = {'schema': 'pristine-cache-receipt/1', 'binding': s['binding'], 'output': output,
+                   'exitCode': 0, 'scope': SCOPE, 'requiredTypesVerified': True, 'coverageVerified': False}
+        publish_receipt(s['slot'] / 'receipt.json', encode(receipt), verify_inputs)
     validate_slot(s, s['slot'], True)
     return {'reused': False, 'source': str(result), 'receipt': str(s['slot'] / 'receipt.json'), 'bytes': output['bytes']}
 

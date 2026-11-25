@@ -268,7 +268,7 @@
     },
     {
       "path": "docs/LEGACY-GIT-HOOKS.md",
-      "sha256_lf": "1c731dd86fb46c1e1cd08440fd986a9aa8340b72d5d89d23e152f99f3afb85eb"
+      "sha256_lf": "7f05c8ee4d59751020086c0e728faf41a2cf3f07864f8111507b59c92aade6b3"
     },
     {
       "path": "docs/LICENSES.md",
@@ -464,7 +464,7 @@
     },
     {
       "path": "docs/PRISTINE-API-CACHE.md",
-      "sha256_lf": "e49eb2d4c0cb884ffd250ff962acaa31c36e2c9932498d27897a60d7a1534f61"
+      "sha256_lf": "ced7942acc5046b928231c6246aa6309db8fa88ce59d04648f91eb5836c6df20"
     },
     {
       "path": "docs/PROCESS-PROBE-EXPERIMENT.md",
@@ -592,7 +592,7 @@
     },
     {
       "path": "tests/test_pristine_cache.py",
-      "sha256_lf": "93aba308acc9408c8ff7378377272c04faa358963e39356c3c15502f28fff4f7"
+      "sha256_lf": "0e564dbf3c7828181a0e1c1d657f1d55a8e2ab0dc0b46d3555b48c01b21c84d4"
     },
     {
       "path": "tests/test_recovery.py",
@@ -604,7 +604,7 @@
     },
     {
       "path": "tests/test_retire_rusty_hooks.py",
-      "sha256_lf": "3cc463795f6f62490fc6389e48899da2dee45d32875c11f9a07bec5ee3838143"
+      "sha256_lf": "93a32ff00aa1f55d63e15e37e050cc903fb6447fc42e866b96d64e231033b2e6"
     },
     {
       "path": "tests/test_update_manifest.py",
@@ -616,7 +616,7 @@
     },
     {
       "path": "tools/modding/decompile_pristine.py",
-      "sha256_lf": "8c8c9dd3f16d1d6c0ecc6628e7a176d960f4fe41de7c6c2e072dedd26b42ed55"
+      "sha256_lf": "a687f9ae147b76aab7bdbf2354cdb8ed104cd302fd3d8f1c64598ff2d78c9631"
     },
     {
       "path": "tools/modding/native-process-probe/Cargo.lock",
@@ -752,7 +752,7 @@
     },
     {
       "path": "tools/modding/retire-rusty-hooks.py",
-      "sha256_lf": "c72739dbe4da92a7324e85bd24a370423ab7c486f1a1a487c4afdd7645d6ae77"
+      "sha256_lf": "c9fbb1b5347baa3e1fd218c3109e72bc6ee043521dff5efc1967ad9574c7a727"
     },
     {
       "path": "tools/modding/vortex-agent/LOCAL-PACKAGE-INSTALL-DESIGN.md",
