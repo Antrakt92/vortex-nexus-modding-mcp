@@ -7,12 +7,13 @@ const { unresolvedConflicts, collectionHealth, conflicts } = require('./inspecti
 const { safe } = require('./serialization.cjs');
 
 function fixture(count = 0) {
-  const base = { id: 'base', attributes: { name: 'Base', referenceTag: 'ncr-base', fileMD5: 'md5-base' } };
-  const addon = { id: 'addon', attributes: { name: 'Addon' }, rules: [{ type: 'after',
+  const base = { id: 'base', state: 'installed', attributes: { name: 'Base', referenceTag: 'ncr-base', fileMD5: 'md5-base' } };
+  const addon = { id: 'addon', state: 'installed', attributes: { name: 'Addon' }, rules: [{ type: 'after',
     reference: { tag: 'ncr-base', fileMD5: 'md5-base' }, extra: { fromCollection: 'old-revision' } }] };
   const overlap = { otherMod: { id: base.id, name: 'Base', referenceTag: 'ncr-base', fileMD5: 'md5-base' },
     files: ['example.reds'], suggestion: null };
-  const state = { persistent: { profiles: { p: { gameId: 'game' } }, mods: { game: { base, addon } } },
+  const state = { persistent: { profiles: { p: { gameId: 'game', modState: {
+    base: { enabled: true }, addon: { enabled: true } } } }, mods: { game: { base, addon } } },
     session: { dependencies: { conflicts: { addon: [overlap] }, unsolvedConflictsCount: count, hasUnsolvedConflicts: count > 0 },
       collections: { activeSession: undefined } } };
   const calls = [];
@@ -66,11 +67,41 @@ test('global fallback: native zero is authoritative even without a direct rule',
 });
 test('global fallback cannot silently emit partial or stale conflicting details', () => {
   const f = fixture(1); f.addon.rules = [];
+  f.state.persistent.mods.game.third = { id: 'third', state: 'installed' };
+  f.state.persistent.profiles.p.modState.third = { enabled: true };
   f.state.session.dependencies.conflicts.addon.push({ ...f.overlap, otherMod: { id: 'third' } });
   assert.throws(() => unresolvedConflicts(f.api, f.selectors, f.util), /NATIVE_CONFLICT_DETAILS_UNAVAILABLE/);
   f.state.session.dependencies.conflicts.addon = [];
   assert.throws(() => unresolvedConflicts(f.api, f.selectors, f.util), /NATIVE_CONFLICT_DETAILS_UNAVAILABLE/);
 });
+test('same-game profile switches do not relabel a settled old pair as a current conflict', () => {
+  const f = fixture(1); f.addon.rules = [];
+  f.state.persistent.profiles.next = { gameId: 'game', modState: { base: { enabled: true }, addon: { enabled: false } } };
+  const selectors = { ...f.selectors, activeProfileId: () => 'next' };
+  f.state.settings = { profiles: { nextProfileId: 'next' } };
+  assert.throws(() => unresolvedConflicts(f.api, selectors, f.util), /NATIVE_CONFLICT_DETAILS_UNAVAILABLE/);
+  const health = collectionHealth(f.api, selectors);
+  assert.equal(health.nativeConflicts.count, 1);
+  assert.equal(health.recalculationVerified, false);
+});
+
+test('native conflict details refuse before a queued profile switch settles', () => {
+  const f = fixture(1); f.addon.rules = [];
+  f.state.settings = { profiles: { nextProfileId: 'next' } };
+  assert.throws(() => unresolvedConflicts(f.api, f.selectors, f.util), /NATIVE_CONFLICT_CONTEXT_UNSETTLED/);
+  assert.equal(f.calls.length, 0);
+});
+
+test('native pair endpoints must still be installed and enabled before zero or positive details', () => {
+  for (const count of [0, 1]) {
+    const f = fixture(count); f.addon.rules = [];
+    f.base.state = 'installing';
+    assert.throws(() => unresolvedConflicts(f.api, f.selectors, f.util), /NATIVE_CONFLICT_DETAILS_UNAVAILABLE/);
+    delete f.state.persistent.mods.game.base;
+    assert.throws(() => unresolvedConflicts(f.api, f.selectors, f.util), /NATIVE_CONFLICT_DETAILS_UNAVAILABLE/);
+  }
+});
+
 for (const count of [undefined, null, '0', -1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
   test(`invalid native count ${String(count)} is unavailable, never healthy zero`, () => {
     const f = fixture(); f.state.session.dependencies.unsolvedConflictsCount = count;

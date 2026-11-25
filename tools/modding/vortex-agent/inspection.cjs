@@ -69,13 +69,18 @@ function collectionHealth(api, selectors) {
   }, recalculationVerified: false, diskDeploymentVerified: false };
 }
 function unresolvedConflicts(api, selectors, util) {
-  const state = api.getState(), gameId = selectors.activeGameId(state);
-  insist(typeof gameId === 'string' && gameId.length > 0
-    && state.persistent?.profiles?.[selectors.activeProfileId(state)]?.gameId === gameId, 'CONFLICT_READ_REQUIRES_ACTIVE_GAME');
+  const state = api.getState(), gameId = selectors.activeGameId(state), profileId = selectors.activeProfileId(state);
+  const profile = state.persistent?.profiles?.[profileId];
+  insist(typeof gameId === 'string' && gameId.length > 0 && typeof profileId === 'string' && profileId.length > 0
+    && profile?.gameId === gameId, 'CONFLICT_READ_REQUIRES_ACTIVE_GAME');
+  const next = state.settings?.profiles?.nextProfileId;
+  insist(next === undefined || next === profileId, 'NATIVE_CONFLICT_CONTEXT_UNSETTLED');
   const native = nativeConflictState(state);
   insist(native.available && native.consistent && native.conflictsCalculated, 'NATIVE_CONFLICT_STATE_UNAVAILABLE');
   insist(typeof util?.testModReference === 'function', 'NATIVE_CONFLICT_MATCHER_UNAVAILABLE');
   const mods = state.persistent?.mods?.[gameId] || {}, candidates = [], seen = new Set();
+  const activeInstalled = id => mods[id]?.id === id && mods[id].state === 'installed'
+    && profile.modState?.[id]?.enabled === true;
   const ruleTypes = new Set(['before', 'after', 'conflicts']);
   const matches = (rules, target) => {
     insist(rules === undefined || Array.isArray(rules), 'NATIVE_CONFLICT_STATE_INVALID');
@@ -90,20 +95,22 @@ function unresolvedConflicts(api, selectors, util) {
       insist(other != null && typeof other.id === 'string' && typeof modId === 'string'
         && Array.isArray(entry.files) && entry.files.every(file => typeof file === 'string')
         && [null, 'before', 'after'].includes(entry.suggestion), 'NATIVE_CONFLICT_STATE_INVALID');
-      // Same pair identity and direct-rule predicate as Vortex 2.8.2 findRule.ts.
+      // Vortex can still expose its prior profile's global conflict map after
+      // a same-game switch. Unchanged membership alone does not prove freshness.
+      insist(activeInstalled(modId) && activeInstalled(other.id), 'NATIVE_CONFLICT_DETAILS_UNAVAILABLE');
+      // Same pair identity and direct-rule predicate as Vortex's findRule.ts.
       const key = [modId, other.id].sort().join(':');
       if (seen.has(key)) continue;
       seen.add(key);
-      if (matches(mods[modId]?.rules, other)
-        || (mods[modId] !== undefined && matches(mods[other.id]?.rules, mods[modId]))) continue;
-      candidates.push({ modId, modName: mods[modId] !== undefined ? util.renderModName(mods[modId]) : modId,
+      if (matches(mods[modId].rules, other) || matches(mods[other.id].rules, mods[modId])) continue;
+      candidates.push({ modId, modName: util.renderModName(mods[modId]),
         otherModId: other.id, otherModName: typeof other.name === 'string' ? other.name : other.id,
         files: [...entry.files], suggestion: entry.suggestion });
     }
   }
   // Native dependencyState.modRules is private and can resolve additional pairs.
-  // Zero is authoritative; equal cardinality proves no candidate was removed by
-  // that fallback in this snapshot. Otherwise never emit a guessed partial list.
+  // Zero is the recorded native count. With a positive count, equal cardinality
+  // proves no candidate was removed by that fallback in this snapshot.
   if (native.count === 0) return [];
   insist(candidates.length === native.count, 'NATIVE_CONFLICT_DETAILS_UNAVAILABLE');
   return candidates;
