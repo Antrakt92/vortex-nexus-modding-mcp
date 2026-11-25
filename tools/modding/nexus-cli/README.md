@@ -22,6 +22,9 @@ New files are published only after their contents are flushed to disk. An
 interruption during a write leaves the final path available for a retry.
 Before launch, the wrapper checks the executable, shipped DLLs and runtime
 configuration against pins from that archive and refuses reparse paths.
+Pass flags and values as separate PowerShell arguments. The wrapper preserves
+literal quotes, spaces and empty strings in Windows PowerShell 5.1 and
+PowerShell 7, including when capturing the output in a pipeline.
 
 To install or reuse the verified release, run this explicit installation command
 from the repository root; it may download the pinned asset:

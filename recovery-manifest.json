@@ -648,7 +648,7 @@
     },
     {
       "path": "tools/modding/nexus-cli/README.md",
-      "sha256_lf": "9eb11253d4b6092de60b90fb509dd85a17d674d266e9a4599b391ffce764e09a"
+      "sha256_lf": "1a80b380ba88fa1ee7141e0d57902e9708e917722a56e7d446853e80e1c9b8d9"
     },
     {
       "path": "tools/modding/nexus-cli/credential_setup.py",
@@ -660,7 +660,7 @@
     },
     {
       "path": "tools/modding/nexus-cli/nexusmods.ps1",
-      "sha256_lf": "14ce7b03fb2930a8e04ec0e39028caf8830f09d537e9eb005cfee6958221aab0"
+      "sha256_lf": "e05d728e67b5b4e27b57716dc3cc0f39135777b534df6896d02acce73714b1ca"
     },
     {
       "path": "tools/modding/nexus-cli/test_credential_setup.py",
@@ -668,7 +668,7 @@
     },
     {
       "path": "tools/modding/nexus-cli/test_portable_paths.py",
-      "sha256_lf": "6ec1adc3c8482a4af28a843a4751c8eb2579dc959a00dafa0b99bf8963a58af8"
+      "sha256_lf": "5cf8c03137af9df6039c14398e995d2e7c2d26cff434a1dbba40b902cf2c2f42"
     },
     {
       "path": "tools/modding/nexus-publish/README.md",
