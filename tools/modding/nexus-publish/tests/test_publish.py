@@ -469,6 +469,48 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(warning.getvalue().count("staging cleanup incomplete"), 2)
         self.assertNotIn("private diagnostic output", warning.getvalue())
 
+    def test_verification_probes_get_only_runtime_environment_and_finite_timeout(self):
+        action = self.root / "verified-tool-probe"
+        script = action / "dist/index.js"
+        script.parent.mkdir(parents=True)
+        bundle = b"// Synthetic verification input, never executed\r\n"
+        script.write_bytes(bundle)
+        probes = []
+
+        def tool_probe(argv, **options):
+            probes.append((argv, options))
+            outputs = {"HEAD": p.PIN, "--version": "v24.20.0", "process.versions.undici": "7.24.0"}
+            return SimpleNamespace(stdout=outputs[argv[-1]])
+
+        inherited = {"PATH": r"C:\Code\node", "SystemRoot": r"C:\Windows",
+                     "NEXUS_PUBLISH_KEY": "synthetic-credential-placeholder", "NODE_OPTIONS": "--no-warnings",
+                     "GIT_DIR": "synthetic-git-directory", "UNRELATED_OPTION": "not-required"}
+        with (patch.dict(os.environ, inherited, clear=True),
+              patch.object(p, "BUNDLE_SHA256", p.bundle_sha256(bundle)),
+              patch.object(p.shutil, "which", return_value="trusted-node"),
+              patch.object(p.subprocess, "run", side_effect=tool_probe)):
+            self.assertEqual(p.verify_action(action), ("trusted-node", bundle))
+
+        self.assertEqual([argv[-1] for argv, _ in probes], ["HEAD", "--version", "process.versions.undici"])
+        for _, options in probes:
+            self.assertIn("env", options)
+            environment = {key.upper(): value for key, value in options["env"].items()}
+            self.assertEqual(environment, {"PATH": inherited["PATH"], "SYSTEMROOT": inherited["SystemRoot"]})
+            self.assertGreater(options["timeout"], 0)
+            self.assertLessEqual(options["timeout"], 30)
+            self.assertTrue(options["capture_output"] and options["check"] and options["text"])
+
+    def test_verification_timeout_preserves_typed_refusal(self):
+        for probe in range(3):
+            with self.subTest(probe=probe):
+                approved = [SimpleNamespace(stdout=p.PIN), SimpleNamespace(stdout="v24.20.0")]
+                responses = [*approved[:probe], subprocess.TimeoutExpired("synthetic probe", timeout=15)]
+                with (patch.object(p.shutil, "which", return_value="trusted-node"),
+                      patch.object(p.subprocess, "run", side_effect=responses) as command):
+                    with self.assertRaisesRegex(p.Blocked, "Pinned action checkout and Node 24 are required"):
+                        p.verify_action(self.root)
+                    self.assertEqual(command.call_count, probe + 1)
+
     def test_bundle_pin_accepts_only_git_eol_conversion_and_rejects_tampering(self):
         original = p.DEFAULT_ACTION / "dist/index.js"
         copied = self.root / "bundle.js"

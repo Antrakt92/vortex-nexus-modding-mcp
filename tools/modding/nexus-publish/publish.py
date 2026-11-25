@@ -159,15 +159,20 @@ def effective_display_name(manifest):
     return manifest.get("display_name", "").strip(JS_WHITESPACE) or Path(manifest["archive"]).name
 
 
+def runtime_environment():
+    return {k: v for k, v in os.environ.items()
+            if k.upper() in {"SYSTEMROOT", "WINDIR", "PATH", "TEMP", "TMP", "HOME", "USERPROFILE"}}
+
+
 def verify_action(action):
+    # The workflow credential may still be in the parent environment while
+    # these local version checks run. None of the probes needs action inputs.
+    probe_options = dict(env=runtime_environment(), timeout=15, capture_output=True, check=True, text=True)
     try:
-        head = subprocess.run(["git", "-C", str(action), "rev-parse", "HEAD"],
-                              capture_output=True, check=True, text=True).stdout.strip()
+        head = subprocess.run(["git", "-C", str(action), "rev-parse", "HEAD"], **probe_options).stdout.strip()
         node = shutil.which("node")
-        version = subprocess.run([node or "node", "--version"], capture_output=True,
-                                  check=True, text=True).stdout.strip()
-        undici = subprocess.run([node or "node", "-p", "process.versions.undici"], capture_output=True,
-                                check=True, text=True).stdout.strip()
+        version = subprocess.run([node or "node", "--version"], **probe_options).stdout.strip()
+        undici = subprocess.run([node or "node", "-p", "process.versions.undici"], **probe_options).stdout.strip()
         with (action / "dist/index.js").open("rb") as entry:
             bundle = entry.read(ACTION_BUNDLE_LIMIT + 1)
         if head != PIN or len(bundle) > ACTION_BUNDLE_LIMIT or bundle_sha256(bundle) != BUNDLE_SHA256:
@@ -214,8 +219,7 @@ def stage_action(bundle):
 
 def child_environment(manifest, key):
     # Do not inherit NODE_OPTIONS, API overrides, debug flags, GITHUB_OUTPUT or unrelated secrets.
-    env = {k: v for k, v in os.environ.items()
-           if k.upper() in {"SYSTEMROOT", "WINDIR", "PATH", "TEMP", "TMP", "HOME", "USERPROFILE"}}
+    env = runtime_environment()
     inputs = {k: manifest[k] for k in ACTION_FIELDS if k in manifest}
     inputs.update(file_id=manifest["file_id"], mod_id=manifest["mod_id"],
                   filename=manifest["archive"], version=manifest["version"], api_key=key)
