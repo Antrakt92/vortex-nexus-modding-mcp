@@ -43,6 +43,24 @@ test('audit: direct HTTP rejects ambiguous arguments before dispatch', async () 
     await assert.rejects(parsed, error => error.message === 'HTTP_BODY_INVALID' && error.status === 400);
   }
 });
+test('HTTP upload buffers an ordinary fragmented body without retaining every chunk', async t => {
+  const ingress = require('./http-ingress.cjs');
+  const value = { description: 'profile inventory '.repeat(2048) };
+  const encoded = Buffer.from(JSON.stringify(value));
+  let concatInputs = 0;
+  const original = Buffer.concat;
+  t.mock.method(Buffer, 'concat', (parts, length) => {
+    concatInputs = Math.max(concatInputs, parts.length);
+    return original(parts, length);
+  });
+  const input = new PassThrough(), parsed = ingress.body(input, new AbortController().signal);
+  for (let offset = 0; offset < encoded.length; offset += 512) {
+    input.write(encoded.subarray(offset, offset + 512));
+  }
+  input.end();
+  assert.deepEqual(await parsed, value);
+  assert.ok(concatInputs <= 8);
+});
 async function fixture(t, hook = async () => {}) {
   const dir = fixtureDirectories.fixtureDirectory(t, ROOT, 'audit-');
   const state = { settings: { gameMode: { discovered: { cyberpunk2077: { path: dir } } } }, persistent: {
