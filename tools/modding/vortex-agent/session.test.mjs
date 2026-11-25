@@ -398,6 +398,29 @@ test('cancellation before dispatch prevents every effect; cancellation during a 
   assert.equal(r.writes.length, 0);
 });
 
+test('published plan schema describes drive paths, own ZIPs and deploy-only plans', async () => {
+  const inventory = await clientRemote('tools/list', {}, async () => ({tools: []}));
+  const definition = inventory.tools.find(tool => tool.name === 'run_mod_plan');
+  const schema = definition.inputSchema.properties.plan;
+  const fields = schema.properties.context.properties;
+  for (const key of ['gamePath', 'stagingPath', 'downloadPath']) {
+    assert.equal(typeof fields[key].pattern, 'string');
+    const pattern = new RegExp(fields[key].pattern);
+    for (const value of ['F:/Games/Cyberpunk', 'D:\\Mod Staging']) assert(pattern.test(value));
+    for (const value of ['relative/mod', 'D:drive-relative', 'D:/line\n']) assert(!pattern.test(value));
+  }
+  const archive = schema.properties.steps.items.oneOf.find(it => it.properties.operation.const === 'install_local_archive');
+  assert.equal(typeof archive.properties.archivePath.pattern, 'string');
+  const zip = new RegExp(archive.properties.archivePath.pattern);
+  for (const value of ['F:/Work/Fixture.zip', 'D:\\Mod Staging\\Fixture.zip']) assert(zip.test(value));
+  for (const value of ['Fixture.zip', 'D:/Fixture.ZIP', 'D:/Fixture.tar', 'D:/Fixture.zip\r']) assert(!zip.test(value));
+  assert.deepEqual(schema.anyOf.map(it => it.properties), [{steps: {minItems: 1}}, {deploy: {type: 'object'}}]);
+
+  const deployOnly = {version: 1, context: context(), steps: [], deploy: {requestId: 'deploy-only-test'}};
+  assert.deepEqual(validatePlan(deployOnly), deployOnly);
+  assert.throws(() => validatePlan({...deployOnly, deploy: null}), /EMPTY_PLAN/);
+});
+
 test('MCP plan validation is offline by default, and malformed/failed plans return tool errors', async () => {
   const inventory = await clientRemote('tools/list', {}, async () => ({tools: []}));
   const definition = inventory.tools.find(tool => tool.name === 'run_mod_plan');

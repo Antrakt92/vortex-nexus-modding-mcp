@@ -3100,7 +3100,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/plan-tool.mjs",
-      "sha256_lf": "6e9e5e81f34b3950513d35a3d7c766ead727f99924daae6f2c9201130af7fd27"
+      "sha256_lf": "73c7fecd394ccac187419180d7696ee32038cb948bc0cb5da9b0ebb9f5967954"
     },
     {
       "path": "tools/modding/vortex-agent/prepare-guard-await.test.mjs",
@@ -3204,7 +3204,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/session.test.mjs",
-      "sha256_lf": "6410399fd8380979c7a95efbacc2178ab6c6d21f48a7f676259a47d0737f2f26"
+      "sha256_lf": "9ff44a78b0e066186c9ae8274a7d1206c57e295f23e45bf9126ce8fbdb072569"
     },
     {
       "path": "tools/modding/vortex-agent/stdio.test.mjs",
