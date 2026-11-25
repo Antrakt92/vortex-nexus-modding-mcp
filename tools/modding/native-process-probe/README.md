@@ -20,6 +20,7 @@ From this directory, with the pinned compiler available in a developer shell:
 
 ```powershell
 $env:CARGO_TARGET_DIR = 'F:/YourWorkspace/local-state/native-process-probe-target'
+Remove-Item -LiteralPath Env:RUSTFLAGS, Env:CARGO_ENCODED_RUSTFLAGS, Env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS -ErrorAction SilentlyContinue
 cargo fetch --locked
 cargo fmt --check
 cargo test --locked --offline --target x86_64-pc-windows-msvc --config static-crt.toml
@@ -37,9 +38,10 @@ No binary belongs in the Git source manifest. A future distribution needs its
 own artifact, source/dependency notices and PE-import/clean-Windows acceptance.
 The original default MSVC build imports `VCRUNTIME140.dll` and Windows CRT APIs.
 The explicit static-CRT experiment removes those observed external CRT imports;
-clean-machine acceptance remains unproved. Clear inherited `RUSTFLAGS` and
-`CARGO_ENCODED_RUSTFLAGS` before qualification: they override target config flags.
-Pass the config path explicitly when building from another directory; a manifest
+clean-machine acceptance remains unproved. Remove inherited Rust flag overrides
+from the current shell before qualification. An empty override can still make
+Cargo ignore the static-CRT profile. Pass the config path explicitly when building
+from another directory; a manifest
 path alone does not select crate-local Cargo configuration. Static CRT does not
 remove Windows OS dependencies, license review or runtime servicing obligations.
 
