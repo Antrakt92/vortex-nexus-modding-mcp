@@ -136,6 +136,24 @@ test('absolute deadline is checked after final synchronous admission before any 
  assert.equal(h.spawned(),0);assert.deepEqual(h.errors,['FILE_PROOF_TIMEOUT']);await h.adapter.terminate();
 });
 
+test('initialization can release a pending proof only before the absolute deadline',async t=>{
+ const f=fixture(t),deadline=100;
+ for(const handshakeTime of [99,100,101]){
+  let now=0;
+  // Move the clock from inside the valid IPC handshake, with no timer callback.
+  const h=fake(f,{deadline,clock:{now:()=>now},transform:value=>{now=handshakeTime;return value;}});
+  h.adapter.postMessage(f.request);
+  await turn();
+  const timely=handshakeTime<deadline;
+  assert.equal(h.spawned(),1);
+  assert.equal(h.sent[0].kind,'initialize');
+  assert.equal(h.sent.length,timely?2:1);
+  if(timely)assert.equal(h.sent[1].requestId,f.request.requestId);
+  assert.deepEqual(h.errors,timely?[]:['FILE_PROOF_TIMEOUT']);
+  await h.adapter.terminate();
+ }
+});
+
 test('outer client preserves uncertain child cleanup and never calls a replacement factory',async t=>{
  const {_createFileProofClientForTests}=await import('./file-proof-client.mjs');const f=fixture(t);let count=0,adapter;
  const client=_createFileProofClientForTests({roots:f.config.roots,epoch:4,hostGeneration:'own-test'},()=>{

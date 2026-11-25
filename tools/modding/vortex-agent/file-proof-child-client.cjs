@@ -135,12 +135,14 @@ function create(config, dependencies) {
             const r = value.runtime;
             need(core.exact(r,['electron','node','processType','runAsNode','backend']) && r.electron === '44.2.0' && r.node === '24.20.0'
               && r.processType === null && r.runAsNode === true && r.backend === 'original-fs', 'FILE_PROOF_CHILD_RUNTIME_CHANGED');
-            need(!closing,'FILE_PROOF_CHILD_CLOSED'); ready = true;
+            need(!closing,'FILE_PROOF_CHILD_CLOSED');
+            // An IPC callback can arrive before the outer timeout timer runs.
+            timely(); ready = true;
             if (pending) {const message=pending;pending=undefined;send(message);} return;
           }
           need(inflight,'FILE_PROOF_CHILD_UNSOLICITED_REPLY'); inflight = false;
           if (!closing) adapter.emit('message',value);
-        } catch {error('FILE_PROOF_CHILD_PROTOCOL');}
+        } catch (e) {error(e?.message === 'FILE_PROOF_TIMEOUT' ? 'FILE_PROOF_TIMEOUT' : 'FILE_PROOF_CHILD_PROTOCOL');}
       });
       child.once('exit',code=>{exited=true;exitObserved=true;settleExit();adapter.emit('exit',code);});
       child.once('close',()=>{exited=true;closeObserved=true;releaseParent();finish(true);});
