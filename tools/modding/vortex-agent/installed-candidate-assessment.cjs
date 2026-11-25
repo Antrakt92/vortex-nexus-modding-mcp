@@ -334,10 +334,12 @@ function runAssessment(api, selectors, util, args) {
           oldInstallSpecMatches: oldSpecMatch};
         matches.push(row);
         if (ownerId === args.collectionModId && (comparison.ruleId === undefined || comparison.ruleId === key)) {
-          if (key !== null && collectionIds.get(key) === 1) {
-            if (selectedRule) {selectedRule = null; add('SELECTED_RULE_AMBIGUOUS');}
-            else if (!reasons.has('SELECTED_RULE_AMBIGUOUS')) selectedRule = {ruleIdHash: nativeIdFingerprintOf(key), fingerprint: ruleFingerprint, ignored};
-          } else add('SELECTED_RULE_AMBIGUOUS');
+          if (selectedRule || key === null || collectionIds.get(key) !== 1) {
+            selectedRule = null;
+            add('SELECTED_RULE_AMBIGUOUS');
+          } else if (!reasons.has('SELECTED_RULE_AMBIGUOUS')) {
+            selectedRule = {ruleIdHash: nativeIdFingerprintOf(key), fingerprint: ruleFingerprint, ignored};
+          }
         }
       }
       if (!selectedRule) add(reasons.has('SELECTED_RULE_AMBIGUOUS') ? 'SELECTED_RULE_AMBIGUOUS' : 'SELECTED_RULE_NOT_FOUND');

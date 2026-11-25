@@ -173,6 +173,20 @@ test('distinct selected rules require an explicit exact selector, never first-ma
   assert(f.row().reasons.includes('SELECTED_RULE_NOT_FOUND'));
 });
 
+test('an unidentified matching requirement makes the implicit selection ambiguous regardless of order', () => {
+  const unidentified = rule({reference: {repo: {repository: 'nexus', modId: '10', fileId: '100'}}});
+  const known = rule();
+  for (const collectionRules of [[known, unidentified], [unidentified, known]]) {
+    const f = fixture();
+    f.mods.collection.rules = collectionRules;
+    const row = f.row();
+    assert.equal(row.status, 'insufficient_evidence');
+    assert(row.reasons.includes('SELECTED_RULE_AMBIGUOUS'));
+    assert.equal(row.selectedRule, null);
+    assert.equal(row.incomingRequires.length, 2);
+  }
+});
+
 test('all collections, noncollection owners and ignored incoming requires are assessed', () => {
   const f = fixture(); const r = rule({ignored: true}); r.reference.tag = 'foreign';
   f.mods.foreignCollection = mod({type: 'collection', rules: [r]});
