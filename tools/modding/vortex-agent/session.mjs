@@ -90,10 +90,15 @@ function validCollectionHealth(value) {
   const flag = v => v === null || typeof v === 'boolean';
   if (!object(value) || !object(value.nativeConflicts) || !object(value.collectionSession)) return false;
   const native = value.nativeConflicts, session = value.collectionSession;
-  return count(native.count) && flag(native.hasUnsolvedConflicts)
-    && ['available', 'consistent', 'conflictsCalculated'].every(k => typeof native[k] === 'boolean')
-    && typeof session.available === 'boolean' && flag(session.present) && flag(session.stalled)
-    && object(session.counters) && ['totalRequired', 'totalOptional', 'downloadedCount', 'installedCount', 'failedCount', 'ignoredCount'].every(k => count(session.counters[k]))
+  if (!object(session.counters)) return false;
+  const counters = ['totalRequired', 'totalOptional', 'downloadedCount', 'installedCount', 'failedCount', 'ignoredCount'].map(key => session.counters[key]);
+  if (!count(native.count) || !flag(native.hasUnsolvedConflicts) || typeof native.conflictsCalculated !== 'boolean'
+    || !flag(session.present) || !flag(session.stalled) || !counters.every(count)) return false;
+  const conflictsAvailable = native.count !== null && native.hasUnsolvedConflicts !== null;
+  return native.available === conflictsAvailable
+    && native.consistent === (conflictsAvailable && native.hasUnsolvedConflicts === (native.count > 0))
+    && session.available === (session.present !== null)
+    && (session.present === true || session.stalled === null && counters.every(n => n === null))
     && value.recalculationVerified === false && value.diskDeploymentVerified === false;
 }
 
