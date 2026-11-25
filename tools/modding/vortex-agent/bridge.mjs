@@ -285,7 +285,11 @@ export async function clientRemote(method, params = {}, transport = remote, {sig
   if (method === 'tools/list') {
     const result = await transport(method, params);
     if (!Array.isArray(result?.tools)) throw new Error('Invalid Vortex tool inventory');
-    return {...result, tools: [...result.tools.filter(tool => tool.name !== 'install_download' && !LOCAL_TOOLS.some(local => local.name === tool.name)).map(maintainedToolMetadata), ...structuredClone(LOCAL_TOOLS)]};
+    const tools = result.tools
+      .filter(tool => tool.name !== 'install_download' && !LOCAL_TOOLS.some(local => local.name === tool.name))
+      .map(maintainedToolMetadata);
+    if (params?.cursor === undefined) tools.push(...structuredClone(LOCAL_TOOLS));
+    return {...result, tools};
   }
   if (method === 'tools/call' && params.name === 'inspect_session') {
     const args = params.arguments === undefined ? {} : params.arguments;
