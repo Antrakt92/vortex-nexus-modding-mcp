@@ -72,7 +72,8 @@ test('review: attempt and unresolved marker fsynced before effect invocation', a
   const f = await fixture(); const synced = [];
   const monitoredFs = { ...fs, open: async (file, mode) => {
     const handle = await fs.open(file, mode);
-    return { writeFile: (...a) => handle.writeFile(...a), close: () => handle.close(),
+    return { stat: (...a) => handle.stat(...a),
+      writeFile: (...a) => handle.writeFile(...a), close: () => handle.close(),
       sync: async () => { await handle.sync(); synced.push(path.basename(file)); } };
   } };
   const module = { exports: {} };

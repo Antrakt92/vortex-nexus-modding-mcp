@@ -42,7 +42,8 @@ async function fixture({ fresh = false, onProofEnd, onReceiptSync } = {}) {
         createReadStream: (...args) => monitor(handle.createReadStream(...args)),
         close: async () => { model.closed++; await handle.close(); } };
     }
-    return { writeFile: (...args) => handle.writeFile(...args), close: () => handle.close(),
+    return { stat: (...args) => handle.stat(...args),
+      writeFile: (...args) => handle.writeFile(...args), close: () => handle.close(),
       sync: async () => { await handle.sync();
         if (path.basename(file).includes('.completion.json.pending-')) {
           model.receiptEvents++; onReceiptSync?.(model);

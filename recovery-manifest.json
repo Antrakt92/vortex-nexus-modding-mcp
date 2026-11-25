@@ -1176,7 +1176,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/native-audit.test.mjs",
-      "sha256_lf": "667ee6ab13b120ab01102b69b017ffb5c8dd5d10592f4c8433eb2a5e94fa9d19"
+      "sha256_lf": "9aa5118ace04bb866d8bbe7582332b696c182b0a93aedec4bd202169018d5bb9"
     },
     {
       "path": "tools/modding/vortex-agent/native-backend-reservation-admission.test.mjs",
@@ -3200,7 +3200,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/review.test.mjs",
-      "sha256_lf": "baf5cde1bbeb81c957387b17bfe549c8e7f609c6b68bfa77b4f7b1bf87f6c4e6"
+      "sha256_lf": "bd58a2bde1ec3db2753632ad659526c7b5640aba4bd55819ae65bd8e6229a77f"
     },
     {
       "path": "tools/modding/vortex-agent/serialization.cjs",
