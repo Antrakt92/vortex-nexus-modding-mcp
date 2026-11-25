@@ -1015,6 +1015,14 @@ class ProcessGuardTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaisesRegex(RuntimeError, 'still running'):
                 self.invoke(self.result([name.swapcase()]))
 
+    def test_process_census_receives_only_windows_runtime_environment(self):
+        expected = {'SYSTEMROOT': str(Path(MODULE.anchor) / 'Windows'), 'PATH': str(MODULE.parent)}
+        ambient = {'NODE_OPTIONS': 'not-a-process-option', 'NODE_PATH': 'unused-test-module-path',
+                   'NEXUS_PUBLISH_KEY': 'unused-test-value'}
+        with patch.dict(upgrade.os.environ, {**expected, **ambient}, clear=True):
+            run = self.invoke(self.result())
+        self.assertEqual(run.call_args.kwargs['env'], expected)
+
     def test_each_call_enumerates_fresh_instead_of_caching_absence(self):
         with patch.object(upgrade.shutil, 'which', return_value=str(MODULE.with_name('node.exe'))), \
             patch.object(upgrade.subprocess, 'run', side_effect=[self.result(), self.result(['Vortex.exe'])]) as run:
