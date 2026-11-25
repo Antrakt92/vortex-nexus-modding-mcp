@@ -84,6 +84,12 @@ def check_file(path, expected):
     require(current['generation'] == expected['generation'] and current['data'] == expected['data'], 'HOOK_FILE_CHANGED')
 
 
+def check_config(path, expected):
+    require(exists(path) == (expected is not None), 'HOOK_CONFIG_CHANGED')
+    if expected is not None:
+        check_file(path, expected)
+
+
 def encoded(value):
     return (json.dumps(value, sort_keys=True, separators=(',', ':')) + '\n').encode('utf-8')
 
@@ -124,8 +130,7 @@ def inspect(repository):
     check_dirs(pins)
     for name, proof in files.items():
         check_file(hooks / name, proof)
-    if config_proof:
-        check_file(config, config_proof)
+    check_config(config, config_proof)
     return {'root': root, 'git': git, 'hooks': hooks, 'pins': pins, 'files': files, 'config': config_proof}
 
 
@@ -156,17 +161,17 @@ def apply(repository):
     replacement = new_file(backup / 'pre-commit.replacement', MINIMAL_HOOK, 0o755)
     # Finish all admission and backup verification before changing active hooks.
     check_dirs(pins + backup_pins); check_file(git / LEDGER, ledger)
-    if state['config']:
-        check_file(git / 'config', state['config'])
     for name, proof in state['files'].items():
         check_file(hooks / name, proof)
         require(read_file(backup / name)['data'] == proof['data'], 'HOOK_BACKUP_CHANGED')
     check_file(backup / 'manifest.json', manifest)
+    check_config(git / 'config', state['config'])
     for name, proof in state['files'].items():
         check_dirs(pins + backup_pins); check_file(git / LEDGER, ledger)
         check_file(hooks / name, proof)
         hooks.joinpath(name).unlink()  # Exact admitted regular leaf only; never recursive.
     check_dirs(pins + backup_pins); check_file(backup / 'pre-commit.replacement', replacement)
+    check_config(git / 'config', state['config'])
     # link is atomic and refuses an existing destination on Windows and POSIX.
     os.link(backup / 'pre-commit.replacement', hooks / 'pre-commit')
     require(read_file(hooks / 'pre-commit')['data'] == MINIMAL_HOOK, 'HOOK_REPLACEMENT_CHANGED')

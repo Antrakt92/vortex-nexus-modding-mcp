@@ -126,8 +126,12 @@ def strict_json_bytes(raw):
             out[key] = value
         return out
     # Bound nesting before json.loads, including strings with escaped quotes.
+    try:
+        text = raw.decode('utf-8-sig', errors='strict')
+    except UnicodeError as error:
+        raise CacheError('CACHE_INVALID_JSON') from error
     depth, quoted, escaped = 0, False, False
-    for char in raw.decode('utf-8', errors='strict'):
+    for char in text:
         if quoted:
             if escaped:
                 escaped = False
@@ -143,8 +147,8 @@ def strict_json_bytes(raw):
         elif char in ']}':
             depth -= 1
     try:
-        return json.loads(raw, object_pairs_hook=pairs, parse_constant=lambda _: (_ for _ in ()).throw(CacheError('CACHE_INVALID_JSON')))
-    except (UnicodeError, json.JSONDecodeError, RecursionError) as error:
+        return json.loads(text, object_pairs_hook=pairs, parse_constant=lambda _: (_ for _ in ()).throw(CacheError('CACHE_INVALID_JSON')))
+    except (json.JSONDecodeError, RecursionError) as error:
         raise CacheError('CACHE_INVALID_JSON') from error
 
 
@@ -275,12 +279,22 @@ def validate_slot(s, slot, modern):
 
 
 def inspect_snapshot(s):
+    cache_pins = []
+    for folder in (s['cache'].parent, s['cache']):
+        try:
+            cache_pins.append((folder, identity(ordinary(folder, True))))
+        except FileNotFoundError:
+            break
     selected = None
     # Existing old attempts cannot be evaded by selecting a new full-key format.
     for slot, modern in [(s['legacy'], False), (s['slot'], True)]:
-        if exists(slot):
-            selected = validate_slot(s, slot, modern)
+        try:
+            slot.lstat()
+        except FileNotFoundError:
+            continue
+        selected = validate_slot(s, slot, modern)
     recheck(s)
+    check_dirs(cache_pins)
     return selected
 
 

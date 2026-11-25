@@ -97,6 +97,28 @@ class RetireRustyHooksTests(unittest.TestCase):
         self.assertFalse((backup / 'completed.json').exists())
         with self.assertRaisesRegex(m.RetirementError, 'HOOK_RETIREMENT_ALREADY_ATTEMPTED'): m.apply(self.root)
 
+    def test_config_created_during_backup_preserves_active_hooks(self):
+        config = self.git / 'config'
+        config.unlink()
+        retained_config = b'[core]\nhooksPath = moved-hooks\n'
+        write = m.new_file
+
+        def update_config(path, data, mode=0o600):
+            proof = write(path, data, mode)
+            if path.name == 'pre-commit.replacement':
+                config.write_bytes(retained_config)
+            return proof
+
+        with patch.object(m, 'new_file', side_effect=update_config):
+            with self.assertRaisesRegex(m.RetirementError, 'HOOK_CONFIG_CHANGED'):
+                m.apply(self.root)
+        for name, data in self.content.items():
+            self.assertEqual((self.hooks / name).read_bytes(), data)
+        self.assertEqual(config.read_bytes(), retained_config)
+        self.assertTrue((self.git / m.LEDGER).is_file())
+        backup = next(self.git.glob('rusty-hook-backup-*'))
+        self.assertFalse((backup / 'completed.json').exists())
+
     def test_partial_unlink_failure_is_held_no_retry_no_backup_loss(self):
         unlink = Path.unlink; removed = []
         def fail(path, *args, **kwargs):
