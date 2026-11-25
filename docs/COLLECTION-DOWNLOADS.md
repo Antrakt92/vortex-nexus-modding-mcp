@@ -25,10 +25,25 @@ accepts 1–100 pairs, rejects unknown fields, and collapses duplicate pairs whi
 reporting `requestedCount` and `uniqueCount` separately. It never switches games
 or profiles to make a request fit. A wrong active game stops before inventory.
 
-With the existing runtime workspace selected, the equivalent bridge CLI is:
+With the existing runtime workspace selected, use inline JSON in PowerShell
+7.3 or newer with standard native argument passing:
 
 ```powershell
 node tools/modding/vortex-agent/bridge.mjs --call find_collection_downloads '{"gameId":"cyberpunk2077","files":[{"nexusModId":123,"nexusFileId":456}]}'
+```
+
+Windows PowerShell 5.1 can pass the same arguments in an ordinary UTF-8 file
+up to 1 MiB. This example writes a BOM-free file and cleans up its own temporary
+input:
+
+```powershell
+$requestFile = [IO.Path]::GetTempFileName()
+try {
+    [IO.File]::WriteAllText($requestFile, '{"gameId":"cyberpunk2077","files":[{"nexusModId":123,"nexusFileId":456}]}', [Text.UTF8Encoding]::new($false))
+    node tools/modding/vortex-agent/bridge.mjs --call find_collection_downloads --args-file "$requestFile"
+} finally {
+    Remove-Item -LiteralPath $requestFile
+}
 ```
 
 Use the established absolute bridge entrypoint from another working directory.

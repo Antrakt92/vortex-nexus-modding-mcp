@@ -9,8 +9,9 @@ files that differ are refused; recovery never resets or cleans a checkout.
 
 Use Python 3.11+, Git and a compatible Node installation. The publisher requires
 Node 24 with built-in Undici 7.18.2+ in the 7.x line. The adapter build's current
-requirements are in [the dependency audit](DEPENDENCY-AUDIT.md). Install Vortex
-itself separately. Commands below run from this repository's root.
+requirements are in the
+[development toolchain audit](DEPENDENCY-AUDIT.md#16-november-2026-development-toolchain-refresh).
+Install Vortex separately. Commands below run from this repository's root.
 
 ## 1. Verify the source snapshot
 

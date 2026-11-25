@@ -36,7 +36,7 @@ Agents can make the same combined read through the bridge's `inspect_session`
 MCP tool, with `{ "diagnostics": true }` to include those observations. The
 default is the basic inspection above. It overlaps at most four existing reads
 and performs no mutations, conflict recalculation or staging-file scan. Missing
-diagnostic tools and unavailable native details remain per-read errors; they
+diagnostic tools and failed reads remain per-read errors; they
 are never converted into zero conflicts. A successful read can still return
 unavailable (`null`) observations; `ok` describes acquisition, not collection
 health. The MCP result retains successful reads and sets `isError` for `partial`.
@@ -46,7 +46,10 @@ produce `INVALID_COLLECTION_HEALTH_RESPONSE`. When a tool returns both JSON text
 and structured content, they must describe the same value; contradictory copies
 are refused before a snapshot or a write acknowledgement is trusted.
 
-The equivalent command, also available before reloading an existing MCP client:
+The equivalent command is available before reloading an existing MCP client.
+The inline JSON examples on this page use PowerShell 7.3 or newer with
+standard native argument passing. Windows PowerShell 5.1 can use
+[an argument file](COLLECTION-DOWNLOADS.md#request).
 
 ```powershell
 node tools/modding/vortex-agent/bridge.mjs --call inspect_session '{"diagnostics":true}'

@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import credential from './credential.cjs';
@@ -342,13 +344,47 @@ export function handler(call = remote, {journal} = {}) {
   handle.cancelPendingPlans = () => {for (const entry of active.values()) entry.controller?.abort();};
   return handle;
 }
+async function readArgumentFile(filename) {
+  const message = 'Could not read a stable ordinary arguments file (maximum 1 MiB)';
+  const expectedPath = path.resolve(filename);
+  const generation = info => [info.dev, info.ino, info.size, info.mtimeNs, info.ctimeNs].join(':');
+  const observePath = async () => {
+    const info = await fs.lstat(expectedPath, {bigint: true});
+    if (!info.isFile() || path.relative(expectedPath, await fs.realpath(expectedPath)) !== '') throw Error(message);
+    return info;
+  };
+  try {
+    const before = await observePath();
+    if (before.size > BigInt(MAX_REQUEST_BYTES)) throw Error(message);
+    const flags = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0) | (fs.constants.O_NOFOLLOW ?? 0);
+    const file = await fs.open(expectedPath, flags);
+    try {
+      const opened = await file.stat({bigint: true});
+      const stamp = generation(opened);
+      if (!opened.isFile() || stamp !== generation(before)) throw Error(message);
+      const size = Number(opened.size), buffer = Buffer.alloc(size + 1);
+      let bytesRead = 0;
+      while (bytesRead < buffer.length) {
+        const chunk = await file.read(buffer, bytesRead, buffer.length - bytesRead, bytesRead);
+        if (!chunk.bytesRead) break;
+        bytesRead += chunk.bytesRead;
+      }
+      if (bytesRead !== size || generation(await file.stat({bigint: true})) !== stamp
+        || generation(await observePath()) !== stamp) throw Error(message);
+      return buffer.subarray(0, bytesRead);
+    } finally { await file.close(); }
+  } catch { throw Error(message); }
+}
+
 export async function main(argv = process.argv.slice(2)) {
   if (argv.length) {
-    const [mode, name, rawArgs] = argv;
-    if (!(mode === '--health' && argv.length === 1 || mode === '--call' && argv.length <= 3))
-      throw new Error('Usage: bridge.mjs [--health | --call TOOL [JSON_ARGUMENTS]]');
+    const [mode, name, rawArgs, filename] = argv;
+    const fromFile = rawArgs === '--args-file';
+    if (!(mode === '--health' && argv.length === 1
+      || mode === '--call' && (fromFile ? argv.length === 4 && filename : argv.length <= 3)))
+      throw new Error('Usage: bridge.mjs [--health | --call TOOL [JSON_ARGUMENTS | --args-file FILE]]');
     if (mode === '--call' && !name) throw new Error('--call requires a tool name and optional JSON arguments');
-    const args = rawArgs === undefined ? {} : parse(rawArgs, MAX_REQUEST_BYTES);
+    const args = rawArgs === undefined ? {} : parse(fromFile ? await readArgumentFile(filename) : rawArgs, MAX_REQUEST_BYTES);
     if (args === null || typeof args !== 'object' || Array.isArray(args))
       throw new Error('--call arguments must be a JSON object');
     const health = await remote('tools/call', { name: 'health', arguments: {} });
