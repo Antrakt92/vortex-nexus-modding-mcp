@@ -483,10 +483,48 @@ test('MCP cancellation targets the original request; a duplicate active request 
   await handle({jsonrpc: '2.0', id: 1, method: 'initialize'});
   const request = {jsonrpc: '2.0', id: 7, method: 'tools/call', params: {name: 'run_mod_plan', arguments: {plan: acquisitionPlan(), apply: true}}};
   const work = handle(request); await entered.promise;
-  assert.match((await handle(request)).error.message, /DUPLICATE_ACTIVE_PLAN_REQUEST/);
+  const duplicate = await handle(request);
+  assert.equal(duplicate.id, null);
+  assert.match(duplicate.error.message, /DUPLICATE_ACTIVE_PLAN_REQUEST/);
+  const direct = await handle({...request, params: {name: 'download_nexus', arguments: {requestId: 'invalid-collision'}}});
+  assert.equal(direct.id, null);
+  assert.match(direct.error.message, /DUPLICATE_ACTIVE_REQUEST/);
   assert.equal(await handle({jsonrpc: '2.0', method: 'notifications/cancelled', params: {requestId: 7, reason: 'private'}}), undefined);
   release.resolve(); const result = (await work).result.structuredContent;
   assert.equal(result.code, 'PLAN_CANCELLED'); assert.equal(result.completed.length, 1); assert.equal(s.writes.length, 1);
+});
+
+test('direct RPC ownership rejects outstanding direct and plan collisions without replay', async () => {
+  const entered = deferred(), release = deferred(), dispatched = [];
+  const handle = handler(async (_method, params) => {
+    if (params.name === 'health') return reply(health());
+    dispatched.push(params.arguments?.requestId);
+    if (params.arguments?.requestId === 'original-download') { entered.resolve(); await release.promise; }
+    return reply({synthetic: true});
+  });
+  await handle({jsonrpc: '2.0', id: 1, method: 'initialize'});
+  const request = {jsonrpc: '2.0', id: 7, method: 'tools/call',
+    params: {name: 'download_nexus', arguments: {requestId: 'original-download'}}};
+  const work = handle(request);
+  await entered.promise;
+  try {
+    for (const malformed of [{...request, method: 42}, {...request, jsonrpc: '1.0'}, [request]]) {
+      assert.deepEqual(await handle(malformed), {jsonrpc: '2.0', id: null, error: {code: -32600, message: 'Invalid Request'}});
+    }
+    for (const params of [{name: 'download_nexus', arguments: {requestId: 'second-download'}},
+      {name: 'run_mod_plan', arguments: {plan: acquisitionPlan(), apply: false}}]) {
+      const duplicate = await handle({...request, params});
+      assert.deepEqual(duplicate, {jsonrpc: '2.0', id: null, error: {code: -32600, message: 'DUPLICATE_ACTIVE_REQUEST'}});
+    }
+  } finally { release.resolve(); }
+  assert.equal((await work).id, 7);
+  assert.deepEqual(dispatched, ['original-download']);
+  const next = await handle({...request, params: {name: 'download_nexus', arguments: {requestId: 'later-download'}}});
+  assert.equal(next.id, 7);
+  assert.deepEqual(dispatched, ['original-download', 'later-download']);
+  assert.deepEqual(await handle({...request, method: 'unknown_method'}), {
+    jsonrpc: '2.0', id: 7, error: {code: -32601, message: 'Method not found'},
+  });
 });
 
 test('invalid RPC IDs cannot start a plan whose cancellation identity cannot be tracked', async () => {

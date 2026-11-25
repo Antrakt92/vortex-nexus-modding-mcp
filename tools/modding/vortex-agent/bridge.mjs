@@ -295,18 +295,27 @@ export async function clientRemote(method, params = {}, transport = remote, {sig
 
 export function handler(call = remote, {journal} = {}) {
   let initialized = false;
-  const plans = new Map();
-  const handle = async request => {
+  const active = new Map();
+  const handle = async (request, retainResponseId) => {
     const hasId = request !== null && typeof request === 'object' && Object.hasOwn(request, 'id');
     const validId = hasId && (typeof request.id === 'string' || Number.isSafeInteger(request.id));
     if (!request || typeof request !== 'object' || Array.isArray(request)
       || request.jsonrpc !== '2.0' || typeof request.method !== 'string' || hasId && !validId)
-      return { jsonrpc: '2.0', id: validId ? request.id : null, error: { code: -32600, message: 'Invalid Request' } };
+      return { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid Request' } };
     if (!hasId) {
-      if (request.method === 'notifications/cancelled') plans.get(request.params?.requestId)?.abort();
+      if (request.method === 'notifications/cancelled') active.get(request.params?.requestId)?.controller?.abort();
       return undefined;
     }
+    const isPlan = request.method === 'tools/call' && request.params?.name === 'run_mod_plan';
+    const existing = active.get(request.id);
+    // A collision cannot be attributed to the original pending response.
+    if (existing) return {jsonrpc: '2.0', id: null, error: {code: -32600,
+      message: isPlan && existing.isPlan ? 'DUPLICATE_ACTIVE_PLAN_REQUEST' : 'DUPLICATE_ACTIVE_REQUEST'}};
+    const entry = {isPlan, controller: undefined};
+    active.set(request.id, entry);
+    const release = () => active.delete(request.id);
     try {
+      retainResponseId?.(release);
       let result;
       if (request.method === 'initialize') {
         const versions = ['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25'];
@@ -319,18 +328,18 @@ export function handler(call = remote, {journal} = {}) {
       } else if (request.method === 'ping') result = {};
       else if (['tools/list', 'tools/call'].includes(request.method)) {
         if (!initialized) throw new Error('Initialize the bridge first');
-        if (request.method === 'tools/call' && request.params?.name === 'run_mod_plan') {
-          if (plans.has(request.id)) throw Error('DUPLICATE_ACTIVE_PLAN_REQUEST');
-          const controller = new AbortController(); plans.set(request.id, controller);
+        if (isPlan) {
+          const controller = new AbortController(); entry.controller = controller;
           try {result = await clientRemote(request.method, request.params, call, {signal: controller.signal, journal});}
-          finally {plans.delete(request.id);}
+          finally {entry.controller = undefined;}
         } else result = await clientRemote(request.method, request.params || {}, call, {journal});
         if (request.method === 'tools/call' && !isToolResult(result)) throw new Error('Invalid Vortex tool result');
       } else return { jsonrpc: '2.0', id: request.id, error: { code: -32601, message: 'Method not found' } };
       return { jsonrpc: '2.0', id: request.id, result };
     } catch (error) { return { jsonrpc: '2.0', id: request.id, error: { code: -32000, message: error.message } }; }
+    finally { if (!retainResponseId) release(); }
   };
-  handle.cancelPendingPlans = () => {for (const controller of plans.values()) controller.abort();};
+  handle.cancelPendingPlans = () => {for (const entry of active.values()) entry.controller?.abort();};
   return handle;
 }
 export async function main(argv = process.argv.slice(2)) {
@@ -409,15 +418,16 @@ export async function runStdio(input, output, handle, maxPending = 100) {
         throw new Error('MCP request capacity exceeded');
       // Parse replies share the bounded output queue. Waiting here for stdout
       // would prevent cancellation from reaching an in-flight plan.
-      let dispatch;
+      let dispatch, releaseResponseId;
       if (parseError) dispatch = Promise.resolve(parseError);
       else {
         activeDispatches++;
-        dispatch = Promise.resolve(handle(request)).then(
+        // Keep the original ID reserved while its response is backpressured.
+        dispatch = Promise.resolve(handle(request, release => { releaseResponseId = release; })).then(
           response => {activeDispatches--; return response;},
           error => {activeDispatches--; throw error;});
       }
-      const work = dispatch.then(response => response ? write(response) : undefined);
+      const work = dispatch.then(response => response ? write(response) : undefined).finally(() => releaseResponseId?.());
       pending.add(work);
       work.then(() => pending.delete(work), failBridge);
       if (pending.size >= maxPending) {

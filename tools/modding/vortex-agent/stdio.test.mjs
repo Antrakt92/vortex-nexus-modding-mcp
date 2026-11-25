@@ -25,6 +25,75 @@ test('stdio stops consuming requests while the client is not reading answers', a
   assert.equal(text.trim().split('\n').map(JSON.parse).length, 40);
 });
 
+test('stdio holds an RPC ID until its original frame leaves the writer', async () => {
+  const dispatched = [], frames = [];
+  const firstFrame = Promise.withResolvers(), duplicateParsed = Promise.withResolvers(), releaseInput = Promise.withResolvers();
+  let releaseFrame;
+  const output = new Writable({write(chunk, _, callback) {
+    frames.push(JSON.parse(String(chunk)));
+    if (frames.length === 1) { releaseFrame = callback; firstFrame.resolve(); }
+    else callback();
+  }});
+  const toolReply = value => ({content: [{type: 'text', text: JSON.stringify(value)}]});
+  const handle = bridge.handler(async (_method, params) => {
+    if (params.name === 'health') return toolReply({protocol: 'vortex-agent/1'});
+    dispatched.push(params.arguments.requestId);
+    return toolReply({fixture: true});
+  });
+  await handle({jsonrpc: '2.0', id: 1, method: 'initialize'});
+  const line = requestId => Buffer.from(JSON.stringify({jsonrpc: '2.0', id: 7, method: 'tools/call',
+    params: {name: 'download_nexus', arguments: {requestId}}}) + '\n');
+  async function* input() {
+    yield line('original-download');
+    await firstFrame.promise;
+    yield line('duplicate-in-writer');
+    duplicateParsed.resolve();
+    await releaseInput.promise;
+  }
+  const work = bridge.runStdio(input(), output, handle);
+  await duplicateParsed.promise;
+  releaseFrame();
+  releaseInput.resolve();
+  await work;
+  assert.deepEqual(dispatched, ['original-download']);
+  assert.deepEqual(frames.map(row => [row.id, row.error?.message ?? null]), [[7, null], [null, 'DUPLICATE_ACTIVE_REQUEST']]);
+});
+
+test('a backpressured invalid request cannot claim the following valid RPC ID', async () => {
+  const frames = [], dispatched = [];
+  const firstFrame = Promise.withResolvers(), validParsed = Promise.withResolvers(), releaseInput = Promise.withResolvers();
+  let releaseFrame;
+  const output = new Writable({write(chunk, _, callback) {
+    frames.push(JSON.parse(String(chunk)));
+    if (frames.length === 1) { releaseFrame = callback; firstFrame.resolve(); }
+    else callback();
+  }});
+  const reply = value => ({content: [{type: 'text', text: JSON.stringify(value)}]});
+  const handle = bridge.handler(async (_method, params) => {
+    if (params.name === 'health') return reply({protocol: 'vortex-agent/1'});
+    dispatched.push(params.arguments.requestId);
+    return reply({fixture: true});
+  });
+  await handle({jsonrpc: '2.0', id: 1, method: 'initialize'});
+  const valid = {jsonrpc: '2.0', id: 7, method: 'tools/call',
+    params: {name: 'download_nexus', arguments: {requestId: 'after-invalid'}}};
+  const line = frame => Buffer.from(JSON.stringify(frame) + '\n');
+  async function* input() {
+    yield line({...valid, method: null});
+    await firstFrame.promise;
+    yield line(valid);
+    validParsed.resolve();
+    await releaseInput.promise;
+  }
+  const work = bridge.runStdio(input(), output, handle);
+  await validParsed.promise;
+  releaseFrame();
+  releaseInput.resolve();
+  await work;
+  assert.deepEqual(dispatched, ['after-invalid']);
+  assert.deepEqual(frames.map(row => [row.id, row.error?.message ?? null]), [[null, 'Invalid Request'], [7, null]]);
+});
+
 test('stdio parse errors also wait for output and a broken output rejects cleanly', async () => {
   const output = new PassThrough({ highWaterMark: 1 });
   let consumed = 0;
