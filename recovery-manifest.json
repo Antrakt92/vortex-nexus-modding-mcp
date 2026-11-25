@@ -3252,7 +3252,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/tests.mjs",
-      "sha256_lf": "6f9912e93dc4d9efe91af3e130970e697fa257a2cab752a582e6376ba269b5d1"
+      "sha256_lf": "e98743980e5ea724db595b3a0ab1525af86954fa2c083ae2864ea4602a1b5766"
     },
     {
       "path": "tools/modding/vortex-agent/tracked-nexus-policy.cjs",

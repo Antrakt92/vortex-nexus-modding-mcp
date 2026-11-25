@@ -13,10 +13,10 @@ import { handler, remote as httpRemote } from './bridge.mjs';
 const remote = (method, params, fetcher) => httpRemote(method, params, fetcher, async () => '7'.repeat(64));
 const require = createRequire(import.meta.url);
 const { createOperations, safe, exclusive, stopped, identity } = require('./guard.cjs');
+const { fixtureDirectory } = require('./test-fixture-directory.cjs');
 const ROOT = paths.build + '/tests';
-await fs.mkdir(ROOT, { recursive: true });
-async function fixture() {
-  const dir = await fs.mkdtemp(path.join(ROOT, 'case-'));
+function fixture(t) {
+  const dir = fixtureDirectory(t, ROOT, 'case-');
   const state = { settings: {}, persistent: { profiles: { p: { gameId: 'cyberpunk2077', modState: {} } },
     mods: { cyberpunk2077: { m: { state: 'installed' } } }, downloads: { files: {} } }, session: { base: {} } };
   let profile = 'p';
@@ -31,8 +31,8 @@ async function fixture() {
   const ops = createOperations(api, actions, selectors, { receipts: path.join(dir, 'receipts'), stopped: () => {} });
   return { dir, state, api, actions, selectors, calls, args, ops, change: () => { profile = 'other'; } };
 }
-test('enable disables auto-deploy, verifies flags and writes external receipts', async () => {
-  const f = await fixture(); const result = await f.ops.set_mods_enabled(f.args);
+test('enable disables auto-deploy, verifies flags and writes external receipts', async t => {
+  const f = fixture(t); const result = await f.ops.set_mods_enabled(f.args);
   assert.deepEqual(f.calls[0].slice(1), ['p', ['m'], true, { allowAutoDeploy: false, reason: 'user_manual', installed: true }]);
   assert.equal(result.enabledFlagsVerified, true); assert.equal(result.diskDeploymentVerified, false);
   await fs.access(path.join(f.dir, 'receipts', f.args.requestId + '.attempt.json'));
@@ -40,19 +40,19 @@ test('enable disables auto-deploy, verifies flags and writes external receipts',
   await assert.rejects(f.ops.set_mods_enabled(f.args), /EEXIST/);
   assert.equal(f.calls.length, 1);
 });
-test('stale context and wrong path prevent writes', async () => {
-  const f = await fixture(); await assert.rejects(f.ops.set_mods_enabled({ ...f.args, gamePath: f.dir + '-wrong' }), /PATH_PIN/);
+test('stale context and wrong path prevent writes', async t => {
+  const f = fixture(t); await assert.rejects(f.ops.set_mods_enabled({ ...f.args, gamePath: f.dir + '-wrong' }), /PATH_PIN/);
   f.change(); await assert.rejects(f.ops.set_mods_enabled(f.args), /STALE/); assert.equal(f.calls.length, 0);
 });
-test('context change during wait records uncertainty, never success', async () => {
-  const f = await fixture(); f.actions.setModsEnabled = async () => f.change();
+test('context change during wait records uncertainty, never success', async t => {
+  const f = fixture(t); f.actions.setModsEnabled = async () => f.change();
   await assert.rejects(f.ops.set_mods_enabled(f.args), /STALE/);
   const failed = JSON.parse(await fs.readFile(path.join(f.dir, 'receipts', f.args.requestId + '.failed.json')));
   assert.equal(failed.effectsMayHaveOccurred, true);
   await assert.rejects(fs.access(path.join(f.dir, 'receipts', f.args.requestId + '.completion.json')));
 });
-test('unretained enabled flag is rejected', async () => {
-  const f = await fixture(); f.actions.setModsEnabled = async () => {};
+test('unretained enabled flag is rejected', async t => {
+  const f = fixture(t); f.actions.setModsEnabled = async () => {};
   await assert.rejects(f.ops.set_mods_enabled(f.args), /FLAGS_UNVERIFIED/);
 });
 function reportDeployment(f, profileId, progress) {
@@ -60,8 +60,8 @@ function reportDeployment(f, profileId, progress) {
   f.api.events.emit('mods-did-deploy', profileId, {});
   f.state.persistent.deployment = { needToDeploy: { cyberpunk2077: false } };
 }
-test('deploy uses the exact profile and reports operation-level result', async () => {
-  const f = await fixture();
+test('deploy uses the exact profile and reports operation-level result', async t => {
+  const f = fixture(t);
   f.api.ext.awaitModsDeployment = async (profileId, progress, options) => {
     assert.equal(profileId, 'p');
     assert.deepEqual(options, { failOnError: true });
@@ -70,27 +70,27 @@ test('deploy uses the exact profile and reports operation-level result', async (
   const result = await f.ops.deploy_mods(f.args);
   assert.equal(result.deploymentPromiseResolved, true); assert.equal(result.diskDeploymentVerified, false);
 });
-async function downloadFixture() {
-  const f = await fixture(); const data = Buffer.from('pinned archive fixture');
+async function downloadFixture(t) {
+  const f = fixture(t); const data = Buffer.from('pinned archive fixture');
   await fs.writeFile(path.join(f.dir, 'archive.zip'), data);
   const record = { game: ['cyberpunk2077'], state: 'finished', localPath: 'archive.zip', modInfo: { nexus: { ids: { modId: 42, fileId: 43 } } } };
   f.state.persistent.downloads.files.d = record;
   f.args = { ...f.args, downloadId: 'd', nexusModId: 42, nexusFileId: 43, size: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex') };
   return f;
 }
-test('native install is disabled, including valid pinned fresh archives', async () => {
-  const f = await downloadFixture(); let called = false;
+test('native install is disabled, including valid pinned fresh archives', async t => {
+  const f = await downloadFixture(t); let called = false;
   f.state.persistent.mods.cyberpunk2077 = {};
   f.api.events.emit = () => { called = true; };
   await assert.rejects(f.ops.install_download(f.args), /INSTALL_DISABLED/);
   assert.equal(called, false);
 });
-test('wrong package hash prevents install event', async () => {
-  const f = await downloadFixture(); let called = false; f.api.events.emit = () => { called = true; };
+test('wrong package hash prevents install event', async t => {
+  const f = await downloadFixture(t); let called = false; f.api.events.emit = () => { called = true; };
   await assert.rejects(f.ops.install_download({ ...f.args, sha256: '0'.repeat(64) }), /PIN_MISMATCH/); assert.equal(called, false);
 });
-test('Nexus existing-download reuse and exact download-only arguments', async () => {
-  const f = await downloadFixture(); let calls = 0;
+test('Nexus existing-download reuse and exact download-only arguments', async t => {
+  const f = await downloadFixture(t); let calls = 0;
   f.api.ext.nexusDownload = async (...args) => { calls++; assert.deepEqual(args, ['cyberpunk2077', 42, 43, undefined, false]);
     f.state.persistent.downloads.files.d = record; return 'd'; };
   const reused = await f.ops.download_nexus(f.args); assert.equal(reused.reused, true); assert.equal(calls, 0);
@@ -110,22 +110,31 @@ test('Windows guard rejects game process and Vortex running-tool state', async (
   assert.doesNotThrow(() => module.exports.stopped({}, 'cyberpunk2077'));
   assert.throws(() => module.exports.stopped({ session: { base: { toolsRunning: { any: true } } } }, 'cyberpunk2077'), /GAME_OR_TOOL/);
 });
-test('unexpected unrelated enabled changes during deployment are rejected', async () => {
-  const f = await fixture(); f.api.ext.awaitModsDeployment = async (profileId, progress) => {
+test('unexpected unrelated enabled changes during deployment are rejected', async t => {
+  const f = fixture(t); f.api.ext.awaitModsDeployment = async (profileId, progress) => {
     f.state.persistent.profiles.p.modState.unrelated = { enabled: true };
     reportDeployment(f, profileId, progress);
   };
   await assert.rejects(f.ops.deploy_mods(f.args), /OTHER_ENABLED/);
 });
-test('cross-process mutation exclusion', async () => {
-  const dir = await fs.mkdtemp(path.join(ROOT, 'lock-')); const module = fileURLToPath(new URL('./guard.cjs', import.meta.url));
+test('cross-process mutation exclusion', async t => {
+  const dir = fixtureDirectory(t, ROOT, 'lock-'); const module = fileURLToPath(new URL('./guard.cjs', import.meta.url));
   const code = `const {exclusive}=require(${JSON.stringify(module)});exclusive(${JSON.stringify(dir)},async()=>{process.stdout.write('entered\\n');await new Promise(r=>setTimeout(r,150));process.stdout.write('leaving\\n')});`;
   const events = [];
   const children = [0, 1, 2].map(id => new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ['-e', code]); child.stdout.on('data', data => { for (const s of data.toString().trim().split('\n')) events.push([id, s]); });
-    child.on('error', reject); child.on('exit', code => code === 0 ? resolve() : reject(new Error('child failed')));
+    let launchError;
+    child.once('error', error => { launchError = error; });
+    child.once('close', code => {
+      if (launchError) reject(launchError);
+      else if (code === 0) resolve();
+      else reject(new Error('child failed'));
+    });
   }));
-  await Promise.all(children);
+  const outcomes = await Promise.allSettled(children);
+  const failed = outcomes.find(outcome => outcome.status === 'rejected');
+  if (failed) throw failed.reason;
+  assert.equal(events.length, children.length * 2);
   for (let i = 0; i < events.length; i += 2) { assert.equal(events[i][1], 'entered'); assert.deepEqual(events[i + 1], [events[i][0], 'leaving']); }
 });
 test('a request stops attempting to acquire the shared mutation lock after its deadline', async () => {
