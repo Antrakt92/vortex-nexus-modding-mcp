@@ -137,6 +137,77 @@ class PortablePathsTests(unittest.TestCase):
             self.assertEqual(receipt.read_text(), '{"other":"installation"}')
             self.assertFalse((installer.ROOT / installer.VERSION).exists())
 
+    def test_earlier_runtime_file_changes_before_receipt_publication(self):
+        for phase in ('later runtime publication', 'receipt flush'):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory(prefix='cli final receipt audit ') as root:
+                installer = self.fixture_installer(root)
+                executable = installer.ROOT / installer.VERSION / 'nexusmods.exe'
+                changed = b'Changed synthetic executable; never executed'
+                publish = installer.publish_new_file
+                flush = os.fsync
+                flushes = 0
+
+                def publish_with_drift(path, data, **options):
+                    publish(path, data, **options)
+                    if phase == 'later runtime publication' and path.name == 'data.txt':
+                        executable.write_bytes(changed)
+
+                def flush_with_drift(descriptor):
+                    nonlocal flushes
+                    flush(descriptor)
+                    flushes += 1
+                    if phase == 'receipt flush' and flushes == 3:
+                        executable.write_bytes(changed)
+
+                with (
+                    patch.object(installer, 'publish_new_file', side_effect=publish_with_drift),
+                    patch.object(installer.os, 'fsync', side_effect=flush_with_drift),
+                    patch.object(installer.urllib.request, 'urlopen', side_effect=AssertionError('No download allowed')),
+                    contextlib.redirect_stdout(io.StringIO()) as stdout,
+                ):
+                    with self.assertRaisesRegex(RuntimeError, 'Existing installation differs'):
+                        installer.install()
+                self.assertEqual(stdout.getvalue(), '')
+                self.assertEqual(executable.read_bytes(), changed)
+                self.assertFalse((installer.ROOT / 'installation.json').exists())
+                self.assertEqual(list(installer.ROOT.rglob('.nexus-cli-install-*')), [])
+
+    def test_reuse_refuses_a_receipt_moved_during_final_runtime_verification(self):
+        with tempfile.TemporaryDirectory(prefix='cli retained receipt audit ') as root:
+            installer = self.fixture_installer(root)
+            receipt = installer.ROOT / 'installation.json'
+            retained = receipt.with_name('retained-installation.json')
+            executable = installer.ROOT / installer.VERSION / 'nexusmods.exe'
+            with patch.object(installer.urllib.request, 'urlopen', side_effect=AssertionError('No download allowed')):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    installer.install()
+                reformatted = json.dumps(json.loads(receipt.read_bytes()), indent=4).replace('\n', '\r\n').encode()
+                receipt.write_bytes(reformatted)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    installer.install()
+                self.assertEqual(receipt.read_bytes(), reformatted)
+
+                verify = installer.verify_existing_file
+                executable_reads = 0
+
+                def move_after_final_runtime_read(path, expected):
+                    proof = verify(path, expected)
+                    if path == executable:
+                        nonlocal executable_reads
+                        executable_reads += 1
+                        # The three executable checks are preflight, reuse and final verification.
+                        if executable_reads == 3:
+                            receipt.rename(retained)
+                    return proof
+
+                with patch.object(installer, 'verify_existing_file', side_effect=move_after_final_runtime_read), \
+                        contextlib.redirect_stdout(io.StringIO()) as stdout:
+                    with self.assertRaisesRegex(RuntimeError, 'Existing installation receipt changed'):
+                        installer.install()
+                self.assertEqual(stdout.getvalue(), '')
+                self.assertFalse(receipt.exists())
+                self.assertEqual(retained.read_bytes(), reformatted)
+
     def test_interrupted_file_write_leaves_retryable_installation(self):
         for interrupted_file in ('archive', 'runtime', 'receipt'):
             with self.subTest(file=interrupted_file), tempfile.TemporaryDirectory(prefix='cli interrupted write ') as root:
