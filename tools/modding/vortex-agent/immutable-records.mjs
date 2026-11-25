@@ -38,9 +38,10 @@ export function createImmutableRecordIO({maxBytes, prefix, maxTokens, maxDepth})
     const current = ancestry(value);
     need(current && current.size === pins.size && [...pins].every(([p, node]) => current.get(p) === node), 'PATH_CHANGED');
   }
-  function readJSON(file, observations, expected) {
+  function readJSON(file, observations, expected, readLimit = maxBytes) {
+    need(Number.isSafeInteger(readLimit) && readLimit > 0 && readLimit <= maxBytes, 'INVALID_RECORD');
     const stat = fs.lstatSync(file, {bigint: true});
-    need(stat.isFile() && !stat.isSymbolicLink() && stat.size <= BigInt(maxBytes), 'CORRUPT');
+    need(stat.isFile() && !stat.isSymbolicLink() && stat.size <= BigInt(readLimit), 'CORRUPT');
     const fd = fs.openSync(file, 'r');
     try {
       const before = fs.fstatSync(fd, {bigint: true});

@@ -8,11 +8,12 @@ import { validatePlan, planQueue } from './plan-contract.mjs';
 const MAX_PLAN_BYTES = 1024 * 1024, MAX_EVENTS = 205;
 // The on-disk plan also includes schema, identity and filesystem pins.
 const MAX_RECORD_BYTES = MAX_PLAN_BYTES + 512;
+const EVENT_FORMAT_BYTES = 4096;
 const id = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const need = (ok, code) => { if (!ok) throw Error(code); };
 const exact = (value, names) => object(value) && Object.keys(value).length === names.length && names.every(n => Object.hasOwn(value, n));
-const at = value => typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value) && Number.isFinite(Date.parse(value));
+const at = value => typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value) && new Date(value).toJSON() === value;
 const code = value => typeof value === 'string' && /^[A-Z][A-Z0-9_]{1,99}$/.test(value);
 function safe(fn) {
   try { return fn(); }
@@ -49,27 +50,33 @@ function directoryNames(dir, limit, code) {
   } finally { handle.closeSync(); }
   return names.sort();
 }
-function transitions(planId, queue, events) {
-  let observed = 0, pending = null, terminal = null;
-  for (let n = 0; n < events.length; n++) {
-    const event = events[n], common = ['schema', 'planId', 'sequence', 'at', 'kind'];
-    need(object(event) && event.schema === 'mod-plan-event/1' && event.planId === planId && event.sequence === n + 1
-      && at(event.at) && !terminal, 'PLAN_JOURNAL_CORRUPT');
-    if (event.kind === 'intent') {
-      need(exact(event, [...common, 'index', 'operation', 'args']) && pending === null && event.index === observed
-        && event.index < queue.length && event.operation === queue[event.index].operation
-        && encoded(event.args).equals(encoded(queue[event.index].args)), 'PLAN_JOURNAL_CORRUPT'); pending = event.index;
-    } else if (event.kind === 'observed') {
-      need(exact(event, [...common, 'index']) && pending !== null && event.index === pending, 'PLAN_JOURNAL_CORRUPT');
-      observed++; pending = null;
-    } else {
-      need(event.kind === 'terminal' && exact(event, [...common, 'status', 'code'])
-        && (event.status === 'completed' && event.code === null && pending === null && observed === queue.length
-          || event.status === 'stopped' && code(event.code)), 'PLAN_JOURNAL_CORRUPT'); terminal = event;
-    }
+const initialProgress = () => ({ observed: 0, pending: null, terminal: null });
+function advance(planId, queue, progress, event, sequence) {
+  const { observed, pending, terminal } = progress;
+  const common = ['schema', 'planId', 'sequence', 'at', 'kind'];
+  need(object(event) && event.schema === 'mod-plan-event/1' && event.planId === planId && event.sequence === sequence
+    && at(event.at) && !terminal, 'PLAN_JOURNAL_CORRUPT');
+  if (event.kind === 'intent') {
+    need(exact(event, [...common, 'index', 'operation', 'args']) && pending === null && event.index === observed
+      && event.index < queue.length && event.operation === queue[event.index].operation
+      && encoded(event.args).equals(encoded(queue[event.index].args)), 'PLAN_JOURNAL_CORRUPT');
+    progress.pending = event.index;
+  } else if (event.kind === 'observed') {
+    need(exact(event, [...common, 'index']) && pending !== null && event.index === pending, 'PLAN_JOURNAL_CORRUPT');
+    progress.observed++;
+    progress.pending = null;
+  } else {
+    need(event.kind === 'terminal' && exact(event, [...common, 'status', 'code'])
+      && (event.status === 'completed' && event.code === null && pending === null && observed === queue.length
+        || event.status === 'stopped' && code(event.code)), 'PLAN_JOURNAL_CORRUPT');
+    progress.terminal = event;
   }
-  return { state: terminal?.status ?? (pending !== null ? 'inflight' : observed ? 'running' : 'prepared'),
-    observed, pending, terminal };
+}
+function eventReadLimit(queue, progress) {
+  const args = progress.pending === null ? queue[progress.observed]?.args : undefined;
+  // Only the next intent can carry plan arguments. Allow legacy formatting
+  // and equivalent JSON escapes without lending every event the plan's budget.
+  return Math.min(MAX_RECORD_BYTES, EVENT_FORMAT_BYTES + (args ? 6 * encoded(args).length : 0));
 }
 
 export function createPlanJournal(options = {}) {
@@ -105,13 +112,21 @@ export function createPlanJournal(options = {}) {
       const plan = frozenPlan(record.plan, {historical: true}), queue = planQueue(plan, {historical: true});
       need(canonicalPlanId(plan) === planId && queue.length <= 101, 'PLAN_JOURNAL_CORRUPT');
       const files = names.filter(n => n !== 'plan.json');
-      need(files.every((name, n) => name === eventName(n + 1)), 'PLAN_JOURNAL_CORRUPT');
-      const events = files.map(name => readJSON(path.join(dir, name), observations)), result = transitions(planId, queue, events);
+      need(files.length <= 2 * queue.length + 1 && files.every((name, n) => name === eventName(n + 1)), 'PLAN_JOURNAL_CORRUPT');
+      const progress = initialProgress(), events = [];
+      for (const [n, name] of files.entries()) {
+        need(!progress.terminal, 'PLAN_JOURNAL_CORRUPT');
+        const event = readJSON(path.join(dir, name), observations, undefined, eventReadLimit(queue, progress));
+        advance(planId, queue, progress, event, n + 1);
+        events.push(event);
+      }
       sameAncestry(dir, pins); seen.add(planId);
       need(JSON.stringify(directoryNames(dir, names.length, 'PLAN_JOURNAL_CHANGED')) === JSON.stringify(names)
         && [...observations].every(([file, stamp]) => generation(fs.lstatSync(file, { bigint: true })) === stamp), 'PLAN_JOURNAL_CHANGED');
       sameAncestry(dir, pins);
-      return { planId, plan, events, valid: true, ...result };
+      const { terminal, pending, observed } = progress;
+      return { planId, plan, events, valid: true, state: terminal?.status ?? (pending !== null ? 'inflight' : observed ? 'running' : 'prepared'),
+        ...progress };
     });
   }
   function begin(value) {
@@ -150,7 +165,9 @@ export function createPlanJournal(options = {}) {
           try {
             need(events.length < MAX_EVENTS, 'PLAN_JOURNAL_LIMIT');
             const next = { schema: 'mod-plan-event/1', planId, sequence: events.length + 1, at: new Date().toISOString(), ...event };
-            transitions(planId, queue, [...events, next]);
+            const progress = initialProgress();
+            for (const [n, previous] of events.entries()) advance(planId, queue, progress, previous, n + 1);
+            advance(planId, queue, progress, next, next.sequence);
             write(eventName(next.sequence), next); events.push(next);
           } catch (error) { held = true; throw error; }
         });
