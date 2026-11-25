@@ -9,6 +9,7 @@ import { createToolCaller, inspectSession, main as rawMain, runPlan as rawRunPla
 import {createPlanJournal} from './plan-journal.mjs';
 import lifecycle from './lifecycle-inspection.cjs';
 import serialization from './serialization.cjs';
+import receiptSchema from './receipts.cjs';
 
 const privateRoots = [];
 function privateJournal() {
@@ -36,7 +37,7 @@ const download = () => ({operation: 'download_nexus', requestId: 'session_downlo
 const acquisitionPlan = () => {const p = plan(); p.steps.unshift(download()); return p;};
 const reply = value => ({content: [{type: 'text', text: JSON.stringify(value)}]});
 function deferred() {let resolve; const promise = new Promise(r => {resolve = r;}); return {promise, resolve};}
-function server({beforeCall = () => {}} = {}) {
+function server({beforeCall = () => {}, downloadId = 'tracked-download'} = {}) {
   const calls = [], writes = [], receipts = new Map(); let activeWrites = 0, maxWrites = 0;
   async function call(name, args = {}) {
     calls.push({name, args: structuredClone(args)});
@@ -51,7 +52,7 @@ function server({beforeCall = () => {}} = {}) {
     const result = {protocol: 'vortex-agent/1', requestId: args.requestId, operation: name,
       operationCompleted: true, diskDeploymentVerified: false,
       ...(name === 'deploy_mods' ? {deploymentPromiseResolved: true} : name === 'download_nexus'
-        ? {downloadId: 'tracked-download', reused: true, archiveSha256Verified: true, archiveCRCVerified: false, autoInstall: false, size: args.size}
+        ? {downloadId, reused: true, archiveSha256Verified: true, archiveCRCVerified: false, autoInstall: false, size: args.size}
         : {modIds: args.modIds, enabled: args.enabled, enabledFlagsVerified: true})};
     writes.push({name, args: structuredClone(args)});
     // Actual Zod/serializer output need not preserve the caller's object key order.
@@ -317,6 +318,25 @@ test('pinned download steps validate offline and execute serially before enable/
   assert.equal(result.completed[0].downloadId, 'tracked-download');
   assert.equal(result.completed[0].archiveCRCVerified, false);
   assert.deepEqual(s.writes[0].args, {...context(), ...Object.fromEntries(Object.entries(download()).filter(([k]) => k !== 'operation'))});
+});
+
+test('download IDs use the same bounds in the resident receipt and plan acknowledgement', async () => {
+  const downloadId = 'd'.repeat(512), s = server({downloadId});
+  const result = await runPlan(acquisitionPlan(), {apply: true, call: s.call});
+  assert.equal(result.status, 'completed');
+  assert.equal(result.completed[0].downloadId, downloadId);
+  const {attempt, completion} = s.receipts.get(download().requestId);
+  const at = new Date().toISOString(), receiptVersion = receiptSchema.VERSION;
+  const saved = {...completion, at, receiptVersion, verificationRequired: receiptSchema.VERIFICATION};
+  const identity = {...attempt, at, receiptVersion, protocol: completion.protocol};
+  assert.equal(receiptSchema.validCompletion(saved, identity), true);
+  for (const invalid of [downloadId + 'd', 'bad\x7f', '']) {
+    assert.equal(receiptSchema.validCompletion({...saved, downloadId: invalid}, identity), false);
+    const bad = server({downloadId: invalid});
+    const stopped = await runPlan(acquisitionPlan(), {apply: true, call: bad.call});
+    assert.equal(stopped.code, 'WRITE_ACKNOWLEDGEMENT_UNCERTAIN');
+    assert.equal(bad.writes.length, 1);
+  }
 });
 
 test('initial receipt reads overlap at most four; all finish before the first write', async () => {

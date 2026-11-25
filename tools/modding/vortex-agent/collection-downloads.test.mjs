@@ -44,6 +44,20 @@ test('duplicate requests collapse and duplicate tracked files remain visible wit
   assert.deepEqual(result.files[0].candidates.map(c => c.downloadId), ['a', 'b']);
 });
 
+test('collection lookup preserves the resident download ID range without widening mod IDs', async () => {
+  const longId = 'd'.repeat(512);
+  const result = await findCollectionDownloads(input([ref(), ref(44)]), fixture([
+    row(longId), row('other', {nexusFileId: 44}),
+  ]));
+  assert.equal(result.status, 'ok');
+  assert.deepEqual(result.files.map(file => file.candidates[0].downloadId), [longId, 'other']);
+  for (const invalid of [row(longId + 'd'), row('bad\x7f'), row('other', {installedModId: 'm'.repeat(201)})]) {
+    const rejected = await findCollectionDownloads(input(), fixture([invalid]));
+    assert.equal(rejected.status, 'partial');
+    assert.deepEqual(rejected.errors, [{tool: 'list_downloads', code: 'INVALID_DOWNLOAD_OBSERVATION'}]);
+  }
+});
+
 test('availability reflects observed native states and never equates installed association with enabled state', async () => {
   for (const [state, availability] of [['init', 'active'], ['started', 'active'], ['finalizing', 'active'], ['paused', 'paused'], ['failed', 'failed']]) {
     const result = await findCollectionDownloads(input(), fixture([row('d', {state})]));

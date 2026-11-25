@@ -87,6 +87,33 @@ for (const terminal of ['missing', 'cancelled', 'canceled', 'removed', 'unknown'
     await assert.rejects(fs.access(path.join(f.dir, 'receipts/mutation.lock')));
   });
 }
+test('audit: invalid native download ID cannot produce completion or a second dispatch', async () => {
+  const f = await fixture(), args = await pinned(f), record = f.state.persistent.downloads.files.d;
+  delete f.state.persistent.downloads.files.d;
+  const id = 'tracked\x7f';
+  let dispatches = 0;
+  f.api.ext.nexusDownload = async () => {
+    dispatches++;
+    f.state.persistent.downloads.files[id] = record;
+    return id;
+  };
+  await assert.rejects(f.ops.download_nexus(args), /DOWNLOAD_ID_INVALID/);
+  const dir = path.join(f.dir, 'receipts');
+  const failure = JSON.parse(await fs.readFile(path.join(dir, args.requestId + '.failed.json')));
+  assert.equal(failure.effectsMayHaveOccurred, true);
+  assert.equal(failure.inspectBeforeRetry, true);
+  await fs.access(path.join(dir, 'unresolved.json'));
+  await assert.rejects(fs.access(path.join(dir, args.requestId + '.completion.json')), {code: 'ENOENT'});
+  const result = guard.safe(await f.ops.reconcile_operation({requestId: args.requestId}), f.api, 'reconcile_operation');
+  assert.equal(result.attempt.requestId, args.requestId);
+  assert.equal(result.failure.requestId, args.requestId);
+  assert.equal(result.interlock.requestId, args.requestId);
+  assert.equal(result.terminalOperationVerified, false);
+  assert.deepEqual(result.download, []);
+  assert(result.receiptIssues.includes('DOWNLOAD_IDENTITY_UNVERIFIABLE'));
+  await assert.rejects(f.ops.download_nexus({...args, requestId: crypto.randomUUID()}), /UNRESOLVED_OPERATION_INTERLOCK/);
+  assert.equal(dispatches, 1);
+});
 test('audit: target removed or replaced during durable await prevents enable', async () => {
   for (const replacement of [null, 'replacement']) {
     const f = await fixture(async (file, state) => { if (file.endsWith('unresolved.json')) {

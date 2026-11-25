@@ -1,5 +1,6 @@
 'use strict';
 const path = require('node:path');
+const { validDownloadId } = require('./download-identity.cjs');
 const { PHASES, STATES, REASONS, WAITS } = require('./install-diagnostics.cjs');
 const { SCHEMA: ASSESSMENT_SCHEMA, STATUSES: ASSESSMENT_STATUSES, REASONS: ASSESSMENT_REASONS } = require('./installed-candidate-assessment.cjs');
 const OPERATIONS = new Set(['install_download', 'install_local_archive', 'set_mods_enabled', 'deploy_mods', 'download_nexus', 'advance_collection_wizard', 'respond_collection_dialog', 'advance_collection_update_prompt', 'respond_native_dialog']);
@@ -334,7 +335,8 @@ function validOperational(type, value) {
   if (type === 'nativeExtensionVersion') return value.length > 0 && value.length <= 80 && /^[A-Za-z0-9.+_-]+$/.test(value);
   if (type === 'nativeExtensionUndefined') return value === 'undefined';
   if (type === 'nativeExtensionEnabled') return value === 'failed';
-  if (type === 'dialogIdentity' || type === 'downloadId') return value.length > 0 && value.length <= 512 && !/[\x00-\x1f\x7f]/.test(value);
+  if (type === 'downloadId') return validDownloadId(value);
+  if (type === 'dialogIdentity') return value.length > 0 && value.length <= 512 && !/[\x00-\x1f\x7f]/.test(value);
   if (type === 'protocol') return value === 'vortex-agent/1';
   if (type === 'operation') return OPERATIONS.has(value);
   if (type === 'extensionVersion') return value === '1.1.0';
