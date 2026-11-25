@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -83,6 +84,52 @@ class RecoveryTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, 'download origin'):
                         r.fetch_sources(root / 'workspace', apply=True)
                 fetch.assert_not_called()
+
+    def test_explicit_bundles_are_preflighted_without_writes_or_network(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive, workspace = root / 'bundles', root / 'workspace'
+            archive.mkdir()
+            data = b'pinned bundle'
+            rows = [{'name': name, 'bundle': name + '.bundle', 'bytes': len(data), 'sha256': r.digest(data)}
+                    for name in ('first', 'second')]
+            (root / 'source-lock.json').write_text(json.dumps({'upstreams': rows}))
+            (archive / 'first.bundle').write_bytes(data)
+            second = archive / 'second.bundle'
+            with mock.patch.object(r, 'ROOT', root), mock.patch.object(r, 'run_git') as git, \
+                 mock.patch.object(r.urllib.request, 'urlopen') as fetch:
+                for apply in (False, True):
+                    with self.assertRaisesRegex(ValueError, 'Missing supplied recovery bundle: second.bundle'):
+                        r.fetch_sources(workspace, archive, apply=apply)
+                    self.assertFalse(workspace.exists(), 'first bundle must not be restored before preflight completes')
+                for invalid in (data[:-1], b'x' * len(data)):
+                    second.write_bytes(invalid)
+                    with self.assertRaisesRegex(ValueError, 'Recovery bundle changed: second.bundle'):
+                        r.fetch_sources(workspace, archive)
+                second.write_bytes(data)
+                supplied = r.fetch_sources(workspace, archive)
+                self.assertEqual([row['bundle_verification'] for row in supplied['sources']], ['size_and_sha256'] * 2)
+                self.assertEqual([row['state'] for row in supplied['sources']], ['would_restore'] * 2)
+                ordinary = r.fetch_sources(workspace)
+                self.assertTrue(all('bundle_verification' not in row for row in ordinary['sources']))
+                git.assert_not_called()
+                fetch.assert_not_called()
+            self.assertFalse(workspace.exists())
+
+    def test_unused_cli_options_refuse_before_any_operation(self):
+        for arguments in (['verify', '--workspace', 'elsewhere'], ['verify', '--apply'],
+                          ['configure', '--archive-dir', 'bundles'], ['sources', '--snapshot', 'snapshot'],
+                          ['skills', '--workspace', 'elsewhere', '--snapshot', 'snapshot', '--skills-home', 'skills']):
+            with self.subTest(arguments=arguments), mock.patch.object(sys, 'argv', ['recovery.py', *arguments]), \
+                 mock.patch.object(sys, 'stderr', new_callable=io.StringIO) as errors, \
+                 mock.patch.multiple(r, verify=mock.DEFAULT, configure=mock.DEFAULT, fetch_sources=mock.DEFAULT,
+                                     restore_skills=mock.DEFAULT) as operations:
+                with self.assertRaises(SystemExit) as result:
+                    r.main()
+                self.assertEqual(result.exception.code, 2)
+                self.assertIn('is not supported for ' + arguments[0], errors.getvalue())
+                for operation in operations.values():
+                    operation.assert_not_called()
 
     def make_symlink(self, link, target, directory=False):
         try:
@@ -234,6 +281,8 @@ class RecoveryTests(unittest.TestCase):
                     self.assertEqual(list(target.parent.iterdir()), [], 'temporary checkout must be cleaned')
                 self.assertEqual(r.fetch_sources(workspace, archive, True)['sources'][0]['state'], 'restored')
                 self.assertEqual(r.fetch_sources(workspace, archive, True)['sources'][0]['state'], 'already_verified')
+                self.assertEqual(r.fetch_sources(workspace, archive / 'unused')['sources'][0],
+                                 {'name': 'fixture', 'state': 'already_verified'})
                 checkout_file = target / 'code.py'
                 info = checkout_file.stat()
                 os.utime(checkout_file, ns=(info.st_atime_ns, info.st_mtime_ns - 2_000_000_000))
