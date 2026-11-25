@@ -7,6 +7,27 @@ import {createRequire} from 'node:module';
 import path from 'node:path';
 const require = createRequire(import.meta.url);
 
+test('bounded stdio lines discard an oversized fragment sequence and retain exact next-line bytes', async t => {
+  const max = 257, concat = Buffer.concat, allocate = Buffer.allocUnsafe;
+  let largestList = 0;
+  const capacity = [];
+  t.mock.method(Buffer, 'concat', (pieces, length) => {
+    largestList = Math.max(largestList, pieces.length);
+    return concat(pieces, length);
+  });
+  t.mock.method(Buffer, 'allocUnsafe', length => { if (length >= 64) capacity.push(length); return allocate(length); });
+  const exact = 'a'.repeat(max - 1);
+  async function* input() {
+    const bytes = Buffer.from(`${'x'.repeat(max + 1)}\r\n${exact}\r\n📁`);
+    for (let i = 0; i < bytes.length; i++) {yield bytes.subarray(i, i + 1); yield new Uint8Array();}
+  }
+  const lines = [];
+  for await (const line of bridge.boundedLines(input(), max)) lines.push(line);
+  assert.deepEqual(lines, [null, exact, '📁']);
+  assert.ok(largestList <= 8, `collected ${largestList} individual input fragments`);
+  assert.ok(capacity.length > 0 && capacity.length <= 8 && capacity.every(size => size <= max));
+});
+
 test('stdio stops consuming requests while the client is not reading answers', async () => {
   const output = new PassThrough({ highWaterMark: 32 });
   let consumed = 0;
