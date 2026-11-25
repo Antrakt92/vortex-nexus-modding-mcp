@@ -12,6 +12,8 @@ import { createRequire, isBuiltin } from 'node:module';
 import { spawn } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { handler, remote } from './bridge.mjs';
+import {waitForServerListening, closeOwnedTestServer} from './http-startup-test-support.mjs';
+import fixtureDirectories from './test-fixture-directory.cjs';
 const artifact = process.env.VORTEX_ADAPTER_TEST_ARTIFACT || paths.build + '/upstream/adapted-dist/index.js';
 const realRequire = createRequire(artifact);
 const nativeDialogFixture = [
@@ -20,10 +22,22 @@ const nativeDialogFixture = [
   {asar: process.env.VORTEX_NATIVE_APP_ASAR, version: '2.9.1'},
 ].find(fixture => fixture.asar);
 
+function wireFixture(t, prefix, getListener) {
+  return fixtureDirectories.fixtureDirectory({
+    after(cleanup) {
+      t.after(async () => {
+        const listener = getListener();
+        if (listener) await closeOwnedTestServer(listener);
+        cleanup();
+      });
+    },
+  }, paths.build + '/tests', prefix);
+}
+
 test('built native-dialog observation survives separate HTTP requests and current authentication',
-  {skip:!nativeDialogFixture},async()=>{
-  const root=paths.build+'/tests';await fs.mkdir(root,{recursive:true});
-  const modelDir=await fs.mkdtemp(root+'/native-dialog-http-'),receiptDir=modelDir+'/local-state/vortex-agent-build/receipts';
+  {skip:!nativeDialogFixture},async t=>{
+  let listener;
+  const modelDir=wireFixture(t,'native-dialog-http-',()=>listener),receiptDir=modelDir+'/local-state/vortex-agent-build/receipts';
   const exe=path.join(path.dirname(path.dirname(nativeDialogFixture.asar)),'Vortex.exe');
   const sourceRequire=createRequire(import.meta.url),{QUESTION_TEXT}=sourceRequire('./collection-dialog-policy.cjs');
   const question=(id,version=false)=>({id,type:'question',title:version?'Existing version':'Updating may break dependencies',defaultAction:undefined,
@@ -33,7 +47,7 @@ test('built native-dialog observation survives separate HTTP requests and curren
   const state={app:{appVersion:nativeDialogFixture.version},settings:{profiles:{activeProfileId:'p',nextProfileId:'p'},gameMode:{discovered:{cyberpunk2077:{path:modelDir}}}},
     persistent:{profiles:{p:{id:'p',gameId:'cyberpunk2077',modState:{}}},mods:{cyberpunk2077:{}},downloads:{files:{}}},
     session:{base:{toolsRunning:{}},notifications:{dialogs:[question('cancel-one'),question('ignore-two'),question('version-three',true)]}}};
-  const calls=[],disk=realRequire('node:fs');let listener,token='7'.repeat(64);
+  const calls=[],disk=realRequire('node:fs');let token='7'.repeat(64);
   const api={getState:()=>state,getPath:name=>{assert.equal(name,'exe');return exe;},store:{getState:()=>state},ext:{},events:new EventEmitter(),onAsync(){},awaitUI:async()=>{},translate:key=>key,
     closeDialog(id,label,input){assert.equal(state.session.notifications.dialogs[0].id,id);assert.deepEqual(input,{remember:false});
       const held=disk.readFileSync(receiptDir+'/unresolved.json','utf8');
@@ -55,7 +69,7 @@ test('built native-dialog observation survives separate HTTP requests and curren
     vm.runInThisContext('(function(require,module,exports,__dirname,__filename){'+await fs.readFile(artifact,'utf8')+'\n})')(sandboxRequire,module,module.exports,path.dirname(artifact),artifact);
     if(workspace===undefined)delete process.env.NEXUS_WORKSPACE;else process.env.NEXUS_WORKSPACE=workspace;
     module.exports.start(api,0,{tokenProvider:async()=>token});
-    await new Promise(resolve=>listener.listening?resolve():listener.once('listening',resolve));
+    await waitForServerListening(listener);
     const endpoint=`http://127.0.0.1:${listener.address().port}/mcp`,localFetch=(_url,options)=>fetch(endpoint,options);
     const call=(name,args={})=>remote('tools/call',{name,arguments:args},localFetch,async()=>token);
     const health=JSON.parse((await call('health')).content[0].text),pins=Object.fromEntries(['gameId','profileId','gamePath','stagingPath','downloadPath','filesystemIds'].map(k=>[k,health[k]]));
@@ -76,15 +90,12 @@ test('built native-dialog observation survives separate HTTP requests and curren
   }finally{
     if(workspace===undefined)delete process.env.NEXUS_WORKSPACE;else process.env.NEXUS_WORKSPACE=workspace;
     if(creation)Object.defineProperty(process,'getCreationTime',creation);else delete process.getCreationTime;
-    if(listener?.listening)await new Promise(resolve=>listener.close(resolve));
   }
 });
-test('built extension wire: allowlist, SDK2 HTTP, legacy bridge, schemas and browser protection', async () => {
+test('built extension wire: allowlist, SDK2 HTTP, legacy bridge, schemas and browser protection', async t => {
   let listener;
   const token = '7'.repeat(64);
-  const root = paths.build + '/tests';
-  await fs.mkdir(root, { recursive: true });
-  const modelDir = await fs.mkdtemp(root + '/wire-');
+  const modelDir = wireFixture(t, 'wire-', () => listener);
   const fakeHttp = { ...http, createServer: fn => {
     listener = http.createServer(fn); const listen = listener.listen.bind(listener);
     listener.listen = () => listen(0, '127.0.0.1'); return listener;
@@ -124,11 +135,11 @@ test('built extension wire: allowlist, SDK2 HTTP, legacy bridge, schemas and bro
   assert.equal(typeof module.exports, 'function', 'Vortex entrypoint must be directly callable');
   if (module.exports.start) module.exports.start(api, 0, { tokenProvider: async () => token, nativePreflightWindow });
   else module.exports({ api, once: callback => callback() }); // baseline regression against old package
-  await new Promise(resolve => listener.listening ? resolve() : listener.once('listening', resolve));
+  await waitForServerListening(listener);
   const endpoint = `http://127.0.0.1:${listener.address().port}/mcp`;
   const localFetch = (_url, options) => fetch(endpoint, options);
   const call = (method, params) => remote(method, params, localFetch, async () => token);
-  try {
+  {
     for (const authorization of [undefined, 'Bearer wrong-user-token']) {
       const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...(authorization ? { authorization } : {}) }, body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' });
       assert.equal(response.status, 401, 'All endpoints require valid bearer authentication');
@@ -426,7 +437,7 @@ test('built extension wire: allowlist, SDK2 HTTP, legacy bridge, schemas and bro
       assert.equal(await new Promise(resolve => cli.on('exit', resolve)), 0, stderr);
       assert.ok(JSON.parse(stdout).content);
     }
-  } finally { await new Promise(resolve => listener.close(resolve)); }
+  }
 });
 
 test('source registration accepts complete native-dialog success after modeled callback', async () => {

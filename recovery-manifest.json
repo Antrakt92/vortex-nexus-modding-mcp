@@ -3276,7 +3276,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/wire.test.mjs",
-      "sha256_lf": "e341f4c45cabe7e703fc0e0e35f34885ccad7b281bf6ae88eac215a5102d193b"
+      "sha256_lf": "1d825e987c1e7e68a2cc22886cd1b16672f4ee6bfeb5d45e3cd0f08cca2a6951"
     },
     {
       "path": "tools/modding/workspace_paths.py",
