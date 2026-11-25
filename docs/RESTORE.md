@@ -22,14 +22,16 @@ The final `recovery-manifest.json` pins the distributed source. A changed or
 missing input stops verification. This is source integrity, not a signature or
 proof that an upstream package is safe.
 
-Choose an absolute runtime workspace; it may contain spaces:
+Choose an absolute runtime workspace. It can contain spaces. To use the current
+repository, run this from its root:
 
 ```powershell
-$env:NEXUS_WORKSPACE = 'C:/NexusWorkspace'
+if (-not $env:NEXUS_WORKSPACE) { $env:NEXUS_WORKSPACE = (Get-Location).Path }
 ```
 
-This sets the variable only in the current shell. Leaving it unset uses this
-repository as the workspace. See [configuration](CONFIGURATION.md) for all paths.
+To use a separate workspace, set `$env:NEXUS_WORKSPACE = 'C:/NexusWorkspace'`
+before continuing. This variable is local to the current shell. The commands
+below use it explicitly. See [configuration](CONFIGURATION.md) for all paths.
 
 ## 2. Recover the pinned upstream repositories
 

@@ -73,8 +73,9 @@ Locked manifest SHA256:
 
 ## Manifest and ID contract
 
-Make a task-owned JSON manifest based on the example. Its placeholders deliberately
-do not pass preflight. Required fields:
+Make a task-owned UTF-8 JSON manifest based on the example. The publisher and
+workflow asset preparer accept up to 1 MiB and require unique field names.
+Replace the example placeholders before running preflight. Required fields:
 
 | Field | Meaning |
 |---|---|
@@ -275,8 +276,9 @@ helper is not invoked by this action. No dependency or bundle changes were made.
   lock, but never implies an upload did not happen.
 - A durable exclusive target marker and schema-2 `attempt` receipt precede action
   execution. Both carry the same random `attempt_id`; every update/removal checks
-  exact ownership and complete receipt identity/schema. Atomic replacement is used
-  for updates after fsync. Retain the operation-lock files as well as JSON ledgers.
+  exact ownership and complete receipt identity/schema. Staged records are flushed
+  before exclusive publication or atomic replacement. Retain the operation-lock
+  files as well as JSON ledgers.
   If the attempt receipt cannot be written before launch, the runner clears its
   own target marker only if no receipt entry exists. Existing or partial
   receipts still block retry.

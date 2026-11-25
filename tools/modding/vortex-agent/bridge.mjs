@@ -354,16 +354,19 @@ export async function main(argv = process.argv.slice(2)) {
 }
 export async function runStdio(input, output, handle, maxPending = 100) {
   if (!Number.isSafeInteger(maxPending) || maxPending < 1) throw new Error('Invalid MCP pending limit');
+  const writes = new AbortController();
   let writing = Promise.resolve();
   const write = response => {
     const next = writing.then(() => new Promise((resolve, reject) => {
-      const failed = error => { output.off('close', closed); reject(error); };
-      const closed = () => { output.off('error', failed); reject(new Error('MCP output closed')); };
-      output.once('error', failed); output.once('close', closed);
-      output.write(JSON.stringify(response) + '\n', error => {
-        if (error) { output.off('close', closed); reject(error); }
-        else { output.off('error', failed); output.off('close', closed); resolve(); }
-      });
+      if (writes.signal.aborted) { reject(writes.signal.reason); return; }
+      const aborted = () => finish(writes.signal.reason);
+      const finish = error => {
+        writes.signal.removeEventListener('abort', aborted);
+        if (error) reject(error);
+        else resolve();
+      };
+      writes.signal.addEventListener('abort', aborted, {once: true});
+      output.write(JSON.stringify(response) + '\n', finish);
     }));
     writing = next;
     return next;
@@ -372,18 +375,20 @@ export async function runStdio(input, output, handle, maxPending = 100) {
   const pending = new Set();
   let activeDispatches = 0;
   const cancelPlans = () => handle.cancelPendingPlans?.();
-  let outputError;
-  const onOutputError = error => {
-    outputError ??= error;
+  let failure;
+  const failBridge = error => {
+    if (failure !== undefined) return;
+    failure = error instanceof Error ? error : new Error('MCP request failed');
+    writes.abort(failure);
     cancelPlans();
     input.destroy?.();
   };
-  const onOutputClose = () => onOutputError(new Error('MCP output closed'));
-  output.on('close', onOutputClose); output.on('error', onOutputError);
+  const onOutputClose = () => failBridge(new Error('MCP output closed'));
+  output.on('close', onOutputClose); output.on('error', failBridge);
   try {
     if (output.destroyed) throw new Error('MCP output closed');
     for await (const line of boundedLines(input)) {
-      if (outputError) throw outputError;
+      if (failure) throw failure;
       if (output.destroyed) throw new Error('MCP output closed');
       if (line !== null && !line.trim()) continue;
       let request, parseError;
@@ -414,7 +419,7 @@ export async function runStdio(input, output, handle, maxPending = 100) {
       }
       const work = dispatch.then(response => response ? write(response) : undefined);
       pending.add(work);
-      work.then(() => pending.delete(work), () => {});
+      work.then(() => pending.delete(work), failBridge);
       if (pending.size >= maxPending) {
         // Let already-resolved handlers leave activeDispatches before deciding
         // whether this is native work or merely stdout backpressure.
@@ -422,14 +427,15 @@ export async function runStdio(input, output, handle, maxPending = 100) {
         if (pending.size >= maxPending && activeDispatches === 0) await Promise.race(pending);
       }
     }
-    if (outputError) throw outputError;
+    if (failure) throw failure;
   } catch (error) {
-    throw outputError ?? error;
+    failBridge(error);
+    throw failure;
   } finally {
     cancelPlans();
     await Promise.allSettled(pending);
-    output.off('close', onOutputClose); output.off('error', onOutputError);
+    output.off('close', onOutputClose); output.off('error', failBridge);
   }
-  await Promise.all(pending);
+  if (failure !== undefined) throw failure;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(error => { process.stderr.write(error.message + '\n'); process.exitCode = 1; });

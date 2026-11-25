@@ -10,7 +10,12 @@ function fixture(version='2.9.1'){
  function put(p,body){const old=files.get(key(p));files.set(key(p),{body:Buffer.from(body),ino:old?.ino??serial++,version:(old?.version??0)+1});}
  function stat(p,opts={}){const f=files.get(key(p)),big=opts.bigint===true;return {dev:1n,ino:BigInt(f?.ino??0),size:big?BigInt(f?.body.length??0):f?.body.length??0,mtimeNs:BigInt(f?.version??0),ctimeNs:BigInt(f?.version??0),isSymbolicLink:()=>symlinks.has(key(p)),isFile:()=>!!f};}
  const stamp=p=>{const s=stat(p,{bigint:true});return[s.dev,s.ino,s.size,s.mtimeNs,s.ctimeNs].join(':');};
- const disk={promises:{},existsSync:p=>files.has(key(p)),lstatSync:stat,statSync:stat,readFileSync(p){reads++;const f=files.get(key(p));if(!f)throw Error('MODELED_FILE_MISSING');const result=Buffer.from(f.body);afterRead?.(p);return result;}};
+ const disk={promises:{},existsSync:p=>files.has(key(p)),lstatSync:stat,openSync:p=>p,
+  fstatSync:stat,closeSync(){},
+  readSync(p,output,offset,length,position){
+   reads++;const f=files.get(key(p));if(!f)throw Error('MODELED_FILE_MISSING');
+   const count=f.body.copy(output,offset,position,position+length);afterRead?.(p,count);return count;
+  }};
  put(pkg,'official host');put(path.join(own,'index.js'),'reviewed adapter');
  put(path.join(own,'provenance.json'),JSON.stringify({pluginSha256:sha('reviewed adapter')}));
  let extensions=[{dynamic:true,path:own,name:'adapter',info:{id:'adapter',version:'1.0',bundled:false}},{dynamic:false,name:'builtin'}];
@@ -66,6 +71,17 @@ test('source or census drift during asynchronous proof cannot issue a usable pro
 test('metadata read races and reparse ancestors refuse',async()=>{
  const f=fixture();f.helpers([]);f.afterRead=p=>{if(p===f.manifest)f.put(p,'raced');};await assert.rejects(f.make()(),/METADATA_CHANGED/);
  const g=fixture();g.symlinks.add(g.key(path.dirname(g.own)));await assert.rejects(g.make()(),/REPARSE/);
+});
+test('oversize source metadata is refused before reading its bytes',async()=>{
+ const f=fixture();f.put(f.manifest,Buffer.alloc(1024*1024+1));
+ await assert.rejects(f.make()(),/ADMISSION_LIMIT/);
+ assert.equal(f.counters().reads,0);
+});
+test('metadata changing size during a descriptor read never extends the original read bound',async()=>{
+ const f=fixture();f.helpers([]);const admitted=f.files.get(f.key(f.manifest)).body.length;let read=0;
+ f.afterRead=(p,count)=>{if(p===f.manifest){read+=count;f.put(p,Buffer.alloc(admitted+100));}};
+ await assert.rejects(f.make()(),/METADATA_CHANGED/);
+ assert.equal(read,admitted);
 });
 test('synchronous source ancestor symlink refuses even when file stat is unchanged',async()=>{const f=fixture(),admit=f.make(),proof=await admit();f.symlinks.add(f.key(path.dirname(f.pkg)));assert.throws(()=>admit.revalidate(proof),/REPARSE/);});
 for(const [name,rows]of [

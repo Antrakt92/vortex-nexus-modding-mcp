@@ -49,28 +49,70 @@ function packageProof(args) {
     verify(); return { ...proof, verify, close: () => fs.closeSync(fd) };
   } catch (error) { fs.closeSync(fd); throw error; }
 }
-function verifyStagedPayload(root, pkg) {
+function verifyStagedPayload(root, pkg, assertWork) {
   const code = 'LOCAL_ARCHIVE_STAGED_BYTES_UNVERIFIED';
   const block = Buffer.allocUnsafe(64 * 1024);
-  for (const [relative, digest] of Object.entries(pkg.payload)) {
-    const file = path.join(root, relative);
+  const remaining = new Map(Object.keys(pkg.payload).map(name => [name.toLowerCase(), name]));
+  const dirs = new Set(pkg.payloadDirectories.map(name => name.toLowerCase()));
+  const generations = new Map();
+
+  function verifyFile(file, expected) {
     ordinary(file);
     const fd = fs.openSync(file, 'r');
     try {
       const before = fs.fstatSync(fd, { bigint: true });
-      const size = pkg.payloadSizes[relative];
+      const size = pkg.payloadSizes[expected];
       need(before.isFile() && before.size === BigInt(size), code);
       const hash = crypto.createHash('sha256');
       for (let left = size; left > 0;) {
+        assertWork();
         const length = Math.min(left, block.length);
         readExact(fd, block, length, code);
         hash.update(block.subarray(0, length));
         left -= length;
       }
-      verifyGeneration(file, fd, stamp(before), code);
-      need(hash.digest('hex') === digest, code);
+      const generation = stamp(before);
+      verifyGeneration(file, fd, generation, code);
+      need(hash.digest('hex') === pkg.payload[expected], code);
+      generations.set(file, generation);
     } finally { fs.closeSync(fd); }
   }
+
+  function verifyDirectory(dir, prefix) {
+    const before = fs.lstatSync(dir, { bigint: true });
+    need(before.isDirectory() && !before.isSymbolicLink(), code);
+    const generation = stamp(before);
+    generations.set(dir, generation);
+    const entries = fs.opendirSync(dir);
+    try {
+      for (let entry; (entry = entries.readSync()) !== null;) {
+        assertWork();
+        const file = path.join(dir, entry.name), relative = prefix + entry.name;
+        const key = relative.toLowerCase();
+        if (entry.isDirectory()) {
+          need(dirs.delete(key), code);
+          verifyDirectory(file, relative + '/');
+        } else {
+          const expected = remaining.get(key);
+          need(entry.isFile() && expected !== undefined, code);
+          remaining.delete(key);
+          verifyFile(file, expected);
+        }
+      }
+    } finally { entries.closeSync(); }
+    need(stamp(fs.lstatSync(dir, { bigint: true })) === generation, code);
+  }
+
+  ordinary(root);
+  verifyDirectory(root, '');
+  need(remaining.size === 0, code);
+  // Directory generations also pin the checked membership. Receipt publication
+  // repeats only metadata checks, so it does not need to hash the payload again.
+  return () => {
+    ordinary(root);
+    for (const [file, generation] of generations)
+      need(stamp(fs.lstatSync(file, { bigint: true, throwIfNoEntry: false }) ?? {}) === generation, code);
+  };
 }
 function noNexus(value, depth = 0) {
   need(depth <= 12, 'LOCAL_ARCHIVE_METADATA_UNSAFE');
@@ -270,8 +312,10 @@ async function installLocalArchive(api, args, { check, checkContext = check, eff
         && JSON.stringify(afterProfiles) === JSON.stringify(profiles), 'LOCAL_ARCHIVE_EXISTING_STATE_CHANGED');
     };
     verifiedInstalledState();
-    diagnostics.measureSync('staged_proof', () => verifyStagedPayload(path.join(args.stagingPath, modId), pkg));
-    if (beforeCompletion) beforeCompletion(verifyRecords); else verifyRecords();
+    const verifyStage = diagnostics.measureSync('staged_proof',
+      () => verifyStagedPayload(path.join(args.stagingPath, modId), pkg, diagnostics.assertWork));
+    const verifyCompletion = () => { verifyRecords(); verifyStage(); };
+    if (beforeCompletion) beforeCompletion(verifyCompletion); else verifyCompletion();
     diagnostics.assertWork();
     completed = true;
     return { modId, downloadId: active.downloadId, installedRecordVerified: true, enabled: false,

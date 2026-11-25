@@ -22,9 +22,11 @@ function zip(entries) {
     const localExtra = entry.localExtra ?? Buffer.alloc(0), centralExtra = entry.centralExtra ?? Buffer.alloc(0);
     const local = Buffer.alloc(30), center = Buffer.alloc(46);
     local.writeUInt32LE(0x04034b50); local.writeUInt16LE(20, 4); local.writeUInt16LE(flags, 6); local.writeUInt16LE(method, 8);
+    local.writeUInt32LE(entry.localTimestamp ?? 0, 10);
     local.writeUInt32LE(crc32(content), 14); local.writeUInt32LE(packed.length, 18); local.writeUInt32LE(content.length, 22); local.writeUInt16LE(name.length, 26);
     local.writeUInt16LE(localExtra.length, 28);
     center.writeUInt32LE(0x02014b50); center.writeUInt16LE(20, 4); center.writeUInt16LE(20, 6); center.writeUInt16LE(flags, 8); center.writeUInt16LE(method, 10);
+    center.writeUInt32LE(entry.centralTimestamp ?? entry.localTimestamp ?? 0, 12);
     center.writeUInt32LE(crc32(content), 16); center.writeUInt32LE(packed.length, 20); center.writeUInt32LE(content.length, 24);
     center.writeUInt16LE(name.length, 28); center.writeUInt32LE(entry.attributes ?? 0, 38); center.writeUInt32LE(offset, 42);
     center.writeUInt16LE(centralExtra.length, 30);
@@ -89,6 +91,18 @@ test('ZIP proof refuses encrypted/described/special/unsupported/corrupt or overs
   over.writeUInt32LE(LIMITS.entryBytes + 1, central + 24);
   assert.throws(() => inspectOwnZip(over), /OWN_BINDER_UNSUPPORTED_ZIP/);
   assert.throws(() => inspectOwnZip(Buffer.alloc(LIMITS.archiveBytes + 1)), /OWN_BINDER_ARCHIVE_LIMIT/);
+});
+test('stock-package proof accepts ordinary DOS timestamps without claiming worker admission', () => {
+  const dosDate = (46 << 9) | (11 << 5) | 25, dosTime = (6 << 11) | (30 << 5) | 1;
+  const localTimestamp = (dosDate << 16) | dosTime;
+  for (const method of [0, 8]) {
+    for (const centralTimestamp of [localTimestamp, localTimestamp + 1]) {
+      const entry = {name: 'r6/scripts/Own.reds', content: 'ordinary own payload', method,
+        localTimestamp, centralTimestamp};
+      const verified = inspectOwnZip(zip([entry]));
+      assert.equal(verified.payload[entry.name], sha(entry.content));
+    }
+  }
 });
 test('ZIP alternate-name/Unix and unreviewed timestamp extras cannot change the verified path projection', () => {
   for (const kind of [0x7075, 0x554e, 0x756e, 0x0001, 0x5455]) {

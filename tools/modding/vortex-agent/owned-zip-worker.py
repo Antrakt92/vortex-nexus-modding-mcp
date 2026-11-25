@@ -573,11 +573,22 @@ class Worker:
         need(not self.handoff_attempted and not self.cancelled and not self.transport.cancel_seen.is_set()
              and not self.transport.fault and self.phase == 'extracted', 'HANDOFF_REFUSED')
         self.handoff_attempted = True
+        # Sizes originate in VERIFIED decoder records, never another input map.
+        self.copy_scope = [(key, record['size'], record['sha']) for key, record in sorted(self.owner._outputs.items())]
+        directories = {key[:length] for key, _, _ in self.copy_scope for length in range(1, len(key))}
+        needed_handles = 1 + len(directories) + len(self.copy_scope)
+        if self.destination_mode:
+            needed_handles += 1  # CopyProof.json; the staging parent is already held.
+        else:
+            work_root = self.base._root(str(self.work_root))
+            # Scratch handoff reopens the drive and each component of its parent.
+            needed_handles += 1 + len(work_root[3:].split('\\'))
+        # Source seals stay open during copying. Refuse an impossible handoff
+        # before creating a destination that cannot fit in the shared pool.
+        need(needed_handles <= self.lease._remaining_handles(), 'COPY_HANDLE_BUDGET')
         self.borrower = self.lease.begin_transfer_prepared(self.guard, self.prepared_destination) if self.destination_mode else self.lease.begin_transfer(str(self.work_root), self.op_identity, 'Final')
         if self.destination_mode:
             self.destination_observation = self.borrower.destination_observation()
-        # Sizes originate in VERIFIED decoder records, never another input map.
-        self.copy_scope = [(key, record['size'], record['sha']) for key, record in sorted(self.owner._outputs.items())]
         self.phase = 'copying'
         self.emit(True)
 

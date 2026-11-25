@@ -123,7 +123,7 @@ export function installFetchGuard(nativeFetch = globalThis.fetch, apiKey = proce
     const method = String(init.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
     const credentials = init.credentials ?? (input instanceof Request ? input.credentials : undefined);
     if (forbiddenHeaders.some(name => headers.has(name)) || credentials === 'include' || init.dispatcher) denied();
-    let finalising = false, creatingVersion = false;
+    let finalising = false, creatingVersion = false, part;
     if (url.origin === API_ORIGIN) {
       if (!apiKey || headers.get('apikey') !== apiKey || !url.pathname.startsWith('/v3/')) denied();
       headers.set('Application-Name', 'Nexus-Agent-Publication');
@@ -163,7 +163,7 @@ export function installFetchGuard(nativeFetch = globalThis.fetch, apiKey = proce
       }
       storageURL(url.href, apiKey);
       if (!plan) denied();
-      const part = plan.parts.find(part => part.url === url.href);
+      part = plan.partsByURL.get(url.href);
       if (part && method === 'PUT') {
         const bytes = ArrayBuffer.isView(init.body) ? init.body.byteLength : -1;
         if (part.state !== 'pending' || bytes !== part.bytes || headers.get('content-length') !== String(part.bytes)) denied();
@@ -216,9 +216,9 @@ export function installFetchGuard(nativeFetch = globalThis.fetch, apiKey = proce
       plan = { id: data.id, complete, completing: false, completed: false,
         finaliseSent: false, finalised: false, versionSent: false, versionCreated: false, changelogSent: false,
         parts: parts.map((url, index) => ({ url, bytes: Math.min(data.part_size_bytes, archiveBytes - index * data.part_size_bytes), state: 'pending', etag: null })) };
+      plan.partsByURL = new Map(plan.parts.map(part => [part.url, part]));
       response = new Response(text, { status: response.status, statusText: response.statusText, headers: response.headers });
     } else if (url.origin !== API_ORIGIN && plan) {
-      const part = plan.parts.find(part => part.url === url.href);
       if (!response.ok) { failed = true; denied(); }
       if (part) {
         const etag = response.headers.get('ETag')?.replace(/^"|"$/g, '');

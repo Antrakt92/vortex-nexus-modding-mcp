@@ -5,7 +5,9 @@ import paths from './paths.cjs';
 import {createImmutableRecordIO, identity, generation} from './immutable-records.mjs';
 import { validatePlan, planQueue } from './plan-contract.mjs';
 
-const MAX_BYTES = 1024 * 1024, MAX_EVENTS = 205;
+const MAX_PLAN_BYTES = 1024 * 1024, MAX_EVENTS = 205;
+// The on-disk plan also includes schema, identity and filesystem pins.
+const MAX_RECORD_BYTES = MAX_PLAN_BYTES + 512;
 const id = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const need = (ok, code) => { if (!ok) throw Error(code); };
@@ -20,9 +22,9 @@ function canonical(value) {
   return Array.isArray(value) ? value.map(canonical) : object(value)
     ? Object.fromEntries(Object.keys(value).sort().map(k => [k, canonical(value[k])])) : value;
 }
-function encoded(value) {
+function encoded(value, maxBytes = MAX_PLAN_BYTES) {
   const bytes = Buffer.from(JSON.stringify(canonical(value)) + '\n');
-  need(bytes.length <= MAX_BYTES, 'PLAN_JOURNAL_LIMIT'); return bytes;
+  need(bytes.length <= maxBytes, 'PLAN_JOURNAL_LIMIT'); return bytes;
 }
 function frozenPlan(value, options) {
   try {
@@ -35,8 +37,18 @@ function frozenPlan(value, options) {
 export function canonicalPlanId(value) {
   return crypto.createHash('sha256').update(encoded(frozenPlan(value, {historical: true}))).digest('hex');
 }
-const {ancestry, sameAncestry, readJSON, publish} = createImmutableRecordIO({maxBytes: MAX_BYTES, prefix: 'PLAN_JOURNAL_'});
+const {ancestry, sameAncestry, readJSON, publish} = createImmutableRecordIO({maxBytes: MAX_RECORD_BYTES, prefix: 'PLAN_JOURNAL_'});
 const eventName = number => String(number).padStart(6, '0') + '.json';
+function directoryNames(dir, limit, code) {
+  const names = [], handle = fs.opendirSync(dir);
+  try {
+    for (let entry; (entry = handle.readSync()) !== null;) {
+      need(names.length < limit, code);
+      names.push(entry.name);
+    }
+  } finally { handle.closeSync(); }
+  return names.sort();
+}
 function transitions(planId, queue, events) {
   let observed = 0, pending = null, terminal = null;
   for (let n = 0; n < events.length; n++) {
@@ -82,9 +94,9 @@ export function createPlanJournal(options = {}) {
         need(!seen.has(planId), 'PLAN_JOURNAL_PATH_CHANGED'); return null;
       }
       need(directory.isDirectory() && !directory.isSymbolicLink(), 'PLAN_JOURNAL_UNSAFE_PATH');
-      const pins = ancestry(dir), names = fs.readdirSync(dir).sort();
+      const pins = ancestry(dir), names = directoryNames(dir, MAX_EVENTS + 1, 'PLAN_JOURNAL_CORRUPT');
       sameAncestry(root, rootPins);
-      need(names.length > 0 && names.length <= MAX_EVENTS + 1 && names.includes('plan.json')
+      need(names.includes('plan.json')
         && names.every(n => n === 'plan.json' || /^\d{6}\.json$/.test(n)), 'PLAN_JOURNAL_CORRUPT');
       const observations = new Map(), record = readJSON(path.join(dir, 'plan.json'), observations);
       need(exact(record, ['schema', 'planId', 'at', 'rootId', 'directoryId', 'plan']) && record.schema === 'mod-plan-journal/1'
@@ -96,7 +108,7 @@ export function createPlanJournal(options = {}) {
       need(files.every((name, n) => name === eventName(n + 1)), 'PLAN_JOURNAL_CORRUPT');
       const events = files.map(name => readJSON(path.join(dir, name), observations)), result = transitions(planId, queue, events);
       sameAncestry(dir, pins); seen.add(planId);
-      need(JSON.stringify(fs.readdirSync(dir).sort()) === JSON.stringify(names)
+      need(JSON.stringify(directoryNames(dir, names.length, 'PLAN_JOURNAL_CHANGED')) === JSON.stringify(names)
         && [...observations].every(([file, stamp]) => generation(fs.lstatSync(file, { bigint: true })) === stamp), 'PLAN_JOURNAL_CHANGED');
       sameAncestry(dir, pins);
       return { planId, plan, events, valid: true, ...result };
@@ -116,7 +128,7 @@ export function createPlanJournal(options = {}) {
       seen.add(planId);
       function guard() {
         need(!held, 'PLAN_JOURNAL_HELD'); sameAncestry(dir, pins);
-        const names = fs.readdirSync(dir).sort();
+        const names = directoryNames(dir, files.size, 'PLAN_JOURNAL_CHANGED');
         need(JSON.stringify(names) === JSON.stringify([...files.keys()].sort()), 'PLAN_JOURNAL_CHANGED');
         for (const [name, stamp] of files) {
           const stat = fs.lstatSync(path.join(dir, name), { bigint: true });
@@ -124,7 +136,7 @@ export function createPlanJournal(options = {}) {
         }
       }
       function write(name, value) {
-        const bytes = encoded(value);
+        const bytes = encoded(value, name === 'plan.json' ? MAX_RECORD_BYTES : MAX_PLAN_BYTES);
         try {files.set(name, publish(dir, name, bytes, pins, guard));}
         catch (error) {held = true; throw error;}
       }

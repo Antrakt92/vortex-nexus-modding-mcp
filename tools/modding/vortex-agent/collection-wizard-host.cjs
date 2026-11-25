@@ -23,8 +23,19 @@ function inspect(file,disk){
  return generation(disk.lstatSync(file,{bigint:true}));
 }
 function readMetadata(file,disk){
- const stamp=inspect(file,disk);need(disk.statSync(file).size<=1024*1024,'COLLECTION_WIZARD_ADMISSION_LIMIT');
- const bytes=disk.readFileSync(file);need(inspect(file,disk)===stamp,'COLLECTION_WIZARD_METADATA_CHANGED');
+ const stamp=inspect(file,disk),fd=disk.openSync(file,'r');
+ const changed='COLLECTION_WIZARD_METADATA_CHANGED';let bytes;
+ try{
+  const opened=disk.fstatSync(fd,{bigint:true});
+  need(generation(opened)===stamp,changed);
+  need(opened.size<=1024n*1024n,'COLLECTION_WIZARD_ADMISSION_LIMIT');
+  bytes=Buffer.alloc(Number(opened.size));
+  for(let offset=0;offset<bytes.length;){
+   const count=disk.readSync(fd,bytes,offset,bytes.length-offset,offset);
+   need(count>0,changed);offset+=count;
+  }
+  need(generation(disk.fstatSync(fd,{bigint:true}))===stamp&&inspect(file,disk)===stamp,changed);
+ }finally{disk.closeSync(fd);}
  return {value:JSON.parse(bytes.toString('utf8')),proof:{path:file,generation:stamp,sha256:hash(bytes)}};
 }
 function validateHelpers(value,appAsarSha256){

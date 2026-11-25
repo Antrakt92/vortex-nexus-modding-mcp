@@ -38,6 +38,81 @@ test('stdio parse errors also wait for output and a broken output rejects cleanl
   await assert.rejects(bridge.runStdio([Buffer.from('bad-json\n')], broken, async () => ({})), /synthetic pipe failure/);
 });
 
+test('stdio stops waiting for input after a request handler fails asynchronously', async t => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  t.after(() => input.destroy());
+  output.resume();
+  const work = bridge.runStdio(input, output, async () => {
+    await new Promise(resolve => setImmediate(resolve));
+    throw new Error('synthetic handler failure');
+  });
+  input.write('{"jsonrpc":"2.0","id":1,"method":"ping"}\n');
+  let timeout;
+  try {
+    await assert.rejects(Promise.race([work, new Promise((_, reject) => {
+      timeout = setTimeout(() => reject(Error('Bridge kept waiting for stdin')), 250);
+    })]), /synthetic handler failure/);
+  } finally {
+    clearTimeout(timeout);
+    input.destroy();
+    await work.catch(() => {});
+  }
+});
+
+test('stdio settles a fatal handler failure without waiting for output drain', async t => {
+  const input = new PassThrough();
+  const output = new PassThrough({highWaterMark: 1});
+  t.after(() => { input.destroy(); output.destroy(); });
+  const dispatch = Promise.withResolvers();
+  const work = bridge.runStdio(input, output, async request => {
+    if (request.id === 2) {
+      await dispatch.promise;
+      throw new Error('synthetic failure while a reply is blocked');
+    }
+    return {jsonrpc: '2.0', id: request.id, result: 'x'.repeat(4096)};
+  });
+  const readable = once(output, 'readable');
+  input.write('{"jsonrpc":"2.0","id":1,"method":"ping"}\n');
+  await readable;
+  input.write('{"jsonrpc":"2.0","id":2,"method":"ping"}\n');
+  dispatch.resolve();
+  let timeout;
+  try {
+    await assert.rejects(Promise.race([work, new Promise((_, reject) => {
+      timeout = setTimeout(() => reject(Error('Bridge kept waiting for stdout')), 250);
+    })]), /synthetic failure while a reply is blocked/);
+  } finally {
+    clearTimeout(timeout);
+    output.resume();
+    input.destroy();
+    await work.catch(() => {});
+  }
+});
+
+test('stdio settles a failed input stream while a reply is backpressured', async t => {
+  const input = new PassThrough();
+  const output = new PassThrough({highWaterMark: 1});
+  t.after(() => output.destroy());
+  const work = bridge.runStdio(input, output, async request => ({
+    jsonrpc: '2.0', id: request.id, result: 'x'.repeat(4096),
+  }));
+  const readable = once(output, 'readable');
+  input.write('{"jsonrpc":"2.0","id":1,"method":"ping"}\n');
+  await readable;
+  input.destroy(new Error('synthetic input failure'));
+  let timeout;
+  try {
+    await assert.rejects(Promise.race([work, new Promise((_, reject) => {
+      timeout = setTimeout(() => reject(Error('Bridge kept waiting for stdout')), 250);
+    })]), /synthetic input failure/);
+  } finally {
+    clearTimeout(timeout);
+    output.resume();
+    await work.catch(() => {});
+  }
+});
+
 test('stdio refuses malformed UTF-8 before dispatch and accepts split valid Unicode afterward', async () => {
   const invalid = Buffer.concat([Buffer.from('{"jsonrpc":"2.0","id":1,"method":"'), Buffer.from([0xff]), Buffer.from('"}\n')]);
   const valid = Buffer.from('{"jsonrpc":"2.0","id":2,"method":"проверка"}\n');

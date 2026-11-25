@@ -136,18 +136,24 @@ function createCollectionWizardController(api,options){
   need(prepared?.consumed&&prepared.requestId===args.requestId,'CLICK_REQUIRED');
   const {n}=observe();
   need(n.gameId===args.gameId&&n.profileId===args.profileId&&n.nextProfileId===args.profileId,'ACTIVE_CONTEXT_CHANGED');
-  need(n.pendingDialogCount===0,'NATIVE_DIALOG_PENDING');
   const rules=stable(rawOwner(args.modId).rules??[]);
   need(rules===prepared.rules||rules===prepared.augmentedRules,'RULES_CHANGED');
   const raw=state().session.collections.activeSession;
   if(args.action==='install_now'){
-   if(raw===undefined)return false;
+   if(raw===undefined){
+    need(n.pendingDialogCount===0,'NATIVE_DIALOG_PENDING');
+    return false;
+   }
+   // A member question can appear before start acknowledgement. A known queue
+   // does not undo proof that this exact collection session has started.
+   need(Number.isSafeInteger(n.pendingDialogCount)&&n.pendingDialogCount>=0,'NATIVE_DIALOG_PENDING');
    need(n.session.collectionId===args.modId&&n.session.profileId===args.profileId&&n.session.gameId===args.gameId,'SESSION_IDENTITY_CHANGED');
    need(typeof raw.sessionId==='string'&&raw.sessionId.length>0&&!prepared.oldSessions.has(raw.sessionId),'SESSION_PREEXISTED');
    need(binding.sessionId===undefined||binding.sessionId===raw.sessionId,'SESSION_IDENTITY_CHANGED');
    binding.sessionId=raw.sessionId;
    return true;
   }
+  need(n.pendingDialogCount===0,'NATIVE_DIALOG_PENDING');
   if(raw!==undefined){need(raw.sessionId===prepared.sessionId,'SESSION_IDENTITY_CHANGED');return false;}
   const c=state().session.collections,h=c.sessionHistory?.[prepared.sessionId];
   need(c.lastActiveSessionId===prepared.sessionId&&h&&stable(normalizeSession(h))===prepared.completedSession,'FINISH_HISTORY_UNVERIFIED');

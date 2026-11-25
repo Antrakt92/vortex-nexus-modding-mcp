@@ -60,7 +60,10 @@ and prevents a later metadata match from reaching native replacement selection.
 
 Success returns the exact `modId` and `downloadId`, an installed-record check,
 `enabled:false`, and a count of payload files whose staged hashes were verified.
-Existing mod records and all profiles must remain unchanged. The original
+The installed tree must contain the exact ZIP file set. File and directory
+generations are checked again before the completion receipt is published, so a
+changed tree leaves the original operation held for reconciliation. Existing mod
+records and all profiles must remain unchanged. The original
 operation intent covers both native stages.
 
 After success, review the mod's resources and priority, then use the existing

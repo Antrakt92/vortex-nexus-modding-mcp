@@ -57,6 +57,28 @@ test('Install Now retains the first matching native session through transition v
  f.s.session.collections.activeSession.sessionId='replacement-session';
  assert.throws(()=>f.c.verifyTransition(f.args,result),/SESSION_IDENTITY_CHANGED/);
 });
+test('a queued question does not invalidate proof that the observed collection session started',async()=>{
+ const f=fixture();await f.c.initialized;f.install();await f.c.prepare(f.args);f.c.click(f.args);
+ f.s.session.notifications.dialogs.push({id:'member-question'});
+ const result=await f.c.waitForTransition(f.args);
+ assert.equal(result.transition,'started');
+ assert.equal(f.c.verifyTransition(f.args,result),true);
+ assert.equal(f.c.dialogBinding().sessionId,'session-new');
+ assert.equal(f.clicks,1);
+});
+test('a question before any session starts leaves Install Now unverified',async()=>{
+ const f=fixture();await f.c.initialized;f.install();await f.c.prepare(f.args);
+ f.element.click=()=>{f.s.session.notifications.dialogs.push({id:'pre-session-question'});};
+ f.c.click(f.args);
+ await assert.rejects(f.c.waitForTransition(f.args),/NATIVE_DIALOG_PENDING/);
+});
+test('a question still blocks Done acknowledgement after clicking the finish modal',async()=>{
+ const f=fixture();await f.c.initialized;f.install();await f.c.prepare(f.args);f.c.click(f.args);
+ f.c.verifyTransition(f.args,await f.c.waitForTransition(f.args));
+ const done={...f.args,requestId:'done_request',action:'done'};f.mode='finish';await f.c.prepare(done);f.c.click(done);
+ f.s.session.notifications.dialogs.push({id:'finish-question'});
+ await assert.rejects(f.c.waitForTransition(done),/NATIVE_DIALOG_PENDING/);
+});
 test('source generation change between prepare and click refuses',async()=>{const f=fixture();await f.c.initialized;f.install();await f.c.prepare(f.args);f.source=false;assert.throws(()=>f.c.click(f.args));assert.equal(f.clicks,0);});
 test('controller registration is per API, not per HTTP request',async()=>{const f=fixture();const a=getCollectionWizardController(f.api,f.options),b=getCollectionWizardController(f.api,f.options);assert.equal(a,b);await a.initialized;});
 test('dialog binding observes the consumed new session before the transition poll',async()=>{

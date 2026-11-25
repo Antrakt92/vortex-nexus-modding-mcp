@@ -28,6 +28,7 @@ DEFAULT_ACTION = configured_path("NEXUS_UPLOAD_ACTION_ROOT", context_root() / "n
 STATE = configured_path("NEXUS_STATE_DIR", workspace_root() / "local-state/nexus-publish-setup")
 API = "https://api.nexusmods.com/v3"
 HERE = Path(__file__).resolve().parent
+MANIFEST_LIMIT = 1024 * 1024
 ID_RE = re.compile(r"(?:[1-9][0-9]{0,19}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\Z")
 ACTION_FIELDS = {"description", "display_name", "category", "archive_existing_version",
                  "primary_mod_manager_download", "allow_mod_manager_download",
@@ -59,6 +60,34 @@ def bundle_sha256(path):
 
 def valid_id(value):
     return isinstance(value, str) and bool(ID_RE.fullmatch(value))
+
+
+def unique_json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate JSON field")
+        result[key] = value
+    return result
+
+
+def reject_json_constant(_value):
+    raise ValueError("JSON does not allow non-finite constants")
+
+
+def load_manifest(path):
+    try:
+        with path.open("rb") as stream:
+            raw = stream.read(MANIFEST_LIMIT + 1)
+    except OSError:
+        raise Blocked("Publication manifest could not be read.") from None
+    if len(raw) > MANIFEST_LIMIT:
+        raise Blocked("Publication manifest exceeds 1 MiB.")
+    try:
+        return json.loads(raw.decode("utf-8"), object_pairs_hook=unique_json_object,
+                          parse_constant=reject_json_constant)
+    except (ValueError, RecursionError):
+        raise Blocked("Publication manifest must be valid UTF-8 JSON with unique field names.") from None
 
 
 def preflight(manifest):
@@ -349,14 +378,7 @@ def load_receipt(path, manifest):
             raw = stream.read(65537)
         if len(raw) > 65536:
             raise Blocked("Receipt exceeded its schema limit.")
-        def unique_object(pairs):
-            result = {}
-            for key, value in pairs:
-                if key in result:
-                    raise ValueError("Duplicate receipt field")
-                result[key] = value
-            return result
-        data = json.loads(raw, object_pairs_hook=unique_object)
+        data = json.loads(raw, object_pairs_hook=unique_json_object)
         if not isinstance(data, dict):
             raise Blocked("Receipt schema unavailable; blind retry remains forbidden.")
         if data.get("schema") == 1:
@@ -405,18 +427,25 @@ def unlink_owned(path, data, manifest):
 
 def write_receipt(path, data, exclusive=False):
     path.parent.mkdir(parents=True, exist_ok=True)
-    if exclusive:
-        with path.open("x", encoding="utf-8") as stream:
+    temp = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
+    stream = temp.open("x", encoding="utf-8")
+    try:
+        with stream:
             json.dump(data, stream, indent=2)
             stream.flush()
             os.fsync(stream.fileno())
-    else:
-        temp = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
-        with temp.open("x", encoding="utf-8") as stream:
-            json.dump(data, stream, indent=2)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temp, path)
+        if not exclusive:
+            os.replace(temp, path)
+            temp = None
+        elif os.name == "nt":
+            # Windows rename publishes complete bytes and refuses to overwrite.
+            temp.rename(path)
+            temp = None
+        else:
+            os.link(temp, path)
+    finally:
+        if temp is not None:
+            temp.unlink(missing_ok=True)
 
 
 @contextmanager
@@ -613,7 +642,7 @@ def main():
     if args.version_id is not None and not args.reconcile:
         parser.error("--version-id requires --reconcile")
     try:
-        manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
+        manifest = load_manifest(args.manifest)
         credential = {"prompt": hidden_prompt, "windows-cli": shared_windows_credential, "github-secret": workflow_secret}.get(args.credential)
         if args.reconcile:
             if credential is None:

@@ -10,6 +10,7 @@ import { EventEmitter } from 'node:events';
 import installer from './local-archive-install.cjs';
 import guard from './guard.cjs';
 import receipts from './receipts.cjs';
+import diagnostics from './install-diagnostics.cjs';
 
 const { installLocalArchive } = installer;
 const G = 'cyberpunk2077', P = 'active', ID = 'Own-Test';
@@ -94,6 +95,7 @@ function fixture(t, options = {}) {
           }
           const staged = path.join(stagingPath, ID, payloadPath);
           fs.mkdirSync(path.dirname(staged), { recursive: true }); fs.writeFileSync(staged, payload);
+          if (options.extraStagedFile) fs.writeFileSync(path.join(path.dirname(staged), 'unexpected.txt'), 'fixture extra');
           state.persistent.mods[G][ID] = { id: ID, state: 'installed', installationPath: ID, archiveId: downloadId };
           if (options.installedLink !== undefined) download.installed = options.installedLink;
           state.persistent.profiles[installOptions.profileId].modState[ID] = { enabled: false };
@@ -234,6 +236,30 @@ for (const timing of ['before', 'after']) {
     assert.equal(positionedBytes, timing === 'before' ? 0 : payload.length);
   });
 }
+
+test('the staged inventory walk stops on the existing install deadline', async t => {
+  const f = fixture(t), stage = path.join(f.args.stagingPath, ID);
+  const staged = path.join(stage, payloadPath), opendir = fs.opendirSync, open = fs.openSync;
+  let time = 0, stagedOpens = 0;
+  f.services.diagnostics = diagnostics.createInstallDiagnostics({budgetMs: 10000, now: () => time});
+  t.mock.method(fs, 'opendirSync', (...args) => {
+    const directory = opendir(...args);
+    if (args[0] === path.dirname(staged)) time = 10000;
+    return directory;
+  });
+  t.mock.method(fs, 'openSync', (...args) => {
+    if (args[0] === staged && args[1] === 'r') stagedOpens++;
+    return open(...args);
+  });
+  await assert.rejects(installLocalArchive(f.api, f.args, f.services), /LOCAL_ARCHIVE_DEADLINE_EXCEEDED/);
+  assert.equal(stagedOpens, 0);
+  assert.equal(f.services.diagnostics.snapshot().reason, 'deadline');
+});
+
+test('installed file inventory must match the authored package', async t => {
+  const f = fixture(t, { extraStagedFile: true });
+  await assert.rejects(installLocalArchive(f.api, f.args, f.services), /LOCAL_ARCHIVE_STAGED_BYTES_UNVERIFIED/);
+});
 
 test('Nexus archive hashing reads at most the admitted size and refuses growth', async t => {
   const f = fixture(t);
@@ -423,6 +449,12 @@ for (const [label, change, error] of [
     /LOCAL_ARCHIVE_IMPORTED_IDENTITY_MISMATCH/],
   ['unrelated records', state => { state.persistent.mods[G].previous.state = 'removed'; },
     /LOCAL_ARCHIVE_EXISTING_STATE_CHANGED/],
+  ['staged bytes', (_, stagingPath) => {
+    fs.writeFileSync(path.join(stagingPath, ID, payloadPath), Buffer.alloc(payload.length, 65));
+  }, /LOCAL_ARCHIVE_STAGED_BYTES_UNVERIFIED/],
+  ['staged inventory', (_, stagingPath) => {
+    fs.writeFileSync(path.join(stagingPath, ID, path.dirname(payloadPath), 'unexpected.txt'), 'fixture extra');
+  }, /LOCAL_ARCHIVE_STAGED_BYTES_UNVERIFIED/],
 ]) {
   test(`completion receipt rejects changed ${label} after syncing its pending record`, async t => {
     const f = guardedFixture(t);
@@ -431,7 +463,7 @@ for (const [label, change, error] of [
       const handle = await open(file, ...args);
       if (String(file).includes('.completion.json.pending-')) {
         const sync = handle.sync.bind(handle);
-        handle.sync = async () => { await sync(); change(f.state); };
+        handle.sync = async () => { await sync(); change(f.state, f.args.stagingPath); };
       }
       return handle;
     });
