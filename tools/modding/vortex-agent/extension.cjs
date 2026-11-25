@@ -157,7 +157,7 @@ function register(server, api, options = {}) {
     action:z.enum(['cancel','ignore_dependencies','update_current_profile'])}, operations.respond_native_dialog, true,
     'Answer one freshly observed stock installation question through the native callback, always remember=false. Cancel is an abort-only control and preserves existing unresolved operations; other actions require the ordinary mutation guard. Unique requestId and exact current context/fingerprint required. Only dialog dismissal is verified, never installation or rollback.');
   add('read_native_dialog_operation', {requestId:z.string().regex(/^[a-zA-Z0-9_-]{8,80}$/)}, operations.read_native_dialog_operation, false,
-    'Read a native-dialog control request ledger after a lost reply. No replay, global interlock removal, installation completion or rollback.');
+    'Read the native-dialog control ledger with the original requestId after a lost reply. For Ignore or Update current profile, also call reconcile_operation with that requestId. Neither read permits replay or clears an interlock.');
   add('list_external_changes', {}, () => externalChanges(api));
   add('install_download', { ...write, ...pins, downloadId: id }, operations.install_download, true);
   add('install_local_archive', { ...write, ...pins, archivePath: z.string().min(1).max(4096) }, operations.install_local_archive, true,

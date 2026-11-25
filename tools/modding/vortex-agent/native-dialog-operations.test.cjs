@@ -6,6 +6,7 @@ const {createOperations,context,commitCompletion}=require('./guard.cjs');
 const {createNativeDialogHostAdmission,SOURCES}=require('./native-dialog-host-admission.cjs');
 const receiptSchema=require('./receipts.cjs');
 const {QUESTION_TEXT}=require('./collection-dialog-policy.cjs');
+const {safe}=require('./serialization.cjs');
 const TEXT="You're updating a mod that others depend upon and the update doesn't seem to be compatible (according to the dependency information). If you continue we have to disable these dependencies, otherwise you'll continually get warnings about it.";
 function dialog(version=false) {return {id:'front',type:'question',title:version?'Existing mod':'Updating may break dependencies',defaultAction:undefined,
   content:{text:version?QUESTION_TEXT:TEXT,options:{wrap:true},checkboxes:[{id:'remember',value:false,text:'Remember my choice'}]},
@@ -107,6 +108,35 @@ test('a non-Error rejection before dismissal leaves a no-effect receipt',async t
   assert.equal(ledger.status,'held');
   assert.equal(ledger.held.effectsMayHaveOccurred,false);
   assert.equal(ledger.held.errorCode,'UPSTREAM_FAILURE');
+  assert.equal(ledger.instruction,undefined);
+});
+test('ordinary dismissal can complete while the control receipt flush fails',async t=>{
+  const f=await fixture(t,{version:true}),r=await f.read(),a=f.args(r,'update_current_profile');
+  const control=path.join(f.receipts,'native-dialog-control');
+  const open=fs.open;
+  t.mock.method(fs,'open',async(file,...options)=>{
+    const handle=await open(file,...options);
+    if(String(file).startsWith(path.join(control,a.requestId+'.completion.json.pending-'))) {
+      handle.sync=async()=>{throw Error('MODELED_CONTROL_DISK_FAILURE');};
+    }
+    return handle;
+  });
+  await assert.rejects(f.ops.respond_native_dialog(a),/MODELED_CONTROL_DISK_FAILURE/);
+  const record=await f.ops.read_native_dialog_operation({requestId:a.requestId});
+  const controlResult=safe(record,f.api,'read_native_dialog_operation');
+  assert.equal(controlResult.status,'held');
+  assert.equal(controlResult.held.effectsMayHaveOccurred,true);
+  assert.equal(controlResult.completion,null);
+  assert.match(controlResult.instruction,/read_native_dialog_operation.*reconcile_operation.*original requestId/);
+  assert.equal(controlResult.replayAllowed,false);
+  const ordinary=await f.ops.reconcile_operation({requestId:a.requestId});
+  assert.equal(ordinary.terminalOperationVerified,true);
+  assert.equal(ordinary.completion.nativeDialogDismissalVerified,true);
+  assert.equal(ordinary.completion.installationCompleted,false);
+  assert.equal(ordinary.interlock,null);
+  assert((await fs.readdir(control)).some(name=>name.startsWith(a.requestId+'.completion.json.pending-')));
+  await assert.rejects(f.ops.respond_native_dialog(a),/REQUEST_REPLAY_REFUSED/);
+  assert.equal(f.calls.length,1);
 });
 test('published completion survives cleanup errors without conflicting failure record',async t=>{
   const f=await fixture(t,{commit:async(file,value,verify,published)=>{await commitCompletion(file,value,verify,published);if(file.endsWith('.completion.json'))throw Error('CLEANUP_ERROR');}}),r=await f.read();
