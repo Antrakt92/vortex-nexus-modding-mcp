@@ -165,7 +165,8 @@ def restore_skills(snapshot, destination, apply=False):
 
 
 def run_git(args, cwd=None):
-    return subprocess.check_output(['git', *map(str, args)], cwd=cwd, stderr=subprocess.PIPE,
+    command = ['git', '-c', 'core.longpaths=true'] if os.name == 'nt' else ['git']
+    return subprocess.check_output([*command, *map(str, args)], cwd=cwd, stderr=subprocess.PIPE,
                                    encoding='utf-8', timeout=120).strip()
 
 

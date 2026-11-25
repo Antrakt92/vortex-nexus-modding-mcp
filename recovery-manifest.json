@@ -568,7 +568,7 @@
     },
     {
       "path": "scripts/recovery.py",
-      "sha256_lf": "c909635b858db7ba1f0a171786331510ee6439adce0c8bf11cd8bcb790ee4a10"
+      "sha256_lf": "e31b04b126b5abddbfdbf5ede062bcf54d3912b70e2a2b9d6e5d41519f7423bb"
     },
     {
       "path": "scripts/update_manifest.py",
@@ -596,7 +596,7 @@
     },
     {
       "path": "tests/test_recovery.py",
-      "sha256_lf": "eac9c638a875f5e560d454b7521033d2c907cf65e7900f1db003a8f7a3f6cfb2"
+      "sha256_lf": "48078dec71366437fb4d2eb3a2ad14853b50a2db96385899c3d4512267d4c770"
     },
     {
       "path": "tests/test_release_metadata.py",
