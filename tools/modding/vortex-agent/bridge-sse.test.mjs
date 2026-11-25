@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {remote} from './bridge.mjs';
+import {MAX_RESPONSE_BYTES, remote} from './bridge.mjs';
 
 const token = async () => 'synthetic-bearer';
 function response(bytes, chunkBytes = 1) {
@@ -68,3 +68,34 @@ test('SSE does not decode bytes after a complete matching response', async () =>
     assert.equal(await remote('tools/call', {}, async () => response(bytes, chunkBytes), token), 'ok');
   }
 });
+
+for (const type of ['application/json', 'text/event-stream']) {
+  test(`${type} buffers a split reply without retaining each fragment for concatenation`, async t => {
+    const expected = {text: 'проверка'.repeat(32)};
+    const json = JSON.stringify({jsonrpc: '2.0', id: 1, result: expected});
+    const bytes = Buffer.from(type === 'text/event-stream' ? `data: ${json}\r\n\r\n` : json);
+    const concat = Buffer.concat, allocate = Buffer.allocUnsafe;
+    let largestList = 0;
+    const frameAllocations = [];
+    t.mock.method(Buffer, 'concat', (pieces, length) => {
+      largestList = Math.max(largestList, pieces.length);
+      return concat(pieces, length);
+    });
+    t.mock.method(Buffer, 'allocUnsafe', length => {
+      if (length >= 256) frameAllocations.push(length);
+      return allocate(length);
+    });
+    let offset = 0;
+    const stream = new ReadableStream({pull(controller) {
+      if (offset === bytes.length) {controller.close(); return;}
+      controller.enqueue(bytes.subarray(offset, ++offset));
+      controller.enqueue(new Uint8Array());
+    }});
+    const result = await remote('tools/call', {}, async () => new Response(stream, {headers: {'content-type': type}}), token);
+    assert.deepEqual(result, expected);
+    assert.ok(largestList <= 8, `collected ${largestList} individual input fragments`);
+    assert.ok(frameAllocations.length > 0 && frameAllocations.length <= 8,
+      `allocated ${frameAllocations.length} larger buffers`);
+    assert.ok(frameAllocations.every(size => size <= MAX_RESPONSE_BYTES));
+  });
+}

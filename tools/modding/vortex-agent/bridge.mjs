@@ -17,6 +17,34 @@ function maintainedToolMetadata(tool) {
 }
 
 const MAX_REQUEST_BYTES = 1024 * 1024;
+const EMPTY_BYTES = Buffer.alloc(0);
+class ByteAccumulator {
+  #storage = EMPTY_BYTES;
+  #length = 0;
+  #limit;
+
+  constructor(limit) { this.#limit = limit; }
+  get length() { return this.#length; }
+  append(fragment) {
+    if (!fragment.byteLength) return;
+    const length = this.#length + fragment.byteLength;
+    if (length > this.#limit) throw new RangeError('MCP byte accumulation limit exceeded');
+    if (length > this.#storage.length) {
+      const capacity = Math.min(this.#limit, Math.max(256, length, this.#storage.length * 2));
+      const storage = Buffer.allocUnsafe(capacity);
+      this.#storage.copy(storage, 0, 0, this.#length);
+      this.#storage = storage;
+    }
+    this.#storage.set(fragment, this.#length);
+    this.#length = length;
+  }
+  view() { return this.#storage.subarray(0, this.#length); }
+  reset() {
+    this.#length = 0;
+    // Keep a small buffer for normal traffic without retaining a peak-sized one.
+    if (this.#storage.length > 64 * 1024) this.#storage = EMPTY_BYTES;
+  }
+}
 function parse(input, maxBytes = MAX_RESPONSE_BYTES) {
   try { return strictJSON.parseStrictJSON(typeof input === 'string' ? Buffer.from(input) : input, {maxBytes}); }
   catch { throw new Error('Invalid MCP JSON payload'); }
@@ -25,7 +53,8 @@ export const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 function cancelBody(body) { if (body) void body.cancel().catch(() => {}); }
 function releaseReader(reader) { cancelBody(reader); reader.releaseLock(); }
 export async function* boundedLines(input, max = MAX_REQUEST_BYTES) {
-  let pieces = [], bytes = 0, dropping = false;
+  const pending = new ByteAccumulator(max);
+  let dropping = false;
   const decode = data => { try { return new TextDecoder('utf-8', { fatal: true }).decode(data); } catch { return null; } };
   for await (const chunk of input) {
     const data = Buffer.from(chunk); let start = 0;
@@ -33,17 +62,17 @@ export async function* boundedLines(input, max = MAX_REQUEST_BYTES) {
       const newline = data.indexOf(10, start), end = newline < 0 ? data.length : newline;
       const fragment = data.subarray(start, end);
       if (!dropping) {
-        bytes += fragment.length;
-        if (bytes > max) { pieces = []; bytes = 0; dropping = true; }
-        else pieces.push(fragment);
+        if (pending.length + fragment.length > max) { pending.reset(); dropping = true; }
+        else if (newline < 0 || pending.length) pending.append(fragment);
       }
       if (newline < 0) break;
-      yield dropping ? null : decode(Buffer.concat(pieces, bytes))?.replace(/\r$/, '') ?? null;
-      pieces = []; bytes = 0; dropping = false; start = newline + 1;
+      const line = dropping ? null : decode(pending.length ? pending.view() : fragment)?.replace(/\r$/, '') ?? null;
+      pending.reset(); dropping = false; start = newline + 1;
+      yield line;
     }
   }
   if (dropping) yield null;
-  else if (bytes) yield decode(Buffer.concat(pieces, bytes));
+  else if (pending.length) yield decode(pending.view());
 }
 const UNAVAILABLE = 'Vortex MCP unavailable or timed out. Start Vortex with the audited vortex-agent extension, verify port 3701 ownership; inspect receipts before retrying a write.';
 const LOCAL_INSTALL_TRANSPORT_LOST = 'Vortex local archive transport lost or timed out. Native work may continue. Reconcile the original requestId with reconcile_operation; do not retry install_local_archive.';
@@ -142,7 +171,9 @@ async function remoteRequest(method, params, fetcher, tokenProvider, onDispatch)
   if (mediaType === 'text/event-stream') {
     const reader = response.body.getReader();
     const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
-    let pieces = [], lineBytes = 0, dataLines = [], skipLF = false, firstLine = true, bytes = 0;
+    const lineBuffer = new ByteAccumulator(MAX_RESPONSE_BYTES), dataBuffer = new ByteAccumulator(MAX_RESPONSE_BYTES);
+    const separator = Buffer.from('\n');
+    let hasData = false, skipLF = false, firstLine = true, bytes = 0;
     try {
       while (!message) {
         const { value, done } = await reader.read();
@@ -158,15 +189,24 @@ async function remoteRequest(method, params, fetcher, tokenProvider, onDispatch)
             if (byte === 10) { start = end + 1; continue; }
           }
           if (byte !== 13 && byte !== 10) continue;
-          if (end > start) pieces.push(value.subarray(start, end));
-          let line = decoder.decode(Buffer.concat(pieces, lineBytes + end - start));
+          const fragment = value.subarray(start, end);
+          let line;
+          if (lineBuffer.length) {
+            lineBuffer.append(fragment);
+            line = decoder.decode(lineBuffer.view());
+            lineBuffer.reset();
+          } else line = decoder.decode(fragment);
           if (firstLine) { line = line.replace(/^\uFEFF/, ''); firstLine = false; }
-          pieces = []; lineBytes = 0; start = end + 1; skipLF = byte === 13;
-          if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
-          else if (!line && dataLines.length) {
-            const data = dataLines.join('\n'); dataLines = [];
-            if (data) {
-              const candidate = parse(data);
+          start = end + 1; skipLF = byte === 13;
+          if (line.startsWith('data:')) {
+            if (hasData) dataBuffer.append(separator);
+            dataBuffer.append(Buffer.from(line.slice(5).trimStart()));
+            hasData = true;
+          } else if (!line && hasData) {
+            hasData = false;
+            if (dataBuffer.length) {
+              const candidate = parse(dataBuffer.view());
+              dataBuffer.reset();
               if (candidate?.id === 1) {
                 message = candidate;
                 break;
@@ -174,23 +214,20 @@ async function remoteRequest(method, params, fetcher, tokenProvider, onDispatch)
             }
           }
         }
-        if (!message && start < value.length) {
-          pieces.push(value.subarray(start));
-          lineBytes += value.length - start;
-        }
+        if (!message && start < value.length) lineBuffer.append(value.subarray(start));
       }
     } catch (error) {
       throw error instanceof UnusableResponse ? error : new UnusableResponse();
     } finally { releaseReader(reader); }
   } else {
-    const reader = response.body.getReader(); const chunks = []; let bytes = 0;
+    const reader = response.body.getReader(), body = new ByteAccumulator(MAX_RESPONSE_BYTES);
     try {
       while (true) {
         const { value, done } = await reader.read(); if (done) break;
-        bytes += value.byteLength; if (bytes > MAX_RESPONSE_BYTES) throw new UnusableResponse('MCP response too large');
-        chunks.push(value);
+        if (body.length + value.byteLength > MAX_RESPONSE_BYTES) throw new UnusableResponse('MCP response too large');
+        body.append(value);
       }
-      message = parse(Buffer.concat(chunks, bytes));
+      message = parse(body.view());
     } catch (error) {
       throw error instanceof UnusableResponse ? error : new UnusableResponse();
     } finally { releaseReader(reader); }
