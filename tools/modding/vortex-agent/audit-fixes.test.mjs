@@ -315,6 +315,22 @@ test('audit: initialization grace allows a delayed record, then disappearance se
   g.api.ext.nexusDownload = async () => { g.state.persistent.downloads.files.d = { state: 'started' }; setTimeout(() => { delete g.state.persistent.downloads.files.d; }, 5); return 'd'; };
   await assert.rejects(g.ops.download_nexus(next), /DOWNLOAD_RECORD_MISSING/);
 });
+test('audit: missing native download record expires even when wall time stops', {timeout: 4000}, async t => {
+  const f = await fixture(t);
+  const args = await pinned(f);
+  delete f.state.persistent.downloads.files.d;
+  f.api.ext.nexusDownload = async () => 'd';
+  const originalNow = Date.now, rescue = setTimeout(f.abort, 1000);
+  try {
+    Date.now = () => 0;
+    await assert.rejects(f.ops.download_nexus(args), /DOWNLOAD_RECORD_MISSING/);
+  } finally {
+    clearTimeout(rescue);
+    Date.now = originalNow;
+  }
+  await fs.access(path.join(f.dir, 'receipts/unresolved.json'));
+});
+
 test('audit: numeric/domain consistency, unavailable catalogue and shared-domain ambiguity', () => {
   const { resolveDownload, matchingDownloads, catalogSnapshot } = require('./download-identity.cjs');
   const selectors = { knownGames: () => [{ id: 'cyberpunk2077' }, { id: 'skyrimse' }, { id: 'skyrimvr' }] };

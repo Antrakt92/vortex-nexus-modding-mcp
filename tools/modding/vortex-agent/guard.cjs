@@ -4,6 +4,7 @@ const disk = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { execFile, spawnSync } = require('node:child_process');
+const { performance } = require('node:perf_hooks');
 const { safe } = require('./serialization.cjs');
 const downloads = require('./download-identity.cjs');
 const receipts = require('./receipts.cjs');
@@ -211,13 +212,25 @@ async function exclusive(dir, fn) {
   await fs.mkdir(dir, { recursive: true });
   const lock = path.join(dir, 'mutation.lock');
   let handle;
-  const deadline = Date.now() + 30000;
+  const deadline = performance.now() + 30000;
   while (!handle) {
+    insist(performance.now() < deadline, 'MUTATION_BUSY_INSPECT_RECEIPTS');
     try { handle = await fs.open(lock, 'wx'); }
-    catch (error) { if (error.code !== 'EEXIST') throw error; insist(Date.now() < deadline, 'MUTATION_BUSY_INSPECT_RECEIPTS'); await sleep(50); }
+    catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      const remaining = deadline - performance.now();
+      insist(remaining > 0, 'MUTATION_BUSY_INSPECT_RECEIPTS');
+      await sleep(Math.min(50, remaining));
+    }
   }
-  try { await handle.writeFile(JSON.stringify({ pid: process.pid, at: new Date().toISOString() })); return await fn(); }
-  finally { await handle.close(); await fs.unlink(lock); }
+  try {
+    insist(performance.now() < deadline, 'MUTATION_BUSY_INSPECT_RECEIPTS');
+    await handle.writeFile(JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
+    return await fn();
+  } finally {
+    await handle.close();
+    await fs.unlink(lock);
+  }
 }
 function createOperations(api, actions, selectors, options = {}) {
   const dir = options.receipts || RECEIPTS;
@@ -457,7 +470,7 @@ function createOperations(api, actions, selectors, options = {}) {
       }
       insist(typeof id === 'string' && id.length > 0, 'DOWNLOAD_ID_MISSING');
       insist(downloads.validDownloadId(id), 'DOWNLOAD_ID_INVALID');
-      const initializedBy = Date.now() + (options.initializationGraceMs ?? 5000);
+      const initializedBy = performance.now() + (options.initializationGraceMs ?? 5000);
       let observed = false;
       // No timeout releases the mutation lock while a download is still in progress.
       while (true) {
@@ -466,8 +479,9 @@ function createOperations(api, actions, selectors, options = {}) {
         await checkWaitingDownload(args);
         const item = api.getState().persistent?.downloads?.files?.[id];
         if (!item) {
-          insist(!observed && Date.now() < initializedBy, 'DOWNLOAD_RECORD_MISSING');
-          await sleep(options.pollIntervalMs ?? 500); continue;
+          const remaining = initializedBy - performance.now();
+          insist(!observed && remaining > 0, 'DOWNLOAD_RECORD_MISSING');
+          await sleep(Math.min(options.pollIntervalMs ?? 500, remaining)); continue;
         }
         observed = true;
         insist(downloads.ACTIVE.has(item.state) || downloads.TERMINAL.has(item.state), 'DOWNLOAD_STATE_UNRECOGNIZED');
