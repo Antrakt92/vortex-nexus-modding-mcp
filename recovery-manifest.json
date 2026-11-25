@@ -476,7 +476,7 @@
     },
     {
       "path": "docs/READ-CAPTURE-PREPARATION.md",
-      "sha256_lf": "9e3c0b5457652849b6fb37bd20a3230826b784665697770d116097278dfc338f"
+      "sha256_lf": "b146df779eefb55488c74937189b361ef4b9d66275082e332e92492ddf29a683"
     },
     {
       "path": "docs/README.md",
@@ -3128,7 +3128,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/prepare-read-capture.test.mjs",
-      "sha256_lf": "f67196c96027a3db2b31b5e376b1a732fcbc5f4f431205e2fca66f0021b9b353"
+      "sha256_lf": "31e784c2b7f14666b0014d455d5217dc821a9f9339653cdc305e5f410fa81446"
     },
     {
       "path": "tools/modding/vortex-agent/prepare-source-guard.mjs",

@@ -7,6 +7,7 @@ import vm from 'node:vm';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {prepareReadCapture, verifyReadCapture, main, SUPPORTED_READ_CAPTURE} from './prepare-read-capture.mjs';
+import fixtureDirectories from './test-fixture-directory.cjs';
 
 const reference = process.env.VORTEX_OWN_READ_CAPTURE_REFERENCE;
 const timestampPolicy = process.env.VORTEX_READ_CAPTURE_TIMESTAMP_POLICY;
@@ -15,7 +16,7 @@ const integration = (name, fn) => test(name, {timeout: 10000,
   skip: reference && timestampPolicy ? false : 'Provide the pinned Menu code reference and timestamp policy via VORTEX_OWN_READ_CAPTURE_REFERENCE / VORTEX_READ_CAPTURE_TIMESTAMP_POLICY'}, fn);
 const json = file => JSON.parse(fs.readFileSync(file, 'utf8'));
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
-function generatedCapture(model, {legacy = false} = {}) {
+function generatedCapture(t, model, {legacy = false} = {}) {
   let code;
   if (legacy) {
     const original = fs.readFileSync(path.join(reference, 'capture.cjs'), 'utf8');
@@ -25,7 +26,7 @@ function generatedCapture(model, {legacy = false} = {}) {
       + original.slice(start,end);
   }
   else {
-    const f = fixture(); prepareReadCapture({...f.options(f.output), apply: true});
+    const f = fixture(t); prepareReadCapture({...f.options(f.output), apply: true});
     code = fs.readFileSync(path.join(f.output, 'capture.cjs'), 'utf8');
   }
   const module = {exports: {}};
@@ -119,7 +120,7 @@ function captureModel() {
   return model;
 }
 
-integration('generated capture verifies preferences and admission from the exact pinned bytes', async () => {
+integration('generated capture verifies preferences and admission from the exact pinned bytes', async t => {
   const model = captureModel();
   const preferencePath = 'F:/game/fixture-preferences.json', content = 'fixture preferences';
   const file = model.file(preferencePath, content);
@@ -130,14 +131,14 @@ integration('generated capture verifies preferences and admission from the exact
     path.win32.normalize(file) === path.win32.normalize(model.cfg.diskBaseline.path) && encoding === 'utf8'
       ? JSON.stringify(unpinned) : read(file, encoding);
   model.observeAdmission = proof => admissions.push(proof?.newChangedSourceReviewComplete);
-  const result = await model.run(generatedCapture(model));
+  const result = await model.run(generatedCapture(t, model));
   assert.equal(result.installBaseline.settingsPins.length, 1);
   assert.equal(result.installBaseline.settingsPins[0].sha256, hash(content));
   assert.deepEqual(admissions, [true, true]);
 });
 
-integration('generated extractor uses the reviewed admission object without opening its path again', () => {
-  const f = fixture();
+integration('generated extractor uses the reviewed admission object without opening its path again', t => {
+  const f = fixture(t);
   prepareReadCapture({...f.options(f.output), apply: true});
   const code = fs.readFileSync(path.join(f.output, 'extractor-admission.cjs'), 'utf8');
   const module = {exports:{}};
@@ -155,60 +156,60 @@ integration('generated extractor uses the reviewed admission object without open
   assert.equal(result.knownDiskExtensions,1);
 });
 
-integration('actual generated reader rejects an opened foreign FD that the historical path-only reader accepted', () => {
+integration('actual generated reader rejects an opened foreign FD that the historical path-only reader accepted', t => {
   for (const legacy of [true,false]) {
     const model=captureModel();model.file('F:/own.bin','own bytes');model.descriptorSwap=true;
-    const C=generatedCapture(model,{legacy}),read=C.testReader();
+    const C=generatedCapture(t, model,{legacy}),read=C.testReader();
     if (legacy) assert.equal(read('F:/own.bin').sha256,hash('own bytes'));
     else assert.throws(()=>read('F:/own.bin'),/FILE_DESCRIPTOR_CHANGED/);
   }
 });
 
-integration('generated reader checks FD link count during reads and includes links in its cache key', () => {
+integration('generated reader checks FD link count during reads and includes links in its cache key', t => {
   const racing=captureModel(),file=racing.file('F:/own.bin','own bytes');
   racing.beforeRead=()=>{file.nlink=2n;};
-  assert.throws(()=>generatedCapture(racing).testReader()('F:/own.bin'),/FILE_CHANGED_DURING_CAPTURE/);
-  const model=captureModel(),node=model.file('F:/own.bin','own bytes'),read=generatedCapture(model).testReader();
+  assert.throws(()=>generatedCapture(t, racing).testReader()('F:/own.bin'),/FILE_CHANGED_DURING_CAPTURE/);
+  const model=captureModel(),node=model.file('F:/own.bin','own bytes'),read=generatedCapture(t, model).testReader();
   assert.equal(read('F:/own.bin').links,1);read('F:/own.bin');assert.equal(model.opens,1);
   node.nlink=2n;assert.equal(read('F:/own.bin').links,2);assert.equal(model.opens,2);
 });
 
-integration('generated reader reads at most initial bytes plus one and refuses ancestor reparse paths', () => {
+integration('generated reader reads at most initial bytes plus one and refuses ancestor reparse paths', t => {
   const model=captureModel(),file=model.file('F:/own.bin','abc');file.data=Buffer.from('abcdefgh');
   const lengths=[];model.beforeRead=(_node,length)=>lengths.push(length);
-  assert.throws(()=>generatedCapture(model).testReader()('F:/own.bin'),/FILE_GREW_DURING_CAPTURE/);
+  assert.throws(()=>generatedCapture(t, model).testReader()('F:/own.bin'),/FILE_GREW_DURING_CAPTURE/);
   assert.deepEqual(lengths,[4]);
   const unsafe=captureModel();unsafe.file('F:/own.bin','abc');
   unsafe.nodes.set(path.win32.resolve('F:/').toLowerCase(),{dev:1n,ino:1n,isSymbolicLink:()=>true});
-  assert.throws(()=>generatedCapture(unsafe).testReader()('F:/own.bin'),/CAPTURE_REPARSE/);
+  assert.throws(()=>generatedCapture(t, unsafe).testReader()('F:/own.bin'),/CAPTURE_REPARSE/);
 });
 
-integration('actual zero-package capture accepts only the supported native default deployment target', async () => {
-  const good=captureModel();const result=await good.run(generatedCapture(good));
+integration('actual zero-package capture accepts only the supported native default deployment target', async t => {
+  const good=captureModel();const result=await good.run(generatedCapture(t, good));
   assert.equal(result.readOnly,true);assert.equal(result.rows.length,0);
   for (const targets of [{'':'F:/game',custom:'F:/Other'},{'':'F:/Different'},{custom:'F:/game'}]) {
     const model=captureModel();model.targets=targets;
-    await assert.rejects(model.run(generatedCapture(model)),/DEPLOYMENT_TARGET/);
+    await assert.rejects(model.run(generatedCapture(t, model)),/DEPLOYMENT_TARGET/);
   }
   const missing=captureModel();missing.util.getGame=undefined;
-  await assert.rejects(missing.run(generatedCapture(missing)),/ACTUAL_GAME_TARGET_SELECTOR_REQUIRED/);
+  await assert.rejects(missing.run(generatedCapture(t, missing)),/ACTUAL_GAME_TARGET_SELECTOR_REQUIRED/);
   for (const expected of [null,undefined,'1:999']) {
     const wrong=captureModel();wrong.cfg.expectedNativeTempId=expected;
-    await assert.rejects(wrong.run(generatedCapture(wrong)),/NATIVE_TEMP_PATH_CHANGED/);
+    await assert.rejects(wrong.run(generatedCapture(t, wrong)),/NATIVE_TEMP_PATH_CHANGED/);
   }
 });
 
-integration('final capture checkpoint refuses root, native-temp and deployment-map drift after stage readback', async () => {
+integration('final capture checkpoint refuses root, native-temp and deployment-map drift after stage readback', async t => {
   for (const kind of ['game','stage','downloads','temp','targets']) {
     const model=captureModel();model.afterStageInventory=()=>{
       if(kind==='targets')model.targets={'':'F:/game',extra:'F:/Other'};
       else model.nodes.get(path.win32.resolve('F:/'+kind).toLowerCase()).ino+=1n;
     };
-    await assert.rejects(model.run(generatedCapture(model)),/ROOT|TEMP|DEPLOYMENT_TARGET/);
+    await assert.rejects(model.run(generatedCapture(t, model)),/ROOT|TEMP|DEPLOYMENT_TARGET/);
   }
 });
 
-integration('fresh baseline preference discovery is required and final file-set drift cannot become a capture', async () => {
+integration('fresh baseline preference discovery is required and final file-set drift cannot become a capture', async t => {
   for (const kind of ['missing','wrong-roots','added-final','removed-final','reparse-final','depth']) {
     const model=captureModel();
     if(kind==='missing')delete model.baseline.preferenceDiscovery;
@@ -232,11 +233,11 @@ integration('fresh baseline preference discovery is required and final file-set 
       const file=model.file(p,'{}');if(kind==='reparse-final')file.reparse=true;
       model.directories.set(path.win32.resolve(root).toLowerCase(),kind==='removed-final'?[]:['new.json']);
     };
-    await assert.rejects(model.run(generatedCapture(model)),/PREFERENCE_/);
+    await assert.rejects(model.run(generatedCapture(t, model)),/PREFERENCE_/);
     assert.equal(model.dirOpens,model.dirCloses,'preference refusal must close every directory iterator');
   }
 });
-integration('every discovered preference requires a unique valid independently hashed settings row', async () => {
+integration('every discovered preference requires a unique valid independently hashed settings row', async t => {
   for (const kind of ['valid','missing','duplicate','digest','identity','bytes','links','path']) {
     const model=captureModel(),root=model.roots[0],p=path.win32.join(root,'own.json');
     const file=model.file(p,'{}');
@@ -251,13 +252,13 @@ integration('every discovered preference requires a unique valid independently h
     if(kind==='links')row.links=0;
     if(kind==='path')row.path='relative.json';
     model.cfg.diskBaseline.sha256=hash(JSON.stringify(model.baseline));
-    if(kind==='valid')assert.equal((await model.run(generatedCapture(model))).readOnly,true);
-    else await assert.rejects(model.run(generatedCapture(model)),/PREFERENCE_SETTINGS_(?:INVALID|DUPLICATE|MISSING)/);
+    if(kind==='valid')assert.equal((await model.run(generatedCapture(t, model))).readOnly,true);
+    else await assert.rejects(model.run(generatedCapture(t, model)),/PREFERENCE_SETTINGS_(?:INVALID|DUPLICATE|MISSING)/);
   }
 });
 
-integration('only exact independently pinned log symlinks may be excluded without following their target', async () => {
-  const own=fs.mkdtempSync(path.join(scratch,'read-capture-log-link-'));
+integration('only exact independently pinned log symlinks may be excluded without following their target', async t => {
+  const own=fixtureDirectories.fixtureDirectory(t, scratch, 'read-capture-log-link-');
   const link=path.join(own,'own.log');fs.symlinkSync(path.join(own,'absent-target.log'),link,'file');
   const actual=fs.lstatSync(link,{bigint:true}),text=fs.readlinkSync(link,{encoding:'buffer'});
   for(const kind of ['valid','unpinned','unknown','json','missing','duplicate','target','identity','bytes','links','mtime','ctime','directory','attributes','final-drift']){
@@ -285,16 +286,16 @@ integration('only exact independently pinned log symlinks may be excluded withou
     if(kind==='attributes')pin.fileAttributes=0;
     if(kind==='final-drift')model.afterStageInventory=()=>{final=true;};
     model.cfg.diskBaseline.sha256=hash(JSON.stringify(model.baseline));
-    if(kind==='valid'){assert.equal((await model.run(generatedCapture(model))).readOnly,true);assert(linkReads>=4);}
-    else await assert.rejects(model.run(generatedCapture(model)),/PREFERENCE_(?:REPARSE|LOG_LINK)/,kind);
+    if(kind==='valid'){assert.equal((await model.run(generatedCapture(t, model))).readOnly,true);assert(linkReads>=4);}
+    else await assert.rejects(model.run(generatedCapture(t, model)),/PREFERENCE_(?:REPARSE|LOG_LINK)/,kind);
     assert.equal(model.dirOpens,model.dirCloses,kind);
   }
 });
 
-integration('reviewed exact root aliases are admitted while map failures write bounded immutable diagnostics', async () => {
+integration('reviewed exact root aliases are admitted while map failures write bounded immutable diagnostics', async t => {
   const good=captureModel();good.targets={'':'F:/game',dinput:'f:\\game',enb:'F:/game/.'};
   good.cfg.expectedDeploymentTargets={enb:'F:/game',dinput:'F:/game','':'F:/game'};
-  const result=await good.run(generatedCapture(good));assert.equal(good.diagnostics.size,0);
+  const result=await good.run(generatedCapture(t, good));assert.equal(good.diagnostics.size,0);
   assert.deepEqual(JSON.parse(JSON.stringify(result.reviewedDeploymentTargets)),{'':'f:/game',dinput:'f:/game',enb:'f:/game'});
   for(const kind of ['missing-review','missing-id','extra-id','other-root','final','nonstring','uri','unsafe-id','accessor','limit']){
     const model=captureModel();model.targets={'':'F:/game',enb:'F:/game'};
@@ -309,15 +310,15 @@ integration('reviewed exact root aliases are admitted while map failures write b
     if(kind==='unsafe-id')model.targets['NEVER-LEAK@']= 'F:/game';
     if(kind==='accessor')Object.defineProperty(model.targets,'enb',{enumerable:true,get(){assert.fail('getter must not execute');}});
     if(kind==='limit')for(let n=0;n<33;n++)model.targets['type'+n]='F:/game';
-    await assert.rejects(model.run(generatedCapture(model)),/DEPLOYMENT_TARGET/);
+    await assert.rejects(model.run(generatedCapture(t, model)),/DEPLOYMENT_TARGET/);
     assert.equal(model.diagnostics.size,1,kind);const diagnostic=[...model.diagnostics.values()][0];
     assert.equal(diagnostic.noReplay,true);assert(diagnostic.actualRows.length<=32);
     const serialized=JSON.stringify(diagnostic);assert(!serialized.includes('NEVER-LEAK'));assert(!serialized.includes('private-root'));
   }
 });
 
-integration('a target-map diagnostic marker stops the generated entry before UI waits or capture replay', async () => {
-  const f=fixture();prepareReadCapture({...f.options(f.output),apply:true});
+integration('a target-map diagnostic marker stops the generated entry before UI waits or capture replay', async t => {
+  const f=fixture(t);prepareReadCapture({...f.options(f.output),apply:true});
   const filename=path.join(f.output,'index.prepared.js'),code=fs.readFileSync(filename,'utf8');
   const cfg={activationApproved:true,allActivationHold:false,purpose:'own-read-capture/1',pluginPath:f.output,
     control:f.parent,freshRootDiskBaselineFinalized:true,helperSHA256:hash(code),modulePins:{}};
@@ -335,17 +336,8 @@ integration('a target-map diagnostic marker stops the generated entry before UI 
   assert.equal(typeof timer,'function');await timer();assert(markerChecks>=1);
 });
 
-function ordinaryParents(dir) {
-  for (let current = path.resolve(dir); ; current = path.dirname(current)) {
-    if (fs.existsSync(current)) {
-      const st = fs.lstatSync(current); assert.equal(st.isSymbolicLink(), false); assert.equal(st.isDirectory(), true);
-    }
-    if (current === path.dirname(current)) return;
-  }
-}
-function fixture() {
-  ordinaryParents(scratch); fs.mkdirSync(scratch, {recursive: true}); ordinaryParents(scratch);
-  const parent = fs.mkdtempSync(path.join(scratch, 'read-capture-preparer-test-'));
+function fixture(t) {
+  const parent = fixtureDirectories.fixtureDirectory(t, scratch, 'read-capture-preparer-test-');
   return {parent, output: path.join(parent, 'kit'), options: output => ({reference, timestampPolicy, output})};
 }
 function cloneReference(parent) {
@@ -362,8 +354,8 @@ test('catalog is fixed to the zero-package read-only family and invalid CLI argu
   assert.throws(() => main(['verify', 'relative']), /READ_CAPTURE_ABSOLUTE_PATH_REQUIRED/);
 });
 
-integration('dry-run writes nothing; apply creates one complete held code kit with every runtime pin', () => {
-  const f = fixture();
+integration('dry-run writes nothing; apply creates one complete held code kit with every runtime pin', t => {
+  const f = fixture(t);
   const plan = prepareReadCapture(f.options(f.output));
   assert.equal(plan.status, 'plan'); assert.equal(fs.existsSync(f.output), false);
   const made = prepareReadCapture({...f.options(f.output), apply: true});
@@ -388,8 +380,8 @@ integration('dry-run writes nothing; apply creates one complete held code kit wi
   }
 });
 
-integration('completed reference controls are neither read nor copied; only fixed hash-pinned code is consumed', () => {
-  const f = fixture(), ownReference = cloneReference(f.parent);
+integration('completed reference controls are neither read nor copied; only fixed hash-pinned code is consumed', t => {
+  const f = fixture(t), ownReference = cloneReference(f.parent);
   fs.writeFileSync(path.join(ownReference, 'reviewed.json'), 'STALE_CONTROL_NOT_JSON');
   fs.writeFileSync(path.join(ownReference, 'completed.json'), 'STALE_RECEIPT');
   fs.writeFileSync(path.join(ownReference, 'READY.json'), 'STALE_APPROVAL');
@@ -399,8 +391,8 @@ integration('completed reference controls are neither read nor copied; only fixe
   for (const name of fs.readdirSync(f.output)) assert.equal(fs.readFileSync(path.join(f.output, name), 'utf8').includes('STALE_'), false);
 });
 
-integration('unsupported code or timestamp policy refuses before output creation', () => {
-  const f = fixture(), ownReference = cloneReference(f.parent);
+integration('unsupported code or timestamp policy refuses before output creation', t => {
+  const f = fixture(t), ownReference = cloneReference(f.parent);
   fs.appendFileSync(path.join(ownReference, 'scope.cjs'), '\n');
   assert.throws(() => prepareReadCapture({reference: ownReference, timestampPolicy, output: f.output, apply: true}), /READ_CAPTURE_REFERENCE_DRIFT/);
   assert.equal(fs.existsSync(f.output), false);
@@ -409,8 +401,8 @@ integration('unsupported code or timestamp policy refuses before output creation
   assert.equal(fs.existsSync(f.output), false);
 });
 
-integration('actual generated entry and complete local module graph stay inert with no native API/events or reads', () => {
-  const f = fixture(); prepareReadCapture({...f.options(f.output), apply: true});
+integration('actual generated entry and complete local module graph stay inert with no native API/events or reads', t => {
+  const f = fixture(t); prepareReadCapture({...f.options(f.output), apply: true});
   const config = json(path.join(f.output, 'reviewed.prepared.json'));
   const modules = new Map(); let calls = 0;
   const forbidden = () => {calls++; throw Error('UNEXPECTED_NATIVE_OR_FILESYSTEM_CALL');};
@@ -443,9 +435,9 @@ integration('actual generated entry and complete local module graph stay inert w
   assert.equal(modules.has('tool-timestamps.cjs'), true);
 });
 
-integration('self-consistent manifest edits cannot bless packages, module drift or an incomplete copy map', () => {
+integration('self-consistent manifest edits cannot bless packages, module drift or an incomplete copy map', t => {
   for (const kind of ['packages','map','module','extra','json-duplicate']) {
-    const f = fixture(); prepareReadCapture({...f.options(f.output), apply: true});
+    const f = fixture(t); prepareReadCapture({...f.options(f.output), apply: true});
     const manifestFile = path.join(f.output, 'READ-CAPTURE-KIT.json');
     const contract = json(manifestFile);
     let name;
@@ -466,8 +458,8 @@ integration('self-consistent manifest edits cannot bless packages, module drift 
   }
 });
 
-integration('partial output remains held with no manifest, overwrite, retry or cleanup', () => {
-  const f = fixture(); const original = fs.writeFileSync; let count = 0;
+integration('partial output remains held with no manifest, overwrite, retry or cleanup', t => {
+  const f = fixture(t); const original = fs.writeFileSync; let count = 0;
   try {
     fs.writeFileSync = (...args) => {if (++count === 3) throw Error('OWN_PARTIAL_WRITE'); return original(...args);};
     assert.throws(() => prepareReadCapture({...f.options(f.output), apply: true}), /OWN_PARTIAL_WRITE/);
@@ -478,8 +470,8 @@ integration('partial output remains held with no manifest, overwrite, retry or c
   assert.throws(() => prepareReadCapture({...f.options(f.output), apply: true}), /READ_CAPTURE_NEW_OUTPUT_REQUIRED/);
 });
 
-integration('source mutation during an FD read refuses before creating output', () => {
-  const f = fixture(), ownReference = cloneReference(f.parent);
+integration('source mutation during an FD read refuses before creating output', t => {
+  const f = fixture(t), ownReference = cloneReference(f.parent);
   const original = fs.readSync; let changed = false;
   try {
     fs.readSync = (...args) => {
@@ -494,8 +486,8 @@ integration('source mutation during an FD read refuses before creating output', 
   assert.equal(changed, true); assert.equal(fs.existsSync(f.output), false);
 });
 
-integration('extra file appearing after the initial clean inventory cannot receive codeVerified success', () => {
-  const f = fixture(); prepareReadCapture({...f.options(f.output), apply: true});
+integration('extra file appearing after the initial clean inventory cannot receive codeVerified success', t => {
+  const f = fixture(t); prepareReadCapture({...f.options(f.output), apply: true});
   const original = fs.opendirSync; let injected = false;
   try {
     fs.opendirSync = (...args) => {
@@ -515,8 +507,8 @@ integration('extra file appearing after the initial clean inventory cannot recei
   assert.equal(fs.readFileSync(path.join(f.output, 'unexpected-after-inventory.js'), 'utf8'), 'preserve');
 });
 
-integration('leaf mutation after all content reads is caught by terminal generation checks', () => {
-  const f = fixture(); prepareReadCapture({...f.options(f.output), apply: true});
+integration('leaf mutation after all content reads is caught by terminal generation checks', t => {
+  const f = fixture(t); prepareReadCapture({...f.options(f.output), apply: true});
   const original = fs.opendirSync; let inventories = 0, changed = false;
   try {
     fs.opendirSync = (...args) => {
@@ -536,8 +528,8 @@ integration('leaf mutation after all content reads is caught by terminal generat
   assert.equal(changed, true);
 });
 
-integration('source drift during output writing is reported and the held output is preserved without retry', () => {
-  const f = fixture(), ownReference = cloneReference(f.parent);
+integration('source drift during output writing is reported and the held output is preserved without retry', t => {
+  const f = fixture(t), ownReference = cloneReference(f.parent);
   const original = fs.writeFileSync; let changed = false;
   try {
     fs.writeFileSync = (...args) => {
@@ -552,8 +544,8 @@ integration('source drift during output writing is reported and the held output 
   assert.throws(() => prepareReadCapture({...f.options(f.output), apply: true}), /READ_CAPTURE_NEW_OUTPUT_REQUIRED/);
 });
 
-integration('a destination appearing after plan validation is preserved and never adopted', () => {
-  const f = fixture(), original = fs.mkdirSync; let raced = false;
+integration('a destination appearing after plan validation is preserved and never adopted', t => {
+  const f = fixture(t), original = fs.mkdirSync; let raced = false;
   try {
     fs.mkdirSync = (name, ...args) => {
       if (path.resolve(name) === f.output && !raced) {
@@ -567,8 +559,8 @@ integration('a destination appearing after plan validation is preserved and neve
   assert.equal(fs.readFileSync(path.join(f.output, 'foreign'), 'utf8'), 'preserve');
 });
 
-integration('existing output, active paths, scope escape and reparse ancestors refuse without overwriting', () => {
-  const f = fixture(); fs.mkdirSync(f.output); fs.writeFileSync(path.join(f.output, 'foreign'), 'keep');
+integration('existing output, active paths, scope escape and reparse ancestors refuse without overwriting', t => {
+  const f = fixture(t); fs.mkdirSync(f.output); fs.writeFileSync(path.join(f.output, 'foreign'), 'keep');
   assert.throws(() => prepareReadCapture({...f.options(f.output), apply: true}), /READ_CAPTURE_NEW_OUTPUT_REQUIRED/);
   assert.equal(fs.readFileSync(path.join(f.output, 'foreign'), 'utf8'), 'keep');
   assert.throws(() => prepareReadCapture(f.options(path.resolve(scratch, '..', 'outside-read-capture'))), /READ_CAPTURE_OUTPUT_SCOPE_REFUSED/);
@@ -581,8 +573,8 @@ integration('existing output, active paths, scope escape and reparse ancestors r
   assert.deepEqual(fs.readdirSync(target), []);
 });
 
-integration('CLI errors contain only a fixed reason code, not private paths or stack traces', () => {
-  const f = fixture();
+integration('CLI errors contain only a fixed reason code, not private paths or stack traces', t => {
+  const f = fixture(t);
   const child = spawnSync(process.execPath, [fileURLToPath(new URL('./prepare-read-capture.mjs', import.meta.url)),
     '--reference', path.join(f.parent, 'private-missing-reference'), '--timestamp-policy', timestampPolicy, '--output', f.output],
   {encoding: 'utf8', timeout: 5000});
