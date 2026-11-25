@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import paths from './paths.cjs';
 import receipts from './receipts.cjs';
 import { validInstallDiagnostics } from './install-diagnostics.cjs';
-import { assertOrdinaryModSnapshot, observeOrdinaryHold, ordinaryProcessesPreserved } from './native-fixture-snapshot.mjs';
+import { assertOrdinaryModSnapshot, hasGracefulFixtureClose, observeOrdinaryHold, ordinaryProcessesPreserved } from './native-fixture-snapshot.mjs';
 const base = path.join(paths.workspace, 'local-state/vortex-agent-native-fixture');
 const root = path.resolve(process.argv[2] || '');
 const rel = path.relative(base, root);
@@ -21,6 +21,8 @@ if (input.runtimeVersion) {
 }
 function eventVersion(value) { return value.events.find(item => item.phase === 'authenticated-native-health')?.health?.extensionVersion; }
 assert.equal(receipt.status, 'passed'); assert.equal(result.fixtureExited, true); assert.equal(result.ordinaryUnchanged, true); assert.deepEqual(result.remainingFixturePids, []);
+assert.deepEqual(result.fixtureTerminal, { event: 'exit', code: 0, signal: null }, 'Expected a clean fixture exit');
+assert.ok(hasGracefulFixtureClose(receipt), 'Expected a graceful fixture close request');
 const event = phase => { const found = receipt.events.filter(e => e.phase === phase); assert.equal(found.length, 1, phase); return found[0]; };
 const stock211 = input.hostVersion === '2.11.0';
 const namedArchiveOrder = stock211 || input.hostVersion === '2.10.1';

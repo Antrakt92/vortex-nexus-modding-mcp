@@ -6,6 +6,23 @@ import path from 'node:path';
 // equality of before/after slices cannot prove preservation of the inventory.
 export const ORDINARY_MOD_LIMIT = 500;
 
+export function observeFixtureTerminal(child) {
+  let terminal = null;
+  child.once('exit', (code, signal) => { terminal ??= { event: 'exit', code, signal }; });
+  child.once('error', error => {
+    const code = typeof error?.code === 'string' && /^[A-Z0-9_]{1,40}$/.test(error.code)
+      ? error.code : 'FIXTURE_CHILD_ERROR';
+    terminal ??= { event: 'error', code };
+  });
+  return () => terminal;
+}
+
+export function hasGracefulFixtureClose(receipt) {
+  if (!Array.isArray(receipt?.events) || receipt.events.some(row => row?.phase === 'graceful-close-unavailable')) return false;
+  const requests = receipt.events.filter(row => row?.phase === 'graceful-fixture-window-close-request');
+  return requests.length === 1 && Number.isSafeInteger(requests[0].windowId) && requests[0].windowId > 0;
+}
+
 export function ordinaryProcessesPreserved(before, after) {
   const valid = rows => Array.isArray(rows) && rows.length > 0 && rows.length <= 65536
     && new Set(rows.map(row => row?.pid)).size === rows.length

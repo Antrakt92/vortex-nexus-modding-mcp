@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import vm from 'node:vm';
 import path from 'node:path';
-import { ORDINARY_MOD_LIMIT, assertOrdinaryModSnapshot, observeOrdinaryHold, ordinaryProcessesPreserved, stoppedOrdinaryCohort } from './native-fixture-snapshot.mjs';
+import { ORDINARY_MOD_LIMIT, assertOrdinaryModSnapshot, hasGracefulFixtureClose, observeFixtureTerminal,
+  observeOrdinaryHold, ordinaryProcessesPreserved, stoppedOrdinaryCohort } from './native-fixture-snapshot.mjs';
 
 function holdFixture(t) {
   const root = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'vortex-fixture-hold-'));
@@ -103,6 +105,98 @@ test('a capped legacy receipt is also refused by the independent verifier', () =
         mods: Array.from({ length: ORDINARY_MOD_LIMIT }, (_, index) => ({ id: 'mod_' + index })) } : complete };
     assert.throws(() => vm.runInNewContext(code, context), /ORDINARY_MOD_INVENTORY_INCOMPLETE/);
   }
+});
+
+test('independent verifier requires zero exit and the matching graceful close request', () => {
+  const source = fs.readFileSync(new URL('./native-fixture-verify.mjs', import.meta.url), 'utf8');
+  const start = source.indexOf("assert.equal(receipt.status, 'passed')");
+  const end = source.indexOf('const event = phase', start);
+  assert.ok(start >= 0 && end > start);
+  const gate = vm.compileFunction(source.slice(start, end), ['assert', 'receipt', 'result', 'hasGracefulFixtureClose']);
+  const check = (receipt, result) => gate(assert, receipt, result, hasGracefulFixtureClose);
+  const close = { phase: 'graceful-fixture-window-close-request', windowId: 1 };
+  const passed = { status: 'passed', events: [close] };
+  const valid = { fixtureExited: true, ordinaryUnchanged: true, remainingFixturePids: [],
+    fixtureTerminal: { event: 'exit', code: 0, signal: null } };
+  assert.doesNotThrow(() => check(passed, valid));
+  for (const terminal of [undefined, null, { event: 'exit', code: 3, signal: null },
+    { event: 'exit', code: null, signal: 'SIGTERM' }, { event: 'error', code: 'ENOENT' }]) {
+    assert.throws(() => check(passed, { ...valid, fixtureTerminal: terminal }), /clean fixture exit/);
+  }
+  for (const events of [[], [{...close, windowId: 0}], [close, close],
+    [close, { phase: 'graceful-close-unavailable' }]]) {
+    assert.throws(() => check({...passed, events}, valid), /graceful fixture close/);
+  }
+});
+
+test('fixture runner records the process exit or error without treating a signal as a clean exit', () => {
+  for (const [event, args, expected] of [
+    ['exit', [0, null], { event: 'exit', code: 0, signal: null }],
+    ['exit', [3, null], { event: 'exit', code: 3, signal: null }],
+    ['exit', [null, 'SIGTERM'], { event: 'exit', code: null, signal: 'SIGTERM' }],
+    ['error', [{ code: 'ENOENT', message: 'Untrusted diagnostic' }], { event: 'error', code: 'ENOENT' }],
+  ]) {
+    const child = new EventEmitter();
+    const read = observeFixtureTerminal(child);
+    assert.equal(read(), null);
+    child.emit(event, ...args);
+    assert.deepEqual(read(), expected);
+  }
+});
+
+test('fixture runner retains terminal evidence when the ordinary after snapshot fails', async () => {
+  const source = fs.readFileSync(new URL('./native-fixture.mjs', import.meta.url), 'utf8');
+  const start = source.indexOf('  const cleanExit = ');
+  const end = source.indexOf('\n}\nmain().catch', start);
+  assert.ok(start >= 0 && end > start);
+  const terminal = { event: 'exit', code: 0, signal: null };
+  const receipt = { status: 'passed', events: [{ phase: 'graceful-fixture-window-close-request', windowId: 1 }] };
+  const must = (ok, code) => { if (!ok) throw Error(code); };
+  for (const stopped of [false, true]) {
+    const records = new Map();
+    const fixtures = {fixtureTerminal: terminal, path, root: 'fixture', stopped, stockReview: true,
+      child: {pid: 100}, fixtureObserved: true, stoppedObservationFailure: undefined,
+      hasGracefulFixtureClose, ordinaryProcessesPreserved, must, before: {processes: []},
+      fs: {existsSync: () => true, readFileSync: () => JSON.stringify(receipt)},
+      readOrdinary: async () => { throw Error('ORDINARY_PROBE_UNAVAILABLE'); },
+      write: (file, value) => records.set(path.basename(file), value), console: {log() {}},
+    };
+    const run = vm.compileFunction('return (async () => {\n' + source.slice(start, end) + '\n})();', Object.keys(fixtures));
+    await assert.rejects(run(...Object.values(fixtures)), /NATIVE_FIXTURE_INCOMPLETE_INSPECT_RECEIPTS/);
+    assert.deepEqual([...records.keys()], ['runner-result.json']);
+    const result = records.get('runner-result.json');
+    assert.deepEqual(result.fixtureTerminal, terminal);
+    assert.equal(result.fixtureExited, true);
+    assert.equal(result.nativeStatus, 'passed');
+    assert.equal(result.ordinaryUnchanged, false);
+    assert.equal(result.remainingFixturePids, null);
+    assert.equal(result.ordinaryAfterSnapshotError, 'ORDINARY_PROBE_UNAVAILABLE');
+  }
+});
+
+test('fixture runner records ordinary and terminal evidence even if the worker receipt is unreadable', async () => {
+  const source = fs.readFileSync(new URL('./native-fixture.mjs', import.meta.url), 'utf8');
+  const start = source.indexOf('  const cleanExit = ');
+  const end = source.indexOf('\n}\nmain().catch', start);
+  assert.ok(start >= 0 && end > start);
+  const records = new Map(), terminal = {event: 'exit', code: 0, signal: null};
+  const before = {manifestSha256: 'fixture', processes: [{pid: 2, generation: '123456789012345'}]};
+  const fixtures = {fixtureTerminal: terminal, path, root: 'fixture', stopped: false, stockReview: true,
+    child: {pid: 100}, hasGracefulFixtureClose, ordinaryProcessesPreserved, before,
+    must: (ok, code) => { if (!ok) throw Error(code); },
+    fs: {existsSync: () => true, readFileSync: () => '{'},
+    readOrdinary: async () => before,
+    write: (file, value) => records.set(path.basename(file), value), console: {log() {}},
+  };
+  const run = vm.compileFunction('return (async () => {\n' + source.slice(start, end) + '\n})();', Object.keys(fixtures));
+  await assert.rejects(run(...Object.values(fixtures)), /NATIVE_FIXTURE_INCOMPLETE_INSPECT_RECEIPTS/);
+  assert.deepEqual([...records.keys()], ['ordinary-after.json', 'runner-result.json']);
+  const result = records.get('runner-result.json');
+  assert.deepEqual(result.fixtureTerminal, terminal);
+  assert.equal(result.nativeStatus, 'invalid');
+  assert.equal(result.nativeReceiptError, 'NATIVE_FIXTURE_WORKER_RECEIPT_UNREADABLE');
+  assert.equal(result.ordinaryUnchanged, true);
+  assert.equal(result.remainingFixturePids.length, 0);
 });
 
 test('stopped ordinary admits only no host or the separately spawned fixture cohort', () => {
