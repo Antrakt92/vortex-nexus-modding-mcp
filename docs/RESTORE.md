@@ -117,6 +117,20 @@ previous package. Treat that partial output as unverified.
 
 ## 4. Initialize local credentials and review installation
 
+For a fresh Vortex installation, start Vortex normally once under the Windows
+account that will run the adapter. Let Vortex initialize its default user data,
+then close it normally. The installer expects the Vortex-created
+`%APPDATA%\Vortex\plugins` directory. Use PowerShell from the same account to
+check that the folder exists.
+
+```powershell
+Test-Path -LiteralPath (Join-Path $env:APPDATA 'Vortex\plugins') -PathType Container
+```
+
+If the check returns `False`, verify that Vortex initialized its default user
+data before proceeding. Set `NEXUS_WORKSPACE` to select the tooling workspace.
+Vortex looks for plugins in its own user-data folder.
+
 On a new Windows account, explicitly initialize its local bearer:
 
 ```powershell
@@ -129,11 +143,10 @@ computer's credential files into the repository or a recovery archive.
 
 Installing the built Vortex extension is a separate effect. Review
 `python tools/modding/vortex-agent/manage-install.py --help`, the frozen package
-hash and protected-game snapshots first. The installer requires Vortex and games
-to be stopped and explicit hash pins. It does not launch Vortex or a game.
-Loading a new extension requires a deliberate Vortex restart; routine operations
-after loading it do not. A successful build does not establish native-host or
-gameplay acceptance.
+hash and protected-game snapshot inputs first. Keep Vortex and games closed
+while taking the snapshots and installing with explicit hash pins. After
+installation, start Vortex normally. Routine operations then reuse that session.
+Verify the adapter in Vortex and check gameplay acceptance separately after building.
 
 For an upgrade built in a separate source workspace, set
 `NEXUS_RUNTIME_WORKSPACE` to the existing runtime workspace throughout patch,

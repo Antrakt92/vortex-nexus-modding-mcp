@@ -43,13 +43,17 @@ writes stop with `UNSUPPORTED_GAME_PROCESS_GUARD`.
    Compare the ZIP's `Get-FileHash -Algorithm SHA256` result with that checksum,
    then extract it to your chosen source directory. A development checkout of
    `main` can contain changes not yet in a release.
-2. Open PowerShell in that source directory. Follow [RESTORE.md](RESTORE.md):
+2. If this Windows account has never run Vortex, start it normally once and
+   let it initialize its default user data. Close Vortex normally. The adapter
+   installer requires the existing `%APPDATA%\Vortex\plugins` directory.
+3. Open PowerShell in that source directory. Follow [RESTORE.md](RESTORE.md) to
    verify the source, choose an absolute runtime workspace, recover pinned
-   inputs and build/package the adapter.
-3. Initialize the local per-user bearer using the documented credential command.
-   Close the game and Vortex before installing or upgrading the extension.
-   The installer checks the package hash and leaves Vortex closed.
-4. Start Vortex normally. Run the first read below. Ordinary supported operations
+   inputs and build and package the adapter.
+4. Initialize the local per-user bearer using the documented credential command.
+   Keep the game and Vortex closed while taking the protected-state snapshots
+   and installing or upgrading the extension. The installer checks the package
+   hash and leaves Vortex closed.
+5. Start Vortex normally. Run the first read below. Ordinary supported operations
    reuse this running host without restarting it.
 
 For an existing installation, follow the [upgrade route](RESTORE.md#4-initialize-local-credentials-and-review-installation).
