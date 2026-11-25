@@ -1,4 +1,5 @@
 'use strict';
+const {performance}=require('node:perf_hooks');
 const {inspect}=require('./collection-wizard-dom.cjs');
 const {observeNative,completedSessionProof}=require('./collection-wizard-native.cjs');
 const {validateCollectionWizard}=require('./collection-wizard-policy.cjs');
@@ -233,8 +234,13 @@ function createCollectionWizardController(api,options){
   validate,
   click(args){validate(args);prepared.consumed=true;prepared.element.click();return true;},
   async waitForTransition(args){
-   const deadline=Date.now()+(options.transitionTimeoutMs??15000);
-   while(!checkTransition(args)){need(Date.now()<deadline,'TRANSITION_TIMEOUT');await new Promise(r=>setTimeout(r,options.pollMs??100));}
+   const deadline=performance.now()+(options.transitionTimeoutMs??15000);
+   for(;;){
+    need(performance.now()<deadline,'TRANSITION_TIMEOUT');
+    const observed=checkTransition(args),remaining=deadline-performance.now();
+    need(remaining>0,'TRANSITION_TIMEOUT');if(observed)break;
+    await new Promise(resolve=>setTimeout(resolve,Math.min(options.pollMs??100,Math.ceil(remaining))));
+   }
    return Object.fromEntries([...['modId','archiveId','collectionId','revisionId','revisionNumber','action'].map(k=>[k,args[k]]),
     ['transition',args.action==='install_now'?'started':'finished'],['nativeTransitionVerified',true]]);
   },

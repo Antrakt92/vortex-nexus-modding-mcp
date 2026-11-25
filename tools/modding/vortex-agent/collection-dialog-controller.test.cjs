@@ -32,6 +32,42 @@ function fixture(){
 function dialog(id,title){return {id,type:'question',title,defaultAction:undefined,content:{text:QUESTION_TEXT,options:{wrap:true},
   checkboxes:[{id:'remember',value:false,text:'Remember my choice'}]},actions:[...ACTIONS]};}
 
+test('a delayed poll cannot certify a collection dialog dismissal at the deadline',async t=>{
+  const f=fixture();await f.observe();await f.c.prepare(f.args);
+  f.close=()=>{};f.c.respond(f.args);
+  let elapsed=1000,wall=1000;const timers=[];
+  t.mock.method(require('node:perf_hooks').performance,'now',()=>elapsed);
+  t.mock.method(Date,'now',()=>wall);
+  t.mock.method(globalThis,'setTimeout',run=>{timers.push(run);});
+  const result=f.c.waitForTransition(f.args);
+  assert.equal(timers.length,1);
+  f.state.session.notifications.dialogs.shift();
+  elapsed=wall=1005;timers.shift()();
+  await assert.rejects(result,/COLLECTION_DIALOG_TRANSITION_TIMEOUT/);
+  await assert.rejects(f.c.prepare({...f.args,requestId:'new_request'}),/ACTION_ALREADY_PENDING/);
+  assert.equal(f.calls.length,1);
+});
+
+test('a backwards wall-clock correction cannot extend a pending collection dialog wait',async t=>{
+  const f=fixture();await f.observe();await f.c.prepare(f.args);
+  f.close=()=>{};f.c.respond(f.args);
+  let elapsed=1000,wall=1000;const timers=[];
+  t.mock.method(require('node:perf_hooks').performance,'now',()=>elapsed);
+  t.mock.method(Date,'now',()=>wall);
+  t.mock.method(globalThis,'setTimeout',run=>{timers.push(run);});
+  const result=f.c.waitForTransition(f.args);
+  const rejected=assert.rejects(result,/COLLECTION_DIALOG_TRANSITION_TIMEOUT/);
+  elapsed=1005;wall=500;timers.shift()();
+  await Promise.resolve();
+  // A broken implementation may still be awaiting a timer. Let it settle
+  // without leaving a pending test promise, but preserve the observed overrun.
+  const extra=timers.shift();
+  if(extra){wall=1005;extra();}
+  await rejected;
+  assert.equal(extra,undefined);
+  assert.equal(f.calls.length,1);
+});
+
 test('constructor only registers real stock lifecycle observers; missed preprompt cannot be inferred from title',async()=>{
   const f=fixture();assert.equal(f.calls.length,0);const r=await f.c.readiness();assert.equal(r.status,'held');assert.equal(r.reason,'COLLECTION_DIALOG_INSTALL_NOT_OBSERVED');
 });
