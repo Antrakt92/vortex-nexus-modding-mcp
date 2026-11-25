@@ -788,7 +788,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/bridge.mjs",
-      "sha256_lf": "f8df29cf6c80fe6eab10392ae3a7a9b03d340739f2d0edf090538dc38691fe2f"
+      "sha256_lf": "6244326f02c1e7b79d322a3f5c55023b88f941894ba21fc3465ae95e03780695"
     },
     {
       "path": "tools/modding/vortex-agent/build.mjs",
@@ -3204,11 +3204,11 @@
     },
     {
       "path": "tools/modding/vortex-agent/session.test.mjs",
-      "sha256_lf": "9ff44a78b0e066186c9ae8274a7d1206c57e295f23e45bf9126ce8fbdb072569"
+      "sha256_lf": "d19f511dc5f18c2c53028825b437547c6717b9d2a83f48f3c7124c8a3bceb0b4"
     },
     {
       "path": "tools/modding/vortex-agent/stdio.test.mjs",
-      "sha256_lf": "04ea67f492f1687bdcab416b1ed3698bfff6c0a65672dc8223fe6801def9d0ca"
+      "sha256_lf": "d71fe7967e0ad0b2cb0ef6465d3813ded4fe836b07b58e711400501b44a483b6"
     },
     {
       "path": "tools/modding/vortex-agent/stock-vortex-2.10.1-admission.json",
