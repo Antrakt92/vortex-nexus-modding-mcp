@@ -7,7 +7,13 @@ const ROOT = require('./paths.cjs').credentials;
 function powershell(script, input = '') {
   if (process.platform !== 'win32') throw new Error('WINDOWS_DPAPI_REQUIRED');
   try {
-    return execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(
+    // Match the process guard's absolute Windows PowerShell path. paths-core is
+    // also an exact native SDK input, so keep this validation local.
+    const windows = process.env.SystemRoot;
+    if (typeof windows !== 'string' || !/^[a-z]:\\[^<>:"|?*\x00-\x1f]+$/i.test(windows)
+        || path.win32.normalize(windows) !== windows) throw new Error('DPAPI_CREDENTIAL_OPERATION_FAILED');
+    const exe = path.win32.join(windows, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    return execFileSync(exe, ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(
       "$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.Security; " + script, 'utf16le').toString('base64')],
     { input, encoding: 'utf8', windowsHide: true, timeout: 20000, stdio: ['pipe', 'pipe', 'pipe'] }).trim();
   } catch { throw new Error('DPAPI_CREDENTIAL_OPERATION_FAILED'); }

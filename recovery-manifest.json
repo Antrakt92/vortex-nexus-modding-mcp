@@ -908,11 +908,11 @@
     },
     {
       "path": "tools/modding/vortex-agent/credential.cjs",
-      "sha256_lf": "30774aafb86dfddfdf247d01cbc1088ad8910f6837bb02e72170837448537efd"
+      "sha256_lf": "f14d87aeed940ec8c28db5a8f5b036dab97f44693f5d20d383b8f25d05486e69"
     },
     {
       "path": "tools/modding/vortex-agent/credential.test.cjs",
-      "sha256_lf": "67a15a043b3a0c4e8bdcb164c76ed5ee3a4d020ea3f9fb350299e7b2a85cdca5"
+      "sha256_lf": "7b576d731ad5410a6830b4d4ea0bd2f4784249eeaf69f0669dca29a09fbf9932"
     },
     {
       "path": "tools/modding/vortex-agent/download-identity.cjs",
