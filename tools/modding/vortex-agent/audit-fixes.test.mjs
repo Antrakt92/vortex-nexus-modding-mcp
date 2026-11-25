@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import vm from 'node:vm';
 import http from 'node:http';
 import { PassThrough } from 'node:stream';
+import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import {waitForServerListening, closeOwnedTestServer} from './http-startup-test-support.mjs';
@@ -47,7 +48,7 @@ async function fixture(t, hook = async () => {}) {
   const state = { settings: { gameMode: { discovered: { cyberpunk2077: { path: dir } } } }, persistent: {
     profiles: { p: { gameId: 'cyberpunk2077', modState: {} } },
     mods: { cyberpunk2077: { m: { id: 'm', state: 'installed', installationPath: 'm', archiveId: 'original' } } }, downloads: { files: {} } } };
-  const api = { getState: () => state, store: { getState: () => state }, ext: {} };
+  const api = { getState: () => state, store: { getState: () => state }, ext: {}, events: new EventEmitter() };
   const selectors = { activeGameId: () => 'cyberpunk2077', activeProfileId: () => 'p',
     knownGames: () => [{ id: 'cyberpunk2077' }, { id: 'skyrimse', details: { nexusPageId: 'skyrimspecialedition' } }, { id: 'skyrimvr', details: { nexusPageId: 'skyrimspecialedition' } }],
     installPathForGame: () => dir, downloadPathForGame: () => dir };
@@ -139,12 +140,76 @@ test('audit: enable cannot publish success after the final flag changes during r
   await fs.access(path.join(f.dir, 'receipts/unresolved.json'));
   await assert.rejects(fs.access(path.join(f.dir, 'receipts', f.args.requestId + '.completion.json')), { code: 'ENOENT' });
 });
+function deploymentFixture(f, { initial = false, final = false, profile = 'p', skips = false, running = true,
+  settled = true, otherGameOnly = false } = {}) {
+  const gameId = f.args.gameId;
+  f.state.persistent.deployment = { needToDeploy: { [gameId]: initial } };
+  let args;
+  f.api.ext.awaitModsDeployment = async (...call) => {
+    args = call;
+    if (skips) return;
+    if (running) call[1]?.('Loading deployment manifest', 0);
+    f.api.events.emit('mods-did-deploy', profile, {});
+    if (settled) f.state.persistent.deployment.needToDeploy = otherGameOnly
+      ? { ...f.state.persistent.deployment.needToDeploy, otherGame: true } : { [gameId]: final };
+  };
+  return () => args;
+}
+
+test('audit: deployment verifies requested native progress and a clean empty result', async t => {
+  const f = await fixture(t);
+  const args = deploymentFixture(f);
+  const result = await f.ops.deploy_mods(f.args);
+  assert.equal(args()[0], f.args.profileId);
+  assert.equal(typeof args()[1], 'function');
+  assert.deepEqual(args()[2], { failOnError: true });
+  assert.equal(result.deploymentPromiseResolved, true);
+  assert.equal(result.diskDeploymentVerified, false);
+  assert.equal(f.api.events.listenerCount('mods-did-deploy'), 0);
+});
+
+for (const [label, evidence] of [
+  ['a skipped deployment with old clean state', { skips: true }],
+  ['an activity for another profile', { profile: 'other' }],
+  ['a coalesced call without its own progress', { running: false }],
+  ['a post-event interruption on legacy Vortex with old clean state', { settled: false }],
+  ['recorded partial deployment failures', { initial: true, final: true }],
+  ['an unrelated game changing the formerly clean snapshot', { otherGameOnly: true }],
+  ['a missing settled flag', { final: null }],
+]) test(`audit: deploy holds ${label}`, async t => {
+  const f = await fixture(t);
+  deploymentFixture(f, evidence);
+  await assert.rejects(f.ops.deploy_mods(f.args), /DEPLOYMENT_UNVERIFIED/);
+  const receiptDir = path.join(f.dir, 'receipts');
+  const failure = JSON.parse(await fs.readFile(path.join(receiptDir, f.args.requestId + '.failed.json')));
+  assert.equal(failure.effectsMayHaveOccurred, true);
+  await fs.access(path.join(receiptDir, 'unresolved.json'));
+  await assert.rejects(fs.access(path.join(receiptDir, f.args.requestId + '.completion.json')), { code: 'ENOENT' });
+  assert.equal(f.api.events.listenerCount('mods-did-deploy'), 0);
+});
+
+test('audit: deploy preserves native rejection and releases its observation', async t => {
+  const f = await fixture(t);
+  f.api.ext.awaitModsDeployment = async () => { throw Error('NATIVE_DEPLOYMENT_CANCELLED'); };
+  await assert.rejects(f.ops.deploy_mods(f.args), /NATIVE_DEPLOYMENT_CANCELLED/);
+  assert.equal(f.api.events.listenerCount('mods-did-deploy'), 0);
+});
+
 test('audit: deploy cannot publish success after a flag changes during receipt sync', async t => {
   const f = await fixture(t, async (file, state) => {
     if (file.includes('.completion.json.pending-')) state.persistent.profiles.p.modState.m = { enabled: true };
   });
-  f.api.ext.awaitModsDeployment = async () => {};
+  deploymentFixture(f);
   await assert.rejects(f.ops.deploy_mods(f.args), /OTHER_ENABLED_FLAGS_CHANGED/);
+  await fs.access(path.join(f.dir, 'receipts/unresolved.json'));
+});
+
+test('audit: deploy cannot publish success after becoming dirty during receipt sync', async t => {
+  const f = await fixture(t, async (file, state) => {
+    if (file.includes('.completion.json.pending-')) state.persistent.deployment.needToDeploy = { cyberpunk2077: true };
+  });
+  deploymentFixture(f, { initial: true });
+  await assert.rejects(f.ops.deploy_mods(f.args), /DEPLOYMENT_UNVERIFIED/);
   await fs.access(path.join(f.dir, 'receipts/unresolved.json'));
 });
 test('audit: download cannot publish success after an installed record changes during receipt sync', async t => {

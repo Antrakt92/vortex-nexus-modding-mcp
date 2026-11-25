@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -22,7 +23,7 @@ async function fixture() {
   const selectors = { activeProfileId: () => profile, activeGameId: () => 'cyberpunk2077',
     installPathForGame: () => dir, downloadPathForGame: () => dir };
   state.settings.gameMode = { discovered: { cyberpunk2077: { path: dir } } };
-  const api = { getState: () => state, ext: {}, events: {} };
+  const api = { getState: () => state, ext: {}, events: new EventEmitter() };
   const calls = [];
   const actions = { setModsEnabled: async (...args) => { calls.push(args); for (const id of args[2]) state.persistent.profiles.p.modState[id] = { enabled: args[3] }; } };
   const args = { gameId: 'cyberpunk2077', profileId: 'p', gamePath: dir, stagingPath: dir, downloadPath: dir, requestId: crypto.randomUUID(), modIds: ['m'], enabled: true };
@@ -54,11 +55,20 @@ test('unretained enabled flag is rejected', async () => {
   const f = await fixture(); f.actions.setModsEnabled = async () => {};
   await assert.rejects(f.ops.set_mods_enabled(f.args), /FLAGS_UNVERIFIED/);
 });
-test('deploy uses only profileId and reports operation-level result', async () => {
-  const f = await fixture(); let args;
-  f.api.ext.awaitModsDeployment = async (...a) => { args = a; };
+function reportDeployment(f, profileId, progress) {
+  progress('Loading deployment manifest', 0);
+  f.api.events.emit('mods-did-deploy', profileId, {});
+  f.state.persistent.deployment = { needToDeploy: { cyberpunk2077: false } };
+}
+test('deploy uses the exact profile and reports operation-level result', async () => {
+  const f = await fixture();
+  f.api.ext.awaitModsDeployment = async (profileId, progress, options) => {
+    assert.equal(profileId, 'p');
+    assert.deepEqual(options, { failOnError: true });
+    reportDeployment(f, profileId, progress);
+  };
   const result = await f.ops.deploy_mods(f.args);
-  assert.deepEqual(args, ['p']); assert.equal(result.deploymentPromiseResolved, true); assert.equal(result.diskDeploymentVerified, false);
+  assert.equal(result.deploymentPromiseResolved, true); assert.equal(result.diskDeploymentVerified, false);
 });
 async function downloadFixture() {
   const f = await fixture(); const data = Buffer.from('pinned archive fixture');
@@ -101,7 +111,10 @@ test('Windows guard rejects game process and Vortex running-tool state', async (
   assert.throws(() => module.exports.stopped({ session: { base: { toolsRunning: { any: true } } } }, 'cyberpunk2077'), /GAME_OR_TOOL/);
 });
 test('unexpected unrelated enabled changes during deployment are rejected', async () => {
-  const f = await fixture(); f.api.ext.awaitModsDeployment = async () => { f.state.persistent.profiles.p.modState.unrelated = { enabled: true }; };
+  const f = await fixture(); f.api.ext.awaitModsDeployment = async (profileId, progress) => {
+    f.state.persistent.profiles.p.modState.unrelated = { enabled: true };
+    reportDeployment(f, profileId, progress);
+  };
   await assert.rejects(f.ops.deploy_mods(f.args), /OTHER_ENABLED/);
 });
 test('cross-process mutation exclusion', async () => {

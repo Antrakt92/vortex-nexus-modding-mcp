@@ -142,10 +142,15 @@ Supported writes are deliberately separate:
 | Operation | Contract |
 | --- | --- |
 | `set_mods_enabled` | Installed records, exact IDs and effective flags; auto-deploy disabled |
-| `deploy_mods` | Native `awaitModsDeployment(profileId)`; no manual bypass |
+| `deploy_mods` | Native deployment progress for this request, exact-profile completion event, and freshly cleared Vortex deployment state. No manual bypass or disk verification |
 | `download_nexus` | Exact Nexus IDs, archive size/hash and context pins; download-only, with verified existing-download reuse |
 | `install_local_archive` | New own-local Cyberpunk ZIP; reviewed host/extensions, exact pins, metadata/collision refusal, disabled installation and verified staged payload |
 | `install_download` | Refused before installation; not advertised by the bridge |
+
+Vortex 2.9.1 can swallow a deployment error, so the adapter also checks for a
+fresh clean deployment state after the native event. The shared Vortex state
+cannot attribute an identical concurrent write to this request. Coordinate
+concurrent native work and verify deployment files independently.
 
 Writes require an explicit request ID, active game/profile, canonical
 game/staging/download paths and filesystem identity pins. The adapter checks

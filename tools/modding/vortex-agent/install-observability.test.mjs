@@ -66,7 +66,7 @@ function fixture(t, options = {}, implementation = guard) {
   let metadataCalls = 0, hostCalls = 0, stagedWrites = 0, processChecks = 0, gameRunning = false, hookError;
   const api = { getState: () => state, onAsync: (event, fn) => hooks.set(event, fn),
     lookupModMeta: () => { metadataCalls++; return options.metadata?.(metadataCalls) ?? Promise.resolve([]); },
-    events: { prependListener: (...args) => events.prependListener(...args), removeListener: (...args) => events.removeListener(...args),
+    events: { on: (...args) => events.on(...args), prependListener: (...args) => events.prependListener(...args), removeListener: (...args) => events.removeListener(...args),
       emit(event, ...args) {
         events.emit(event, ...args); calls.push(event);
         if (event === 'import-downloads') {
@@ -87,7 +87,7 @@ function fixture(t, options = {}, implementation = guard) {
             state.persistent.profiles[P].modState[ID] = { enabled: false };
             callback(null, ID);
           })().catch(error => { hookError = error; callback(error); });
-        } else throw Error('UNEXPECTED_NATIVE_EVENT');
+        } else if (event !== 'mods-did-deploy') throw Error('UNEXPECTED_NATIVE_EVENT');
         return true;
       } } };
   const args = { gameId: G, profileId: P, requestId: crypto.randomUUID(), ...dirs, archivePath,
@@ -330,7 +330,11 @@ for (const operation of ['set_mods_enabled', 'deploy_mods']) test(`${operation} 
   const f = fixture(t);
   const { archivePath, size, sha256, ...context } = f.args;
   f.state.persistent.mods[G].existing = { id: 'existing', state: 'installed', installationPath: 'existing' };
-  f.api.ext = { awaitModsDeployment: async () => {} };
+  f.api.ext = { awaitModsDeployment: async (profileId, progress) => {
+    progress('Loading deployment manifest', 0);
+    f.api.events.emit('mods-did-deploy', profileId, {});
+    f.state.persistent.deployment = { needToDeploy: { [G]: false } };
+  } };
   const result = operation === 'set_mods_enabled'
     ? await f.ops.set_mods_enabled({ ...context, modIds: ['existing'], enabled: false })
     : await f.ops.deploy_mods(context);
@@ -338,7 +342,7 @@ for (const operation of ['set_mods_enabled', 'deploy_mods']) test(`${operation} 
   assert.equal(f.processChecks(), operation === 'set_mods_enabled' ? 3 : 4);
   assert.equal(result.installDiagnostics, undefined);
   assert.equal(fs.existsSync(f.file('.diagnostics.json')), false);
-  assert.deepEqual(f.calls, []);
+  assert.deepEqual(f.calls, operation === 'deploy_mods' ? ['mods-did-deploy'] : []);
 });
 
 for (const drift of ['profile', 'tools']) test(`pending import polls retain cheap ${drift} guards without repeated process scans`, async t => {
