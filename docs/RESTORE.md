@@ -140,6 +140,12 @@ The installer verifies the package's runtime workspace before any swap and
 preserves receipts in the original workspace. Do not initialize new credentials
 or move uncertainty records merely to make an upgrade connect.
 
+Use a candidate package built from the current source inventory. The builder
+and installer share `maintained-sources.json` and verify each candidate source
+pin, including the inventory itself. If an upgrade fails before completion, the
+installer can restore the previously installed package. To reinstall an older
+build separately, use that build's matching recovery workflow.
+
 ## 5. Prepare client settings without overwriting them
 
 ```powershell

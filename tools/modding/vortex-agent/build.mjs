@@ -15,8 +15,18 @@ const packageInputs = {
   'THIRD-PARTY-NOTICES.md': 'THIRD-PARTY-NOTICES.md',
 };
 const packageNames = new Set([...Object.keys(packageInputs), 'info.json', 'provenance.json']);
-const modules = ['paths.cjs', 'paths-core.cjs', 'guard.cjs', 'extension.cjs', 'credential.cjs', 'inspection.cjs', 'lifecycle-inspection.cjs', 'native-preflight.cjs', 'serialization.cjs', 'download-identity.cjs', 'receipts.cjs', 'http-ingress.cjs', 'own-zip.cjs', 'local-archive-policy.cjs', 'local-archive-install.cjs', 'local-install-host.cjs', 'local-install-binding.cjs', 'official-vortex-hosts.cjs', 'stock-vortex-2.9.1-admission.json', 'stock-vortex-2.10.1-admission.json', 'stock-vortex-2.11.0-admission.json', 'install-diagnostics.cjs', 'installed-candidate-assessment.cjs', 'collection-wizard-controller.cjs', 'collection-wizard-dom.cjs', 'collection-wizard-native.cjs', 'collection-wizard-policy.cjs', 'collection-wizard-host.cjs', 'collection-dialog-controller.cjs', 'collection-dialog-policy.cjs', 'collection-update-prompt.cjs', 'native-dialog-controller.cjs', 'native-dialog-host-admission.cjs', 'native-dialog-operations.cjs'];
-modules.push('mod-record-fingerprints.cjs', 'strict-json.cjs');
+const inventoryName = 'maintained-sources.json';
+const inventoryPath = path.join(source, inventoryName);
+await noReparsePaths(inventoryPath);
+const inventoryBytes = await fs.readFile(inventoryPath);
+const inventory = JSON.parse(inventoryBytes.toString('utf8'));
+const modules = inventory?.bundleModules, provenanceOnly = inventory?.provenanceOnly;
+if (!Array.isArray(modules) || !modules.length || !Array.isArray(provenanceOnly) || !provenanceOnly.length
+  || Object.keys(inventory).length !== 2) throw Error('Invalid maintained source inventory');
+const maintainedSources = [...modules, ...provenanceOnly, inventoryName];
+if (maintainedSources.some(name => typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]*\.(?:cjs|mjs|py|json)$/.test(name))
+  || new Set(maintainedSources.map(name => name.toLowerCase())).size !== maintainedSources.length)
+  throw Error('Invalid maintained source inventory');
 const sha = async file => crypto.createHash('sha256').update(await fs.readFile(file)).digest('hex');
 
 async function noReparsePaths(...files) {
@@ -228,7 +238,7 @@ async function preservePreviousBuild(plugin) {
       || typeof previous.sources !== 'object' || Array.isArray(previous.sources))
     throw Error('Unsupported previous package provenance');
   await checkPackageOutput(plugin);
-  const allowedSources = new Set([...modules, 'build.mjs', 'bridge.mjs', 'manage-install.py']);
+  const allowedSources = new Set(maintainedSources);
   const sourceEntries = Object.entries(previous.sources);
   if (!sourceEntries.length || sourceEntries.some(([name, pin]) =>
     !allowedSources.has(name) || typeof pin !== 'string' || !/^[a-f0-9]{64}$/.test(pin)))
@@ -398,7 +408,12 @@ if (phase === '--prepare') {
   const bundleSha256 = hash(packageFiles['index.js']);
   assertCompileReceipt(JSON.parse(await fs.readFile(path.join(BUILD, 'adapted-compile.json'), 'utf8')), current, bundleSha256);
   const sources = {};
-  for (const name of [...modules, 'build.mjs', 'bridge.mjs', 'manage-install.py']) sources[name] = await sha(path.join(source, name));
+  for (const name of maintainedSources) {
+    const file = path.join(source, name);
+    await noReparsePaths(file);
+    sources[name] = await sha(file);
+  }
+  if (sources[inventoryName] !== hash(inventoryBytes)) throw Error('Maintained source inventory changed');
   for (const name of modules) if (current.inputs['src/' + name] !== sources[name]) throw Error('Build copy differs: ' + name);
   const licenseFileSHA256 = {};
   for (const name of ['LICENSE.md', 'THIRD-PARTY-NOTICES.md']) {

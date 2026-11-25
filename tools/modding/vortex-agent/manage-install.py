@@ -30,6 +30,7 @@ PLUGINS = absolute_root(os.environ.get('APPDATA', str(Path.home() / 'AppData/Roa
 RECEIPTS = ROOT / 'local-state/vortex-agent-build/receipts'
 UPGRADES = ROOT / 'local-state/vortex-agent-build/upgrades'
 PROCESS_GUARD = Path(__file__).resolve().with_name('guard.cjs')
+SOURCE_INVENTORY = PROCESS_GUARD.with_name('maintained-sources.json')
 PROCESS_SNAPSHOT_SCRIPT = """
 const names = require(process.argv[1]).processNames();
 process.stdout.write(JSON.stringify({schema: 1, complete: true, count: names.length, names}));
@@ -273,10 +274,36 @@ def receipt_pins():
 
 
 def verify_sources(provenance):
-    for name, pin in provenance['sources'].items():
-        if Path(name).name != name or not re.fullmatch('[a-f0-9]{64}', pin):
+    no_reparse(SOURCE_INVENTORY)
+    inventory_bytes = SOURCE_INVENTORY.read_bytes()
+    inventory = json.loads(inventory_bytes)
+    keys = {'bundleModules', 'provenanceOnly'}
+    if (not isinstance(inventory, dict) or set(inventory) != keys
+            or any(not isinstance(inventory[key], list) or not inventory[key] for key in keys)):
+        raise RuntimeError('Invalid maintained source inventory')
+    names = [*inventory['bundleModules'], *inventory['provenanceOnly'], SOURCE_INVENTORY.name]
+    if (any(not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*\.(?:cjs|mjs|py|json)', name) for name in names)
+            or len({name.lower() for name in names}) != len(names)):
+        raise RuntimeError('Invalid maintained source inventory')
+    sources = provenance.get('sources')
+    if not isinstance(sources, dict) or set(sources) != set(names):
+        raise RuntimeError('Package maintained source inventory differs')
+    root = absolute_root(provenance.get('maintainedSource'), 'Maintained source root')
+    for name, pin in sources.items():
+        if not isinstance(pin, str) or not re.fullmatch('[a-f0-9]{64}', pin):
             raise RuntimeError('Invalid maintained source provenance')
-        if sha(Path(provenance['maintainedSource']) / name) != pin:
+        file = root / name
+        no_reparse(file)
+        if not file.is_file():
+            raise RuntimeError('Maintained source provenance differs')
+        if name == SOURCE_INVENTORY.name:
+            data = file.read_bytes()
+            if data.replace(b'\r\n', b'\n') != inventory_bytes.replace(b'\r\n', b'\n'):
+                raise RuntimeError('Package maintained source inventory differs')
+            digest = hashlib.sha256(data).hexdigest()
+        else:
+            digest = sha(file)
+        if digest != pin:
             raise RuntimeError('Maintained source provenance differs')
 
 

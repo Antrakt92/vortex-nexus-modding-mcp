@@ -484,7 +484,7 @@
     },
     {
       "path": "docs/RESTORE.md",
-      "sha256_lf": "a91c9def73a65c12109c5d6d709804ccaae9d2348eec18130280efe71e26cf8a"
+      "sha256_lf": "92a7fe4aaf64bf71ea7d83d4648c3fa6c43b2012c2bd82a74d9ef6fb41f038f9"
     },
     {
       "path": "docs/STOCK-LOCAL-INSTALL.md",
@@ -796,7 +796,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/build.mjs",
-      "sha256_lf": "5a3e939203bae529d318ba2d3fa5e0a3657029635af6ee846169df546ae73c5b"
+      "sha256_lf": "204421f5e9887da649b6cf577b807af556f44fceb9f63872d20d7f14573158d3"
     },
     {
       "path": "tools/modding/vortex-agent/candidate-assessment-serialization.test.mjs",
@@ -1068,7 +1068,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/install.test.py",
-      "sha256_lf": "a9bf15adcde6c862ff487277a42df3a6c9690e052ce01f3510a986ab4c87f2dd"
+      "sha256_lf": "c3e69ab5a6ed9d06f7e989b4f6938423951286ab834319a45b53f7e827da3bf0"
     },
     {
       "path": "tools/modding/vortex-agent/installed-candidate-assessment.cjs",
@@ -1151,8 +1151,12 @@
       "sha256_lf": "2f5f25e3f7389486c51e20cb6fc69aae59e2b06026a7bea5f455dea4a5236eb3"
     },
     {
+      "path": "tools/modding/vortex-agent/maintained-sources.json",
+      "sha256_lf": "838c3e08023cc50b0d98db7ce5493cf58d4e9738bd6ad79c3c343209762ad10c"
+    },
+    {
       "path": "tools/modding/vortex-agent/manage-install.py",
-      "sha256_lf": "f009650a84fcaa473c812c4f02c25c325d6842a6aa6813b50c9e2b12f1a42757"
+      "sha256_lf": "ca0ffef894fba08dbfd5790653440d129b3fb7eb1e4aafff89de197710ca5957"
     },
     {
       "path": "tools/modding/vortex-agent/mod-record-fingerprint-serialization.test.cjs",
@@ -3056,7 +3060,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/package.test.mjs",
-      "sha256_lf": "29ef3490bcad883139b898c6a824531da6e2c2ff5db735ac2eb53f3fdc7d9d7c"
+      "sha256_lf": "c2d50cbf9fd83363b7e92d843835a458cc7971f4d08424ca917dfaa982649c9b"
     },
     {
       "path": "tools/modding/vortex-agent/paths-core.cjs",

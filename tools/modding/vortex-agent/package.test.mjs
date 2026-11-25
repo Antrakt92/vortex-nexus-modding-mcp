@@ -10,6 +10,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { compileInputs, runtimeWorkspace } from './build.mjs';
 const ROOT = paths.build;
 const sha = async file => crypto.createHash('sha256').update(await fs.readFile(file)).digest('hex');
+const inventoryFile = 'maintained-sources.json';
+async function assertSourceInventory(provenance) {
+  const inventory = JSON.parse(await fs.readFile(new URL('./' + inventoryFile, import.meta.url), 'utf8'));
+  assert.deepEqual(Object.keys(provenance.sources), [...inventory.bundleModules, ...inventory.provenanceOnly, inventoryFile]);
+}
 test('packaged entrypoint and source/lockfile provenance match verified isolated build', async () => {
   const plugin = path.join(ROOT, 'plugin/vortex-agent');
   const provenance = JSON.parse(await fs.readFile(path.join(plugin, 'provenance.json'), 'utf8'));
@@ -19,6 +24,7 @@ test('packaged entrypoint and source/lockfile provenance match verified isolated
   assert.equal(await sha(path.join(plugin, 'index.js')), provenance.pluginSha256);
   assert.equal(await sha(path.join(ROOT, 'upstream/adapted-dist/index.js')), provenance.pluginSha256);
   assert.equal(await sha(path.join(ROOT, 'upstream/pnpm-lock.yaml')), provenance.lockfileSha256);
+  await assertSourceInventory(provenance);
   for (const [name, hash] of Object.entries(provenance.sources)) assert.equal(await sha(path.join(provenance.maintainedSource, name)), hash, name);
   assert.equal(provenance.installSupported, false);
   assert.equal(provenance.version, '1.1.0'); assert.equal(provenance.receiptVersion, 2);
@@ -269,6 +275,8 @@ test('a package write failure keeps the prior bundle and provenance together and
   assert.equal(retry.status, 0, retry.stderr);
   const provenance = JSON.parse(await fs.readFile(path.join(output, 'provenance.json')));
   assert.equal(provenance.pluginSha256, await sha(path.join(output, 'index.js')));
+  await assertSourceInventory(provenance);
+  assert.equal(provenance.sources[inventoryFile], await sha(path.join(provenance.maintainedSource, inventoryFile)));
   assert.equal(await fs.readFile(path.join(output, 'index.js'), 'utf8'), 'new fixture bundle');
   const holder = path.dirname(output);
   const retained = [];
