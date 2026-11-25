@@ -53,8 +53,12 @@ shapes and `api.closeDialog` callback contract match the controller. Run
 `resources/app.asar` to check supported actions through the compiled MCP.
 Add `--native-dialog-probe` to the paired 2.11.0 [native fixture](STOCK-LOCAL-INSTALL.md)
 to exercise Cancel on a synthetic question in the official renderer and verify
-that the ordinary profile stays intact. This probe does not start a tracked
-Nexus installation or grant collection wizard admission.
+that the ordinary profile stays intact. Use `--native-dialog-probe-all` for
+Cancel, Ignore dependencies, and Update current profile. The additional actions
+use synthetic stock question shapes and verify `remember=false`, delivery to
+the native callback, both receipt ledgers, and unchanged synthetic profile and
+mod state. Live mod updates, dependency overrides, tracked Nexus installation,
+and collection wizard admission require separate evidence.
 
 A successful response proves that the selected question disappeared. It does not
 prove callback origin, archive identity, installation completion, rollback or disk
