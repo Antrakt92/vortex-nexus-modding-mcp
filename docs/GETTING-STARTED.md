@@ -25,12 +25,16 @@ These routes are independent; the publication runner is not needed to inspect Vo
 | Community CLI, optional | .NET 10 for the pinned Windows x64 executable |
 | AI client, optional | An MCP client that can launch a local stdio command; terminal commands work without one |
 
-The tools were tested with official Vortex 2.9.1 and 2.10.1 for Cyberpunk 2077.
-See [the host verification](STOCK-LOCAL-INSTALL.md#verify-official-vortex-2101). Process checks also
-exist for Assassin's Creed Unity, Skyrim SE, Skyrim VR and Fallout 4, but full
-installation and deployment have not been tested for every game. Unsupported
-writes stop with
-`UNSUPPORTED_GAME_PROCESS_GUARD`.
+Installation and deployment of new local Cyberpunk 2077 ZIPs were verified on
+reviewed official packages of [Vortex 2.9.1](STOCK-LOCAL-INSTALL.md#verification-boundary),
+[2.10.1](STOCK-LOCAL-INSTALL.md#verify-official-vortex-2101) and
+[2.11.0](STOCK-LOCAL-INSTALL.md#verify-official-vortex-2110). Collection controls
+have their own host and workflow requirements. See
+[collection workflows](BACKGROUND-COLLECTION-WIZARD.md) and
+[native questions](NATIVE-DIALOGS.md).
+Process checks also exist for Assassin's Creed Unity, Skyrim SE, Skyrim VR and
+Fallout 4. Full installation and deployment coverage varies by game. Unsupported
+writes stop with `UNSUPPORTED_GAME_PROCESS_GUARD`.
 
 ## Install the adapter
 
@@ -75,15 +79,24 @@ reached its limit. These commands do not change enabled mods or deploy them.
 
 ## Connect an MCP client
 
-After the terminal health check works, generate the configuration template:
+After the terminal health check works, preview and write the configuration
+template. With `NEXUS_WORKSPACE` unset, the commands use the source directory.
 
 ```powershell
-python scripts/recovery.py configure --workspace "$env:NEXUS_WORKSPACE"
-python scripts/recovery.py configure --workspace "$env:NEXUS_WORKSPACE" --apply
+python scripts/recovery.py configure
+python scripts/recovery.py configure --apply
 ```
 
-If you left `NEXUS_WORKSPACE` unset, omit `--workspace` to use the source directory.
-The second command writes `local-state/nexus-tools-recovery/client-template.json`
+For a separate installed runtime workspace, use its absolute path. If you set
+`NEXUS_WORKSPACE` for the health check above, the same commands already use it.
+You can also supply the path directly.
+
+```powershell
+python scripts/recovery.py configure --workspace 'C:/NexusWorkspace'
+python scripts/recovery.py configure --workspace 'C:/NexusWorkspace' --apply
+```
+
+The command with `--apply` writes `local-state/nexus-tools-recovery/client-template.json`
 under the selected workspace. Merge its `vortex` server entry into your client's
 configuration and refresh the MCP connection. Some clients use TOML instead of
 JSON; adapt the same command, absolute bridge path and environment values.
