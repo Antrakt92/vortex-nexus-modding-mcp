@@ -36,6 +36,23 @@ for(const op of ['set_mods_enabled','deploy_mods','download_nexus','install_down
 });
 test('unknown operation is not admitted by parameter or attempt validation',()=>{assert.equal(R.validParameters(parameters(),'arbitrary_dispatch'),false);const a=attempt();a.operation='arbitrary_dispatch';assert.equal(R.validAttempt(a),false);});
 test('normal v2 wizard failure remains reconcilable',()=>{const a=attempt();const f={protocol:a.protocol,receiptVersion:2,requestId:a.requestId,operation:a.operation,gameId:a.gameId,profileId:a.profileId,at:'2030-01-01T00:00:01.000Z',operationCompleted:false,effectsMayHaveOccurred:true,inspectBeforeRetry:true,errorCode:'COLLECTION_WIZARD_TRANSITION_UNKNOWN'};assert.equal(R.validFailure(f,a),true);});
+test('resident receipt timestamps reject normalized calendar dates and retain real leap days', () => {
+ const a = {...attempt(), at:'2024-01-01T00:00:00.000Z'};
+ const failure = {...a, operationCompleted:false, effectsMayHaveOccurred:true, inspectBeforeRetry:true,
+  errorCode:'COLLECTION_WIZARD_TRANSITION_UNKNOWN'};
+ delete failure.parameters;
+ for (const at of ['2026-02-31T00:00:00.000Z', '2100-02-29T00:00:00.000Z', '2026-04-31T12:00:00.000Z',
+  '2026-11-25T24:00:00.000Z']) {
+  assert.equal(R.validAttempt({...a, at}), false, at);
+  assert.equal(R.validCompletion({...completion(a), at}, a), false, at);
+  assert.equal(R.validFailure({...failure, at}, a), false, at);
+ }
+ for (const at of ['2024-02-29T23:59:59.999Z', '2400-02-29T00:00:00.000Z']) {
+  assert.equal(R.validAttempt({...a, at}), true, at);
+  assert.equal(R.validCompletion({...completion(a), at}, a), true, at);
+  assert.equal(R.validFailure({...failure, at}, a), true, at);
+ }
+});
 test('unavailable or incomplete internal controller refuses before native queries/effects',()=>{
  const {createOperations}=require('./guard.cjs');let reads=0;
  for(const wizard of [undefined,{}, {prepare(){}}]){
