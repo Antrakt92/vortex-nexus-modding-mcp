@@ -768,7 +768,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/audit-fixes.test.mjs",
-      "sha256_lf": "248c5e1ec03b4fc44673e323186eca5aa8e888a85eb6e90efd192267387d6eca"
+      "sha256_lf": "14dce9977ad5a85cfc3a5a5e96adbfe5e414333cc2954ed82d122adae746e0d4"
     },
     {
       "path": "tools/modding/vortex-agent/bridge-audit.test.mjs",
@@ -1348,7 +1348,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/native-executor-journal.test.mjs",
-      "sha256_lf": "929551e8751a131dd37f082983626e602560e9a7a96deed331267b3d8acc16eb"
+      "sha256_lf": "e55f0ee3333d98ad6b32a0b3071cc4275be3aefc97fe2ead13cff2689d787bac"
     },
     {
       "path": "tools/modding/vortex-agent/native-executor-pending-relay.test.mjs",

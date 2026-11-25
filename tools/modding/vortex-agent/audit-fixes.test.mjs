@@ -11,11 +11,11 @@ import { PassThrough } from 'node:stream';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import {waitForServerListening, closeOwnedTestServer} from './http-startup-test-support.mjs';
+import fixtureDirectories from './test-fixture-directory.cjs';
 const require = createRequire(import.meta.url);
 const guard = require('./guard.cjs');
 const inspection = require('./inspection.cjs');
 const ROOT = paths.build + '/tests';
-await fs.mkdir(ROOT, { recursive: true });
 
 test('audit: HTTP parser rejects malformed UTF-8 instead of altering tool arguments', async () => {
   const ingress = require('./http-ingress.cjs');
@@ -42,8 +42,8 @@ test('audit: direct HTTP rejects ambiguous arguments before dispatch', async () 
     await assert.rejects(parsed, error => error.message === 'HTTP_BODY_INVALID' && error.status === 400);
   }
 });
-async function fixture(hook = async () => {}) {
-  const dir = await fs.mkdtemp(path.join(ROOT, 'audit-'));
+async function fixture(t, hook = async () => {}) {
+  const dir = fixtureDirectories.fixtureDirectory(t, ROOT, 'audit-');
   const state = { settings: { gameMode: { discovered: { cyberpunk2077: { path: dir } } } }, persistent: {
     profiles: { p: { gameId: 'cyberpunk2077', modState: {} } },
     mods: { cyberpunk2077: { m: { id: 'm', state: 'installed', installationPath: 'm', archiveId: 'original' } } }, downloads: { files: {} } } };
@@ -74,7 +74,7 @@ async function pinned(f, record = {}) {
 }
 for (const terminal of ['missing', 'cancelled', 'canceled', 'removed', 'unknown', 'paused', 'failed', 'redirect']) {
   test(`audit: download ${terminal} settles and retains uncertain interlock`, { timeout: 5000 }, async t => {
-    const f = await fixture(); const args = await pinned(f); delete f.state.persistent.downloads.files.d;
+    const f = await fixture(t); const args = await pinned(f); delete f.state.persistent.downloads.files.d;
     f.api.ext.nexusDownload = async () => { if (terminal !== 'missing') f.state.persistent.downloads.files.d = { state: terminal }; return 'd'; };
     // The operation includes real fsynced receipts. Bound hangs with the test
     // runner, not a 150ms race that mistakes slow disk I/O for a guard failure.
@@ -87,8 +87,8 @@ for (const terminal of ['missing', 'cancelled', 'canceled', 'removed', 'unknown'
     await assert.rejects(fs.access(path.join(f.dir, 'receipts/mutation.lock')));
   });
 }
-test('audit: invalid native download ID cannot produce completion or a second dispatch', async () => {
-  const f = await fixture(), args = await pinned(f), record = f.state.persistent.downloads.files.d;
+test('audit: invalid native download ID cannot produce completion or a second dispatch', async t => {
+  const f = await fixture(t), args = await pinned(f), record = f.state.persistent.downloads.files.d;
   delete f.state.persistent.downloads.files.d;
   const id = 'tracked\x7f';
   let dispatches = 0;
@@ -114,24 +114,24 @@ test('audit: invalid native download ID cannot produce completion or a second di
   await assert.rejects(f.ops.download_nexus({...args, requestId: crypto.randomUUID()}), /UNRESOLVED_OPERATION_INTERLOCK/);
   assert.equal(dispatches, 1);
 });
-test('audit: target removed or replaced during durable await prevents enable', async () => {
+test('audit: target removed or replaced during durable await prevents enable', async t => {
   for (const replacement of [null, 'replacement']) {
-    const f = await fixture(async (file, state) => { if (file.endsWith('unresolved.json')) {
+    const f = await fixture(t, async (file, state) => { if (file.endsWith('unresolved.json')) {
       if (replacement === null) delete state.persistent.mods.cyberpunk2077.m; else state.persistent.mods.cyberpunk2077.m.archiveId = replacement;
     } });
     await assert.rejects(f.ops.set_mods_enabled({ ...f.args, modIds: ['m'], enabled: true }), /MOD_NOT_INSTALLED|MOD_RECORD_CHANGED/);
     assert.equal(f.calls(), 0);
   }
 });
-test('audit: target identity change during action cannot complete', async () => {
-  const f = await fixture(); f.actions.setModsEnabled = async () => {
+test('audit: target identity change during action cannot complete', async t => {
+  const f = await fixture(t); f.actions.setModsEnabled = async () => {
     f.state.persistent.profiles.p.modState.m = { enabled: true }; f.state.persistent.mods.cyberpunk2077.m.archiveId = 'replacement';
   };
   await assert.rejects(f.ops.set_mods_enabled({ ...f.args, modIds: ['m'], enabled: true }), /MOD_RECORD_CHANGED/);
   await fs.access(path.join(f.dir, 'receipts/unresolved.json'));
 });
-test('audit: enable cannot publish success after the final flag changes during receipt sync', async () => {
-  const f = await fixture(async (file, state) => {
+test('audit: enable cannot publish success after the final flag changes during receipt sync', async t => {
+  const f = await fixture(t, async (file, state) => {
     if (file.includes('.completion.json.pending-')) state.persistent.profiles.p.modState.m = { enabled: false };
   });
   await assert.rejects(f.ops.set_mods_enabled({ ...f.args, modIds: ['m'], enabled: true }), /ENABLED_FLAGS_UNVERIFIED/);
@@ -139,54 +139,54 @@ test('audit: enable cannot publish success after the final flag changes during r
   await fs.access(path.join(f.dir, 'receipts/unresolved.json'));
   await assert.rejects(fs.access(path.join(f.dir, 'receipts', f.args.requestId + '.completion.json')), { code: 'ENOENT' });
 });
-test('audit: deploy cannot publish success after a flag changes during receipt sync', async () => {
-  const f = await fixture(async (file, state) => {
+test('audit: deploy cannot publish success after a flag changes during receipt sync', async t => {
+  const f = await fixture(t, async (file, state) => {
     if (file.includes('.completion.json.pending-')) state.persistent.profiles.p.modState.m = { enabled: true };
   });
   f.api.ext.awaitModsDeployment = async () => {};
   await assert.rejects(f.ops.deploy_mods(f.args), /OTHER_ENABLED_FLAGS_CHANGED/);
   await fs.access(path.join(f.dir, 'receipts/unresolved.json'));
 });
-test('audit: download cannot publish success after an installed record changes during receipt sync', async () => {
-  const f = await fixture(async (file, state) => {
+test('audit: download cannot publish success after an installed record changes during receipt sync', async t => {
+  const f = await fixture(t, async (file, state) => {
     if (file.includes('.completion.json.pending-')) state.persistent.mods.cyberpunk2077.m.archiveId = 'updated';
   });
   await assert.rejects(f.ops.download_nexus(await pinned(f)), /DOWNLOAD_INSTALLED_RECORDS_CHANGED/);
 });
-test('audit: nested domain identity without game is reused without network', async () => {
-  const f = await fixture(); const args = await pinned(f, { game: undefined });
+test('audit: nested domain identity without game is reused without network', async t => {
+  const f = await fixture(t); const args = await pinned(f, { game: undefined });
   f.api.ext.nexusDownload = async () => { throw Error('NETWORK_WOULD_BE_CALLED'); };
   const result = await f.ops.download_nexus({ ...args, reuseOnly: true }); assert.equal(result.reused, true);
 });
-test('audit: reuseOnly missing candidate never invokes acquisition', async () => {
-  const f = await fixture(); const args = await pinned(f); delete f.state.persistent.downloads.files.d;
+test('audit: reuseOnly missing candidate never invokes acquisition', async t => {
+  const f = await fixture(t); const args = await pinned(f); delete f.state.persistent.downloads.files.d;
   let calls = 0; f.api.ext.nexusDownload = async () => { calls++; throw Error('NETWORK_WOULD_BE_CALLED'); };
   await assert.rejects(f.ops.download_nexus({ ...args, reuseOnly: true }), /REUSE_ONLY_DOWNLOAD_NOT_FOUND/); assert.equal(calls, 0);
 });
-test('audit: inconsistent nested/fallback IDs or numeric/domain game fail closed', async () => {
+test('audit: inconsistent nested/fallback IDs or numeric/domain game fail closed', async t => {
   for (const info of [ { nexus: { ids: { gameId: 'cyberpunk2077', modId: 42, fileId: 43 } }, modId: 99 },
     { nexus: { ids: { gameId: 'cyberpunk2077', modId: 42, fileId: 43 } }, meta: { gameId: 1704 } } ]) {
-    const f = await fixture(); const args = await pinned(f, { modInfo: info }); let calls = 0;
+    const f = await fixture(t); const args = await pinned(f, { modInfo: info }); let calls = 0;
     f.api.ext.nexusDownload = async () => { calls++; throw Error('NETWORK_WOULD_BE_CALLED'); };
     await assert.rejects(f.ops.download_nexus(args), /AMBIGUOUS_DOWNLOAD_IDENTITY/); assert.equal(calls, 0);
   }
 });
-test('audit: acquisition dedup is revalidated immediately before effect', async () => {
+test('audit: acquisition dedup is revalidated immediately before effect', async t => {
   let saved;
-  const f = await fixture(async (file, state) => { if (file.endsWith('unresolved.json')) state.persistent.downloads.files.other = saved; });
+  const f = await fixture(t, async (file, state) => { if (file.endsWith('unresolved.json')) state.persistent.downloads.files.other = saved; });
   const args = await pinned(f); saved = f.state.persistent.downloads.files.d; delete f.state.persistent.downloads.files.d;
   let calls = 0; f.api.ext.nexusDownload = async () => { calls++; throw Error('NETWORK_WOULD_BE_CALLED'); };
   await assert.rejects(f.ops.download_nexus(args), /DOWNLOAD_PREFLIGHT_CHANGED/); assert.equal(calls, 0);
 });
-test('audit: reconcile uses fallback IDs and refuses wrong game attribution', async () => {
-  const f = await fixture(); const args = await pinned(f, { modInfo: { modId: 42, fileId: 43 } });
+test('audit: reconcile uses fallback IDs and refuses wrong game attribution', async t => {
+  const f = await fixture(t); const args = await pinned(f, { modInfo: { modId: 42, fileId: 43 } });
   await f.ops.download_nexus(args);
   f.state.persistent.downloads.files.wrong = { game: ['skyrimse'], state: 'finished', modInfo: { nexus: { ids: { gameId: 'skyrimspecialedition', modId: 42, fileId: 43 } } } };
   const result = await f.ops.reconcile_operation({ requestId: args.requestId }); assert.deepEqual(result.download.map(d => d.id), ['d']);
 });
-test('audit: foreign, scalar, unsuccessful and conflicting receipts never verify completion', async () => {
+test('audit: foreign, scalar, unsuccessful and conflicting receipts never verify completion', async t => {
   for (const corrupt of ['foreign', 'scalar', 'unsuccessful', 'conflict', 'truncated']) {
-    const f = await fixture(); await f.ops.set_mods_enabled({ ...f.args, modIds: ['m'], enabled: true });
+    const f = await fixture(t); await f.ops.set_mods_enabled({ ...f.args, modIds: ['m'], enabled: true });
     const file = path.join(f.dir, 'receipts', f.args.requestId + '.completion.json'); const good = JSON.parse(await fs.readFile(file));
     if (corrupt === 'conflict') await fs.writeFile(path.join(f.dir, 'receipts', f.args.requestId + '.failed.json'), JSON.stringify({ ...good, operationCompleted: false }));
     else await fs.writeFile(file, corrupt === 'truncated' ? '{' : JSON.stringify(corrupt === 'scalar' ? true : { ...good,
@@ -194,8 +194,8 @@ test('audit: foreign, scalar, unsuccessful and conflicting receipts never verify
     const result = await f.ops.reconcile_operation({ requestId: f.args.requestId }); assert.equal(result.terminalOperationVerified, false, corrupt);
   }
 });
-test('audit: malformed UTF-8 in an otherwise matching receipt cannot verify completion', async () => {
-  const f = await fixture();
+test('audit: malformed UTF-8 in an otherwise matching receipt cannot verify completion', async t => {
+  const f = await fixture(t);
   await f.ops.set_mods_enabled({ ...f.args, modIds: ['m'], enabled: true });
   const file = path.join(f.dir, 'receipts', f.args.requestId + '.attempt.json');
   const bytes = await fs.readFile(file);
@@ -212,8 +212,8 @@ test('audit: malformed UTF-8 in an otherwise matching receipt cannot verify comp
   assert.ok(result.receiptIssues.includes('INVALID_RECEIPT'));
 });
 
-test('audit: failed completion fsync never publishes a completion', async () => {
-  const f = await fixture(async file => { if (file.includes('.completion.json')) throw Error('SYNTHETIC_FSYNC_FAILURE'); });
+test('audit: failed completion fsync never publishes a completion', async t => {
+  const f = await fixture(t, async file => { if (file.includes('.completion.json')) throw Error('SYNTHETIC_FSYNC_FAILURE'); });
   await assert.rejects(f.ops.set_mods_enabled({ ...f.args, modIds: ['m'], enabled: true }));
   await assert.rejects(fs.access(path.join(f.dir, 'receipts', f.args.requestId + '.completion.json')));
   const result = await f.ops.reconcile_operation({ requestId: f.args.requestId }); assert.equal(result.terminalOperationVerified, false);
@@ -222,16 +222,16 @@ test('audit: secret property names fail closed', () => {
   const api = { getState: () => ({ confidential: { apiKey: 'synthetic-secret' } }) };
   assert.throws(() => guard.safe({ nested: { 'synthetic-secret': 'display' } }, api), /PROPERTY_KEY_NOT_CURATED/);
 });
-test('audit: changed enabled/path scope invalidates conflict scan', async () => {
-  const f = await fixture(); f.state.persistent.profiles.p.modState.m = { enabled: true }; await fs.mkdir(path.join(f.dir, 'm'));
+test('audit: changed enabled/path scope invalidates conflict scan', async t => {
+  const f = await fixture(t); f.state.persistent.profiles.p.modState.m = { enabled: true }; await fs.mkdir(path.join(f.dir, 'm'));
   const monitored = { ...fs, opendir: async (...args) => { const h = await fs.opendir(...args); f.state.persistent.profiles.p.modState.new = { enabled: true };
     f.state.persistent.mods.cyberpunk2077.new = { state: 'installed', installationPath: 'new' }; return h; } };
   const module = { exports: {} }; vm.runInThisContext('(function(require,module,exports){' + await fs.readFile(new URL('./inspection.cjs', import.meta.url), 'utf8') + '\n})')(
     id => id === 'node:fs/promises' ? monitored : require(id), module, module.exports);
   await assert.rejects(module.exports.conflicts(f.api, f.selectors, {}), /STALE_SCAN_SCOPE/);
 });
-async function server(options = {}) {
-  const upstream = createRequire(paths.build + '/upstream/package.json'); const f = await fixture();
+async function server(t, options = {}) {
+  const upstream = createRequire(paths.build + '/upstream/package.json'); const f = await fixture(t);
   f.state.session = { mods: { changes: [{ filePath: path.join(f.dir, 'file'), source: 'm', extra: { private: 'not-curated' } }] } };
   const control = { listExternalChanges: () => f.state.session.mods.changes };
   const module = { exports: {} }; vm.runInThisContext('(function(require,module,exports){' + await fs.readFile(new URL('./extension.cjs', import.meta.url), 'utf8') + '\n})')(
@@ -281,17 +281,19 @@ async function chunkedStatus(s, body) {
     req.end(body);
   });
 }
-test('audit: HTTP preparse byte/batch limits and explicit external-change projection', async () => {
-  const s = await server(); try {
+test('audit: HTTP preparse byte/batch limits and explicit external-change projection', async t => {
+  const s = await server(t); try {
     const big = await fetchText(s, ' '.repeat(1024 * 1024 + 1), 'OVERSIZED_BODY'); assert.equal(big.status, 413);
     const batch = await fetchText(s, JSON.stringify(Array.from({ length: 17 }, (_, i) => ({ jsonrpc: '2.0', id: i, method: 'tools/list' }))), 'OVERSIZED_BATCH'); assert.equal(batch.status, 413);
     const result = await fetchText(s, JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'list_external_changes', arguments: {} } }), 'EXTERNAL_CHANGES');
     assert.ok(!result.text.includes('not-curated'));
   } finally { await closeServer(s.listener); }
 });
-test('audit: process-wide ingress concurrency and abort release', async () => {
-  const a = await server(), b = await server(), requests = [];
+test('audit: process-wide ingress concurrency and abort release', async t => {
+  const a = await server(t), requests = [];
+  let b;
   try {
+    b = await server(t);
     for (let i = 0; i < 16; i++) requests.push(http.request(a.endpoint, { method: 'POST', headers: { ...a.headers, 'transfer-encoding': 'chunked' } }));
     for (const req of requests) { req.on('error', () => {}); req.flushHeaders(); req.write('{'); }
     const until = Date.now() + 3000;
@@ -300,13 +302,16 @@ test('audit: process-wide ingress concurrency and abort release', async () => {
     const overloaded = await fetchText(b, '{}', 'CONCURRENCY_OVERLOAD'); assert.equal(overloaded.status, 503);
     for (const req of requests) req.destroy(); await new Promise(r => setTimeout(r, 100));
     const released = await fetchText(b, '{bad', 'CONCURRENCY_RELEASE'); assert.equal(released.status, 400);
-  } finally { for (const req of requests) req.destroy(); for (const s of [a, b]) { await closeServer(s.listener); } }
+  } finally {
+    for (const req of requests) req.destroy();
+    await Promise.all([closeServer(a.listener), ...(b ? [closeServer(b.listener)] : [])]);
+  }
 });
-test('audit: initialization grace allows a delayed record, then disappearance settles', async () => {
-  const f = await fixture(); const args = await pinned(f); const record = f.state.persistent.downloads.files.d; delete f.state.persistent.downloads.files.d;
+test('audit: initialization grace allows a delayed record, then disappearance settles', async t => {
+  const f = await fixture(t); const args = await pinned(f); const record = f.state.persistent.downloads.files.d; delete f.state.persistent.downloads.files.d;
   f.api.ext.nexusDownload = async () => { setTimeout(() => { f.state.persistent.downloads.files.d = record; }, 5); return 'd'; };
   assert.equal((await f.ops.download_nexus(args)).reused, false);
-  const g = await fixture(); const next = await pinned(g); delete g.state.persistent.downloads.files.d;
+  const g = await fixture(t); const next = await pinned(g); delete g.state.persistent.downloads.files.d;
   g.api.ext.nexusDownload = async () => { g.state.persistent.downloads.files.d = { state: 'started' }; setTimeout(() => { delete g.state.persistent.downloads.files.d; }, 5); return 'd'; };
   await assert.rejects(g.ops.download_nexus(next), /DOWNLOAD_RECORD_MISSING/);
 });
@@ -321,8 +326,8 @@ test('audit: numeric/domain consistency, unavailable catalogue and shared-domain
   assert.throws(() => matchingDownloads({ old: { game: ['skyrimse'], modInfo: { nexus: { ids: { gameId: 'skyrimspecialedition', modId: 42, fileId: 43 } } } } },
     { gameId: 'skyrimvr', nexusModId: 42, nexusFileId: 43 }, {}, selectors), /AMBIGUOUS_DOWNLOAD_IDENTITY/);
 });
-test('audit: curated downloads tolerate missing game and expose only verified IDs', async () => {
-  const f = await fixture(); await pinned(f, { game: undefined });
+test('audit: curated downloads tolerate missing game and expose only verified IDs', async t => {
+  const f = await fixture(t); await pinned(f, { game: undefined });
   const result = inspection.listDownloads(f.api, f.selectors, { states: ['finished'], limit: 100 }, f.options.catalog);
   assert.equal(result.length, 1); assert.equal(result[0].nexusModId, 42); assert.equal(result[0].nexusFileId, 43); assert.equal(result[0].identityVerified, true);
   assert.equal(Object.hasOwn(result[0], 'modInfo'), false);
@@ -333,29 +338,29 @@ test('audit: malformed Windows process output fails closed', async () => {
     id => id === 'node:child_process' ? { spawnSync: () => ({status: 0, stderr: '', stdout: 'INFO: Unable to enumerate processes'}) } : require(id), module, module.exports);
   assert.throws(() => module.exports.stopped({}, 'cyberpunk2077'), /PROCESS_LIST_UNVERIFIABLE/);
 });
-test('audit: chunked oversized body and invalid batch cannot bypass ingress limits', async () => {
-  const s = await server(); try {
+test('audit: chunked oversized body and invalid batch cannot bypass ingress limits', async t => {
+  const s = await server(t); try {
     const status = await chunkedStatus(s, Buffer.alloc(1024 * 1024 + 1, 32)); assert.equal(status, 413);
     const empty = await fetchText(s, '[]', 'EMPTY_BATCH'); assert.equal(empty.status, 413);
   } finally { await closeServer(s.listener); }
 });
-test('audit: receipt publication is no-overwrite and pending crash phases are inconclusive', async () => {
-  const f = await fixture(); const args = { ...f.args, modIds: ['m'], enabled: true }; await f.ops.set_mods_enabled(args);
+test('audit: receipt publication is no-overwrite and pending crash phases are inconclusive', async t => {
+  const f = await fixture(t); const args = { ...f.args, modIds: ['m'], enabled: true }; await f.ops.set_mods_enabled(args);
   const final = path.join(f.dir, 'receipts', args.requestId + '.completion.json'); const original = await fs.readFile(final);
   await assert.rejects(guard.commitCompletion(final, { bad: true }), /EEXIST/); assert.deepEqual(await fs.readFile(final), original);
   const reconciled = await f.ops.reconcile_operation({ requestId: args.requestId }); assert.equal(reconciled.terminalOperationVerified, false);
   assert.ok(reconciled.receiptIssues.includes('INCOMPLETE_COMPLETION_COMMIT'));
 });
-test('audit: stalled auth and ingress timeout release process-wide admission', async () => {
-  const s = await server({ tokenProvider: () => new Promise(() => {}), bodyTimeoutMs: 50 });
+test('audit: stalled auth and ingress timeout release process-wide admission', async t => {
+  const s = await server(t, { tokenProvider: () => new Promise(() => {}), bodyTimeoutMs: 50 });
   try {
     const res = await fetchText(s, '{}', 'AUTH_DEADLINE'); assert.equal(res.status, 408);
     await new Promise(r => setTimeout(r, 10)); assert.equal(require('./http-ingress.cjs').activity().requests, 0);
   } finally { await closeServer(s.listener); }
 });
 
-test('audit: server cleanup closes an admitted unfinished upload', { timeout: 10000 }, async () => {
-  const s = await server(), req = http.request(s.endpoint, { method: 'POST', headers: { ...s.headers, 'transfer-encoding': 'chunked' } });
+test('audit: server cleanup closes an admitted unfinished upload', { timeout: 10000 }, async t => {
+  const s = await server(t), req = http.request(s.endpoint, { method: 'POST', headers: { ...s.headers, 'transfer-encoding': 'chunked' } });
   req.on('error', () => {});
   const closed = new Promise(resolve => req.once('close', resolve));
   try {
