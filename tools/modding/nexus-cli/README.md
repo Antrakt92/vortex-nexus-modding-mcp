@@ -20,6 +20,8 @@ It checks all existing files and the receipt before extraction and unpacks the
 same in-memory archive bytes whose size/hash passed verification.
 New files are published only after their contents are flushed to disk. An
 interruption during a write leaves the final path available for a retry.
+The installer rechecks the pinned runtime files and their physical generations
+after flushing the staged receipt and before publishing it.
 Before launch, the wrapper checks the executable, shipped DLLs and runtime
 configuration against pins from that archive and refuses reparse paths.
 Pass flags and values as separate PowerShell arguments. The wrapper preserves
