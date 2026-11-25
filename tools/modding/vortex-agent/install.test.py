@@ -117,6 +117,67 @@ class UpgradeTests(unittest.TestCase):
         self.assertEqual(list(upgrade.UPGRADES.glob('*/upgrade.json')), [])
         self.assertFalse((upgrade.UPGRADES / 'install.lock').exists())
 
+    def test_interrupt_after_receipt_publication_keeps_the_committed_upgrade(self):
+        target = self.plugins / 'vortex-agent'
+        publish = upgrade.os.replace
+
+        def interrupt_after_publish(source, destination):
+            publish(source, destination)
+            if Path(destination).name == 'upgrade.json':
+                raise KeyboardInterrupt('synthetic interruption after receipt publication')
+
+        with patch.object(upgrade.os, 'replace', side_effect=interrupt_after_publish):
+            with self.assertRaisesRegex(KeyboardInterrupt, 'synthetic interruption'):
+                upgrade.install(self.new, self.old)
+        receipt, = upgrade.UPGRADES.glob('*/upgrade.json')
+        self.assertEqual(json.loads(receipt.read_text(encoding='utf-8'))['sha256'], self.new)
+        self.assertEqual(upgrade.sha(target / 'index.js'), self.new)
+        self.assertEqual(list(upgrade.UPGRADES.glob('*/upgrade.json.pending')), [])
+
+    def test_receipt_publication_with_identical_foreign_file_does_not_trigger_rollback(self):
+        target = self.plugins / 'vortex-agent'
+        publish = upgrade.os.replace
+        foreign = []
+
+        def replace_with_foreign_copy(source, destination):
+            publish(source, destination)
+            final = Path(destination)
+            if final.name == 'upgrade.json':
+                published = final.with_name('original-published-receipt.json')
+                publish(final, published)
+                final.write_bytes(published.read_bytes())
+                self.assertFalse(final.samefile(published))
+                foreign.append(final)
+                raise OSError('synthetic uncertain receipt publication')
+
+        with patch.object(upgrade.os, 'replace', side_effect=replace_with_foreign_copy):
+            with self.assertRaisesRegex(RuntimeError, 'Upgrade receipt publication uncertain'):
+                upgrade.install(self.new, self.old)
+        self.assertEqual(upgrade.sha(target / 'index.js'), self.new)
+        receipt, = foreign
+        self.assertTrue(receipt.is_file())
+        self.assertEqual(upgrade.sha(receipt.parent / 'old-plugin/index.js'), self.old)
+
+    def test_receipt_mismatch_after_successful_rename_keeps_both_and_refuses_success(self):
+        target = self.plugins / 'vortex-agent'
+        publish = upgrade.os.replace
+        stdout = io.StringIO()
+
+        def change_receipt_after_rename(source, destination):
+            publish(source, destination)
+            final = Path(destination)
+            if final.name == 'upgrade.json':
+                final.write_bytes(b'{"synthetic":"changed receipt after rename"}')
+
+        with patch.object(upgrade.os, 'replace', side_effect=change_receipt_after_rename), contextlib.redirect_stdout(stdout):
+            with self.assertRaisesRegex(RuntimeError, 'Upgrade receipt publication uncertain'):
+                upgrade.install(self.new, self.old)
+        receipt, = upgrade.UPGRADES.glob('*/upgrade.json')
+        self.assertEqual(stdout.getvalue(), '')
+        self.assertEqual(upgrade.sha(target / 'index.js'), self.new)
+        self.assertEqual(upgrade.sha(receipt.parent / 'old-plugin/index.js'), self.old)
+        self.assertEqual(receipt.read_bytes(), b'{"synthetic":"changed receipt after rename"}')
+
     def test_sibling_plan_journal_does_not_break_flat_receipt_preservation(self):
         journal = self.root / 'plan-journals' / ('a' * 64)
         journal.mkdir(parents=True)

@@ -323,6 +323,32 @@ def verify_runtime_workspace(provenance):
         raise RuntimeError('Package runtime workspace differs from active credential/receipt workspace')
 
 
+def prepared_receipt_generation(file, payload):
+    """Pin the exact private receipt across a rename, or return no proof."""
+    def identity(value):
+        return (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns,
+                getattr(value, 'st_birthtime_ns', None), value.st_nlink)
+
+    try:
+        no_reparse(file)
+        before = file.lstat()
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size != len(payload):
+            return None
+        pin = identity(before)
+        with file.open('rb') as stream:
+            opened = os.fstat(stream.fileno())
+            if identity(opened) != pin or stream.read(len(payload) + 1) != payload:
+                return None
+            finished = os.fstat(stream.fileno())
+            if identity(finished) != pin or finished.st_ctime_ns != opened.st_ctime_ns:
+                return None
+        no_reparse(file)
+        current = file.lstat()
+        return pin if identity(current) == pin and current.st_ctime_ns == before.st_ctime_ns else None
+    except (OSError, RuntimeError):
+        return None
+
+
 def install(expected_sha, from_sha=None, package_root=None):
     stopped()
     source = SOURCE if package_root is None else absolute_root(package_root, 'Package root')
@@ -389,11 +415,23 @@ def install(expected_sha, from_sha=None, package_root=None):
         result = {'installed': str(target), 'version': '1.1.0', 'sha256': expected_sha, 'oldBundleBackup': str(run / 'old-plugin') if from_sha else None,
                   'receiptPins': str(run / 'receipt-pins.json'), 'receiptsUnchanged': True, 'restartPerformed': False}
         receipt_pending = run / 'upgrade.json.pending'
-        with receipt_pending.open('x', encoding='utf-8') as output:
-            json.dump(result, output, indent=2)
+        receipt_final = run / 'upgrade.json'
+        receipt_bytes = json.dumps(result, indent=2).encode('utf-8')
+        with receipt_pending.open('xb') as output:
+            output.write(receipt_bytes)
             output.flush()
             os.fsync(output.fileno())
+        receipt_generation = prepared_receipt_generation(receipt_pending, receipt_bytes)
+        if receipt_generation is None:
+            raise RuntimeError('Prepared upgrade receipt changed before swap')
+
+        def receipt_committed():
+            return (not os.path.lexists(receipt_pending)
+                    and prepared_receipt_generation(receipt_final, receipt_bytes) == receipt_generation
+                    and not os.path.lexists(receipt_pending))
+
         stopped()
+        publication_attempted = False
         try:
             if prior_identity is not None:
                 target.rename(old)
@@ -406,8 +444,21 @@ def install(expected_sha, from_sha=None, package_root=None):
                 raise RuntimeError('Receipt pins changed during upgrade')
             # Only the final name is a success receipt. A publication failure
             # must recover the same plugin state as any post-swap failure.
-            os.replace(receipt_pending, run / 'upgrade.json')
-        except BaseException:
+            if os.path.lexists(receipt_final):
+                raise RuntimeError('Upgrade receipt destination already exists')
+            if prepared_receipt_generation(receipt_pending, receipt_bytes) != receipt_generation:
+                raise RuntimeError('Prepared upgrade receipt changed before publication')
+            publication_attempted = True
+            os.replace(receipt_pending, receipt_final)
+        except BaseException as error:
+            if publication_attempted:
+                # An interrupt can arrive after the OS already committed the
+                # rename. Once committed, never reverse the package swap.
+                if receipt_committed():
+                    raise
+                if os.path.lexists(receipt_final) or \
+                        prepared_receipt_generation(receipt_pending, receipt_bytes) != receipt_generation:
+                    raise RuntimeError('Upgrade receipt publication uncertain; plugin state retained') from error
             # Recover an interrupted swap, but never move a concurrent foreign
             # target just because it occupies the installation pathname.
             if target.exists() or target.is_symlink():
@@ -421,6 +472,10 @@ def install(expected_sha, from_sha=None, package_root=None):
                     raise RuntimeError('Saved plugin changed during failed swap; rollback refused')
                 old.rename(target)
             raise
+        # A returned rename is not a readback. Keep both packages for inspection
+        # if the terminal receipt no longer binds the exact prepared file.
+        if not receipt_committed():
+            raise RuntimeError('Upgrade receipt publication uncertain; plugin state retained')
         print(json.dumps(result))
 
 def sync_provenance(expected_sha, package_root=None):
