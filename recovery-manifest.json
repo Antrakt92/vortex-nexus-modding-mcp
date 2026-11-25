@@ -700,7 +700,7 @@
     },
     {
       "path": "tools/modding/nexus-publish/publish.py",
-      "sha256_lf": "6dd41d39687118afb463ec1db653b4bd0d867887d176c12ab8dc5a66dd45f716"
+      "sha256_lf": "8aff9fcb71db9b6ebe64132c8a2bc0ba01b0a16a195a6673cd3fb511cd410705"
     },
     {
       "path": "tools/modding/nexus-publish/release-assets.py",
@@ -736,7 +736,7 @@
     },
     {
       "path": "tools/modding/nexus-publish/tests/test_publish.py",
-      "sha256_lf": "02923b4d5bc52131b9628d2248fa692c7975059801542a27199297cdf73eb32b"
+      "sha256_lf": "f9f7ec30073bc7f54117d4a573924247f3f84ad33229750a6ee3b7ea6b370b30"
     },
     {
       "path": "tools/modding/nexus-publish/tests/test_repair.py",
