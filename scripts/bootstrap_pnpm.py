@@ -13,6 +13,7 @@ import urllib.request
 from recovery import file_matches, no_links, relative as recovery_relative
 
 ROOT = Path(__file__).resolve().parents[1]
+PIN_LIMITS = {'archiveBytes': 64 * 1024 * 1024, 'fileCount': 20000, 'unpackedBytes': 128 * 1024 * 1024}
 
 
 def entries(data, lock):
@@ -68,21 +69,34 @@ def bootstrap(apply=False, archive_path=None):
     package = json.loads((vendor / 'package.json').read_text())
     if package.get('packageManager') != f'pnpm@{version}':
         raise ValueError('Pinned build-tool version differs from packageManager')
+    for name, maximum in PIN_LIMITS.items():
+        value = lock.get(name)
+        if type(value) is not int or not 0 < value <= maximum:
+            raise ValueError('Invalid pinned build-tool inventory bound: ' + name)
+    integrity = lock.get('integrity')
+    if not isinstance(integrity, str) or not re.fullmatch(r'sha512-[A-Za-z0-9+/]{86}==', integrity):
+        raise ValueError('Invalid pinned build-tool integrity')
+    encoded = integrity.removeprefix('sha512-')
+    if base64.b64encode(base64.b64decode(encoded)).decode() != encoded:
+        raise ValueError('Invalid pinned build-tool integrity')
     no_links(target)
-    if not apply:
-        return {'mode': 'plan', 'target': str(target), 'network_accessed': False}
-    archive_bytes = lock.get('archiveBytes')
-    if type(archive_bytes) is not int or archive_bytes <= 0:
-        raise ValueError('Invalid pinned build-tool archive size')
-    if archive_path:
+    plan = {'mode': 'plan', 'target': str(target), 'network_accessed': False}
+    if not apply and archive_path is None:
+        return plan
+    archive_bytes = lock['archiveBytes']
+    if archive_path is not None:
         archive_path = Path(archive_path).absolute()
         no_links(archive_path)
+        if not archive_path.is_file():
+            raise ValueError('Supplied build-tool archive must be an ordinary file')
         with archive_path.open('rb') as stream:
             data = stream.read(archive_bytes + 1)
     else:
         with urllib.request.urlopen(lock['tarball'], timeout=45) as response:
             data = response.read(archive_bytes + 1)
     files = entries(data, lock)
+    if not apply:
+        return {**plan, 'archive_verified': True, 'files': len(files)}
     if target.exists():
         actual = set()
         for path in target.rglob('*'):

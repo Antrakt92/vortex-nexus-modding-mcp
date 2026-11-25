@@ -40,13 +40,28 @@ def fixture(name='package/bin/tool.cjs', link=False, extra_names=()):
     return value, lock
 
 
+def fixture_workspace(root):
+    vendor = root / 'dependencies/vortex-mcp'
+    vendor.mkdir(parents=True)
+    data, pins = fixture()
+    version = '10.34.9'
+    lock = {**pins, 'package': 'pnpm', 'version': version,
+            'registryMetadata': f'https://registry.npmjs.org/pnpm/{version}',
+            'tarball': f'https://registry.npmjs.org/pnpm/-/pnpm-{version}.tgz',
+            'retainedUnderIgnored': f'.tooling/pnpm-{version}'}
+    (vendor / 'package.json').write_text(json.dumps({'packageManager': f'pnpm@{version}'}))
+    (vendor / 'PNPM-BOOTSTRAP.json').write_text(json.dumps(lock))
+    return vendor, data, lock
+
+
 class BootstrapTests(unittest.TestCase):
     def test_plan_rejects_inconsistent_source_and_destination_without_network(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             vendor = root / 'dependencies/vortex-mcp'; vendor.mkdir(parents=True)
             version = '10.34.9'
-            lock = {'package': 'pnpm', 'version': version,
+            _, pins = fixture()
+            lock = {**pins, 'package': 'pnpm', 'version': version,
                     'registryMetadata': f'https://registry.npmjs.org/pnpm/{version}',
                     'tarball': f'https://registry.npmjs.org/pnpm/-/pnpm-{version}.tgz',
                     'retainedUnderIgnored': f'.tooling/pnpm-{version}'}
@@ -82,16 +97,7 @@ class BootstrapTests(unittest.TestCase):
     def test_supplied_archive_is_read_only_to_the_pinned_size_plus_one(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            vendor = root / 'dependencies/vortex-mcp'
-            vendor.mkdir(parents=True)
-            data, pins = fixture()
-            version = '10.34.9'
-            lock = {**pins, 'package': 'pnpm', 'version': version,
-                    'registryMetadata': f'https://registry.npmjs.org/pnpm/{version}',
-                    'tarball': f'https://registry.npmjs.org/pnpm/-/pnpm-{version}.tgz',
-                    'retainedUnderIgnored': f'.tooling/pnpm-{version}'}
-            (vendor / 'PNPM-BOOTSTRAP.json').write_text(json.dumps(lock))
-            (vendor / 'package.json').write_text(json.dumps({'packageManager': f'pnpm@{version}'}))
+            vendor, data, lock = fixture_workspace(root)
             archive = root / 'supplied.tgz'
             oversized = data + b'oversized'
             archive.write_bytes(oversized)
@@ -113,7 +119,7 @@ class BootstrapTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'archive size differs'):
                     b.bootstrap(apply=True, archive_path=archive)
                 network.assert_not_called()
-            self.assertEqual(read_sizes, [pins['archiveBytes'] + 1])
+            self.assertEqual(read_sizes, [lock['archiveBytes'] + 1])
             self.assertFalse((vendor / '.tooling').exists())
 
             archive.write_bytes(data)
@@ -121,6 +127,72 @@ class BootstrapTests(unittest.TestCase):
                 self.assertEqual(b.bootstrap(apply=True, archive_path=archive)['state'], 'unpacked')
                 network.assert_not_called()
             self.assertEqual((vendor / lock['retainedUnderIgnored'] / 'bin/tool.cjs').read_bytes(), b'example')
+
+    def test_plan_validates_explicit_archive_without_touching_the_output_or_network(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            vendor, data, lock = fixture_workspace(root)
+            archive = root / 'supplied.tgz'
+            with mock.patch.object(b, 'ROOT', root), mock.patch.object(b.urllib.request, 'urlopen') as network:
+                with self.assertRaisesRegex(ValueError, 'ordinary file'):
+                    b.bootstrap(archive_path=archive)
+                with self.assertRaisesRegex(ValueError, 'ordinary file'):
+                    b.bootstrap(archive_path=root)
+                archive.write_bytes(data[:-1] + bytes([data[-1] ^ 1]))
+                with self.assertRaisesRegex(ValueError, 'archive integrity differs'):
+                    b.bootstrap(archive_path=archive)
+                archive.write_bytes(data)
+                planned = b.bootstrap(archive_path=archive)
+                self.assertEqual(planned, {'mode': 'plan', 'target': str(vendor / lock['retainedUnderIgnored']),
+                                           'network_accessed': False, 'archive_verified': True, 'files': 1})
+                self.assertNotIn('archive_verified', b.bootstrap())
+                network.assert_not_called()
+            self.assertFalse((vendor / '.tooling').exists())
+
+    def test_bad_archive_pins_refuse_before_network_and_output_in_both_modes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            vendor, _, lock = fixture_workspace(root)
+            for field, value in [('archiveBytes', True), ('archiveBytes', 0), ('archiveBytes', 2**60),
+                                 ('fileCount', 0), ('fileCount', 2**60), ('unpackedBytes', -1),
+                                 ('unpackedBytes', 2**60), ('integrity', 'sha512-invalid')]:
+                with self.subTest(field=field, value=value):
+                    (vendor / 'PNPM-BOOTSTRAP.json').write_text(json.dumps({**lock, field: value}))
+                    with mock.patch.object(b, 'ROOT', root), mock.patch.object(b.urllib.request, 'urlopen') as network:
+                        for apply in (False, True):
+                            with self.assertRaisesRegex(ValueError, 'Invalid pinned build-tool'):
+                                b.bootstrap(apply=apply)
+                        network.assert_not_called()
+                    self.assertFalse((vendor / '.tooling').exists())
+
+    def test_interrupted_unpack_can_retry_with_same_verified_archive(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            vendor, data, lock = fixture_workspace(root)
+            archive = root / 'supplied.tgz'
+            archive.write_bytes(data)
+            target = vendor / lock['retainedUnderIgnored']
+            previous = target.parent / 'pnpm-verified-previous'
+            previous.mkdir(parents=True)
+            (previous / 'proof').write_bytes(b'preserve')
+            write = Path.write_bytes
+
+            def interrupted(path, value):
+                if path.name == 'tool.cjs':
+                    raise OSError('synthetic unpack interruption')
+                return write(path, value)
+
+            with mock.patch.object(b, 'ROOT', root), mock.patch.object(b.urllib.request, 'urlopen') as network:
+                with mock.patch.object(Path, 'write_bytes', interrupted):
+                    with self.assertRaisesRegex(OSError, 'synthetic unpack interruption'):
+                        b.bootstrap(apply=True, archive_path=archive)
+                self.assertFalse(target.exists())
+                self.assertEqual(list(target.parent.iterdir()), [previous])
+                self.assertEqual(b.bootstrap(apply=True, archive_path=archive)['state'], 'unpacked')
+                self.assertEqual(b.bootstrap(apply=True, archive_path=archive)['state'], 'already_verified')
+                self.assertEqual((target / 'bin/tool.cjs').read_bytes(), b'example')
+                self.assertEqual((previous / 'proof').read_bytes(), b'preserve')
+                network.assert_not_called()
 
     def test_pinned_content(self):
         data, lock = fixture()

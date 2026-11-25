@@ -484,7 +484,7 @@
     },
     {
       "path": "docs/RESTORE.md",
-      "sha256_lf": "92a7fe4aaf64bf71ea7d83d4648c3fa6c43b2012c2bd82a74d9ef6fb41f038f9"
+      "sha256_lf": "942f71bf3bcc63a912f05a8bc331ea2e0e498f083006bd18222ce79534226ecb"
     },
     {
       "path": "docs/STOCK-LOCAL-INSTALL.md",
@@ -564,7 +564,7 @@
     },
     {
       "path": "scripts/bootstrap_pnpm.py",
-      "sha256_lf": "0b367090cb7ff5bcec0886a71be94c263f38fc0db76258e4e99f1ace663290c0"
+      "sha256_lf": "c1349e76c336dec7004a1e6597c0363732984eaa0b2963e4575c9fca7338f6d3"
     },
     {
       "path": "scripts/recovery.py",
@@ -584,7 +584,7 @@
     },
     {
       "path": "tests/test_bootstrap.py",
-      "sha256_lf": "8e66fb2a5bfc94580817c4d43fdd21d3a2d5b5c9ad451e6e5d6db831bf0c5195"
+      "sha256_lf": "369339c2cc2850e4a8ca504f083ed6262e724ac8a608478f6ad1d29a3752fe68"
     },
     {
       "path": "tests/test_native_runtime_work_products.py",
