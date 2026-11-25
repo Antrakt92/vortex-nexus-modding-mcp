@@ -106,6 +106,40 @@ test('diagnostic schema rejects missing, mistyped and negative observations', as
   }
 });
 
+test('combined diagnostics reject contradictory availability and consistency claims', async () => {
+  for (const mutate of [
+    v => { v.nativeConflicts.available = true; },
+    v => Object.assign(v.nativeConflicts, {count: 3, hasUnsolvedConflicts: false, available: true, consistent: true}),
+    v => { v.collectionSession.present = true; },
+    v => { v.collectionSession.available = true; },
+    v => Object.assign(v.collectionSession, {available: true, present: false, stalled: false}),
+    v => { v.collectionSession.counters.installedCount = 1; },
+  ]) {
+    const value = completeCollection(); mutate(value);
+    const reply = await clientRemote('tools/call', {name: 'inspect_session', arguments: {diagnostics: true}},
+      async (_method, {name}) => name === 'health' ? content(health()) : name === 'read_collection_health'
+        ? {...content(value), structuredContent: value} : content([]));
+    const result = reply.structuredContent;
+    assert.equal(reply.isError, true);
+    assert.equal(result.status, 'partial');
+    assert.deepEqual(result.errors, [{tool: 'read_collection_health', code: 'INVALID_COLLECTION_HEALTH_RESPONSE'}]);
+    assert.deepEqual(result.results.list_downloads, []);
+    assert.equal(result.results.read_collection_health, undefined);
+  }
+});
+
+test('combined diagnostics retain partial observations and honest inconsistency', async () => {
+  const value = completeCollection();
+  Object.assign(value.nativeConflicts, {count: 3, hasUnsolvedConflicts: false, available: true, consistent: false});
+  Object.assign(value.collectionSession, {available: true, present: true});
+  value.collectionSession.counters.installedCount = 2;
+  const result = await inspectSession({diagnostics: true,
+    call: async name => name === 'health' ? health() : name === 'read_collection_health' ? value : []});
+  assert.equal(result.status, 'ok');
+  assert.deepEqual(result.results.read_collection_health, value);
+  assert.equal(result.snapshotAtomic, false);
+});
+
 function completeCollection() {
   return {nativeConflicts: {count: null, hasUnsolvedConflicts: null, available: false, consistent: false, conflictsCalculated: false},
     collectionSession: {available: false, present: null, stalled: null,
