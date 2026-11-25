@@ -12,16 +12,30 @@ function acquire(kind) {
 }
 function body(req, signal) {
   return new Promise((resolve, reject) => {
-    let bytes = 0; const chunks = [];
+    let bytes = 0, buffer = Buffer.allocUnsafe(4096);
     const finish = (error, value) => {
       req.off('data', data); req.off('end', end); req.off('error', fail); req.off('aborted', aborted); signal.removeEventListener('abort', aborted);
       if (error) reject(error); else resolve(value);
     };
     const fail = () => finish(Object.assign(Error('HTTP_BODY_ABORTED'), { status: 400 }));
     const aborted = () => fail();
-    const data = chunk => { bytes += chunk.length; if (bytes > LIMITS.bytes) { req.pause(); finish(Object.assign(Error('HTTP_BODY_LIMIT'), { status: 413 })); }
-      else chunks.push(chunk); };
-    const end = () => { try { const parsed = parseStrictJSON(Buffer.concat(chunks, bytes), { maxBytes: LIMITS.bytes });
+    const data = chunk => {
+      if (!Buffer.isBuffer(chunk)) return finish(Object.assign(Error('HTTP_BODY_INVALID'), { status: 400 }));
+      const length = bytes + chunk.length;
+      if (length > LIMITS.bytes) {
+        req.pause();
+        return finish(Object.assign(Error('HTTP_BODY_LIMIT'), { status: 413 }));
+      }
+      if (length > buffer.length) {
+        // Bound retained storage independently of how the upload is split.
+        const expanded = Buffer.allocUnsafe(Math.min(LIMITS.bytes, Math.max(length, buffer.length * 2)));
+        buffer.copy(expanded, 0, 0, bytes);
+        buffer = expanded;
+      }
+      chunk.copy(buffer, bytes);
+      bytes = length;
+    };
+    const end = () => { try { const parsed = parseStrictJSON(buffer.subarray(0, bytes), { maxBytes: LIMITS.bytes });
       if (Array.isArray(parsed) && (parsed.length === 0 || parsed.length > LIMITS.batch)) finish(Object.assign(Error('HTTP_BATCH_LIMIT'), { status: 413 }));
       else finish(null, parsed);
     } catch { finish(Object.assign(Error('HTTP_BODY_INVALID'), { status: 400 })); } };
