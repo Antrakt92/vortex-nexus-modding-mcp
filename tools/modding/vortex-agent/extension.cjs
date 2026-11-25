@@ -109,7 +109,8 @@ function register(server, api, options = {}) {
   });
   add('list_downloads', { ...read, states: z.array(id).max(10).default(['finished', 'started', 'paused', 'failed', 'init', 'finalizing']) }, a => listDownloads(api, selectors, a, catalog));
   add('list_mod_rules', { gameId: id.optional(), modId: id }, a => control.listModRules(api, a.modId, a.gameId));
-  add('find_mod_dependents', { gameId: id.optional(), modId: id }, a => control.findModDependents(api, a.modId, a.gameId));
+  add('find_mod_dependents', { gameId: id.optional(), modId: id }, a => control.findModDependents(api, a.modId, a.gameId), false,
+    'Find mod rules that explicitly refer to this mod ID or ID hint. Before changing an installed mod, use read_mod_lifecycle for native requires matches including collection file and tag references, usage in other profiles, and archive references.');
   add('read_mod_lifecycle', { gameId: id.optional(), modIds: z.array(id).min(1).max(20) },
     a => readModLifecycle(api, selectors, util, a), false,
     'Before preparing installation, update or removal helpers, inspect 1–20 exact installed mod IDs in one bounded state read: usage in every game profile including pending removal, native requires matches including collection file references, and archive references across games. No filesystem scan or mutation. Missing native matcher or exceeded limits fails closed. Metadata only; never authorizes installation/removal or proves deployed bytes.');
@@ -125,7 +126,8 @@ function register(server, api, options = {}) {
     a => assessInstalledCandidates(api,selectors,util,a), false,
     'Assess up to 20 exact installed old/candidate pairs against an installed collection and incoming requires rules using native identity AND recorded installation-spec matching. Reports conflicts, uncertainty, all-profile usage and opaque fingerprints. No raw rules, filesystem scan, download or mutation. A compatible recorded variant is NOT migration readiness, payload/deployment proof or permission to switch/replace/remove; effectsAllowed and migrationReady remain false.');
   add('list_file_conflicts', { ...read, nameFilter: id.optional() }, a => conflicts(api, selectors, a));
-  add('list_known_mod_conflicts', { gameId: id.optional() }, a => control.listKnownModConflicts(api, a.gameId));
+  add('list_known_mod_conflicts', { gameId: id.optional() }, a => control.listKnownModConflicts(api, a.gameId), false,
+    'List conflict rules recorded on enabled mods. Target enabled status uses an explicit ID or ID hint. Use list_unsolved_conflicts for the recorded unresolved file pairs in the active profile.');
   add('list_unsolved_conflicts', {}, () => unresolvedConflicts(api, selectors, util));
   add('read_collection_health', {}, () => collectionHealth(api, selectors));
   add('read_collection_wizard', {}, () => wizard.readiness(), false,

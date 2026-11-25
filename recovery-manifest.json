@@ -928,7 +928,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/extension.cjs",
-      "sha256_lf": "b9cc0d5a766031d2422743a338bff862c963ea56ea9f0672c8a037f920f976a3"
+      "sha256_lf": "c16fb7cd84db2c14bd66b582cda3191f2bcb3ed9499e223ff7723d6d9d22b7bf"
     },
     {
       "path": "tools/modding/vortex-agent/file-proof-backend.cjs",
@@ -3276,7 +3276,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/wire.test.mjs",
-      "sha256_lf": "218ac219d7edbe4857b8bea18fe71c2aa46feaf4c688063689d734995acf2ed2"
+      "sha256_lf": "e341f4c45cabe7e703fc0e0e35f34885ccad7b281bf6ae88eac215a5102d193b"
     },
     {
       "path": "tools/modding/workspace_paths.py",

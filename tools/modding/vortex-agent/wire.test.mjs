@@ -146,6 +146,12 @@ test('built extension wire: allowlist, SDK2 HTTP, legacy bridge, schemas and bro
       'read_mod_record_fingerprints',
     ].sort());
     assert.equal(list.tools.some(tool => tool.name === 'install_download'), false);
+    const dependents = list.tools.find(tool => tool.name === 'find_mod_dependents');
+    assert.equal(dependents.annotations.readOnlyHint, true);
+    assert.match(dependents.description, /explicitly.*ID hint.*read_mod_lifecycle/);
+    const conflictRules = list.tools.find(tool => tool.name === 'list_known_mod_conflicts');
+    assert.equal(conflictRules.annotations.readOnlyHint, true);
+    assert.match(conflictRules.description, /rules recorded.*list_unsolved_conflicts/);
     const fingerprints=list.tools.find(tool=>tool.name==='read_mod_record_fingerprints');
     assert.equal(fingerprints.annotations.readOnlyHint,true);
     assert.equal(fingerprints.inputSchema.additionalProperties,false);
