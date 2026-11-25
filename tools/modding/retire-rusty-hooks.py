@@ -79,9 +79,9 @@ def read_file(path):
             'generation': generation(after), 'data': content, 'mode': stat.S_IMODE(after.st_mode)}
 
 
-def check_file(path, expected):
+def check_file(path, expected, code='HOOK_FILE_CHANGED'):
     current = read_file(path)
-    require(current['generation'] == expected['generation'] and current['data'] == expected['data'], 'HOOK_FILE_CHANGED')
+    require(current['generation'] == expected['generation'] and current['data'] == expected['data'], code)
 
 
 def check_config(path, expected):
@@ -104,6 +104,24 @@ def new_file(path, content, mode=0o600):
     require(proof['generation'][:2] == node and proof['data'] == content, 'HOOK_FILE_CHANGED')
     check_dirs(pins)
     return proof
+
+
+def publish_completion(path, content, verify_inputs):
+    pins = directory_pins(path.parent)
+    pending = path.with_name(path.name + '.pending')
+    staged = new_file(pending, content)
+    check_dirs(pins)
+    verify_inputs()
+    if os.name == 'nt':
+        pending.rename(path)  # Windows refuses an existing destination.
+    else:
+        os.link(pending, path)
+    published = read_file(path)
+    require(published['generation'][:2] == staged['generation'][:2] and published['data'] == content, 'HOOK_FILE_CHANGED')
+    check_dirs(pins)
+    if os.name != 'nt':
+        check_file(pending, published)
+        pending.unlink()
 
 
 def inspect(repository):
@@ -154,34 +172,48 @@ def apply(repository):
     ledger = new_file(git / LEDGER, encoded(intent))
     check_dirs(pins); backup.mkdir()
     backup_pins = directory_pins(backup)
+    backups = {}
     for name, proof in state['files'].items():
         check_dirs(pins + backup_pins)
-        new_file(backup / name, proof['data'], proof['mode'])
+        backups[name] = new_file(backup / name, proof['data'], proof['mode'])
     manifest = new_file(backup / 'manifest.json', encoded(intent))
     replacement = new_file(backup / 'pre-commit.replacement', MINIMAL_HOOK, 0o755)
     # Finish all admission and backup verification before changing active hooks.
     check_dirs(pins + backup_pins); check_file(git / LEDGER, ledger)
     for name, proof in state['files'].items():
         check_file(hooks / name, proof)
-        require(read_file(backup / name)['data'] == proof['data'], 'HOOK_BACKUP_CHANGED')
+        check_file(backup / name, backups[name], 'HOOK_BACKUP_CHANGED')
     check_file(backup / 'manifest.json', manifest)
     check_config(git / 'config', state['config'])
     for name, proof in state['files'].items():
         check_dirs(pins + backup_pins); check_file(git / LEDGER, ledger)
+        check_file(backup / name, backups[name], 'HOOK_BACKUP_CHANGED')
         check_file(hooks / name, proof)
         hooks.joinpath(name).unlink()  # Exact admitted regular leaf only; never recursive.
     check_dirs(pins + backup_pins); check_file(backup / 'pre-commit.replacement', replacement)
     check_config(git / 'config', state['config'])
     # link is atomic and refuses an existing destination on Windows and POSIX.
-    os.link(backup / 'pre-commit.replacement', hooks / 'pre-commit')
-    require(read_file(hooks / 'pre-commit')['data'] == MINIMAL_HOOK, 'HOOK_REPLACEMENT_CHANGED')
-    for name in CATALOG:
-        require(name == 'pre-commit' or not exists(hooks / name), 'HOOK_RETIREMENT_CHANGED')
-    check_dirs(pins + backup_pins); check_file(git / LEDGER, ledger)
-    for name, proof in state['files'].items():
-        require(read_file(backup / name)['data'] == proof['data'], 'HOOK_BACKUP_CHANGED')
-    new_file(backup / 'completed.json', encoded({'schema': 'rusty-hook-retirement-completed/1',
-             'retiredFiles': len(CATALOG), 'preCommitSHA256': hashlib.sha256(MINIMAL_HOOK).hexdigest()}))
+    active_hook = hooks / 'pre-commit'
+    os.link(backup / 'pre-commit.replacement', active_hook)
+    active = read_file(active_hook)
+    require(active['generation'][:2] == replacement['generation'][:2] and active['data'] == MINIMAL_HOOK,
+            'HOOK_REPLACEMENT_CHANGED')
+
+    def verify_completion_inputs():
+        check_dirs(pins + backup_pins)
+        check_file(git / LEDGER, ledger)
+        check_file(backup / 'manifest.json', manifest)
+        check_config(git / 'config', state['config'])
+        check_file(active_hook, active, 'HOOK_REPLACEMENT_CHANGED')
+        check_file(backup / 'pre-commit.replacement', active, 'HOOK_REPLACEMENT_CHANGED')
+        for name, proof in backups.items():
+            require(name == active_hook.name or not exists(hooks / name), 'HOOK_RETIREMENT_CHANGED')
+            check_file(backup / name, proof, 'HOOK_BACKUP_CHANGED')
+
+    verify_completion_inputs()
+    completion = {'schema': 'rusty-hook-retirement-completed/1', 'retiredFiles': len(CATALOG),
+                  'preCommitSHA256': hashlib.sha256(MINIMAL_HOOK).hexdigest()}
+    publish_completion(backup / 'completed.json', encoded(completion), verify_completion_inputs)
     return {'schema': 'rusty-hook-retirement-result/1', 'completed': True, 'backup': str(backup),
             'retiredFiles': len(CATALOG), 'effectsPerformed': True}
 
