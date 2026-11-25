@@ -6,21 +6,15 @@ import crypto from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import {captureDiskBaseline, LIMITS} from './capture-disk-baseline.mjs';
+import fixtureDirectories from './test-fixture-directory.cjs';
 
 const scratch = fileURLToPath(new URL('../../../local-state/', import.meta.url));
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const node = file => {const s = fs.statSync(file, {bigint: true}); return `${s.dev}:${s.ino}`;};
 const norm = file => path.resolve(file).replace(/\\/g, '/').toLowerCase();
-function parents(dir) {
-  for (let current = path.resolve(dir); ; current = path.dirname(current)) {
-    if (fs.existsSync(current)) assert.equal(fs.lstatSync(current).isSymbolicLink(), false);
-    if (current === path.dirname(current)) return;
-  }
-}
 function write(file, value) {fs.mkdirSync(path.dirname(file), {recursive: true}); fs.writeFileSync(file, value);}
-function fixture() {
-  parents(scratch); fs.mkdirSync(scratch, {recursive: true});
-  const root = fs.mkdtempSync(path.join(scratch, 'disk-baseline-test-'));
+function fixture(t) {
+  const root = fixtureDirectories.fixtureDirectory(t, scratch, 'disk-baseline-test-');
   const game = path.join(root, 'game'), stage = path.join(root, 'stage'), downloads = path.join(root, 'downloads');
   for (const dir of [game, stage, downloads]) fs.mkdirSync(dir);
   const relative = 'archive/pc/mod/own.archive', staged = path.join(stage, 'Owner', relative), deployed = path.join(game, relative);
@@ -54,8 +48,8 @@ function duringRead(f, effect, fn) {
   } finally {fs.openSync = originalOpen; fs.readSync = originalRead;}
 }
 
-test('dry plan performs metadata validation without payload reads or output', () => {
-  const f = fixture(), original = fs.openSync;
+test('dry plan performs metadata validation without payload reads or output', t => {
+  const f = fixture(t), original = fs.openSync;
   try {
     fs.openSync = (file, ...args) => {assert.notEqual(norm(file), norm(f.deployed)); assert.notEqual(norm(file), norm(f.staged)); return original(file, ...args);};
     const result = captureDiskBaseline(f.options);
@@ -65,8 +59,8 @@ test('dry plan performs metadata validation without payload reads or output', ()
   } finally {fs.openSync = original;}
 });
 
-test('apply hashes bounded FDs, shares hardlink hashes and emits the exact consumer schema', () => {
-  const f = fixture(), result = captureDiskBaseline({...f.options, apply: true});
+test('apply hashes bounded FDs, shares hardlink hashes and emits the exact consumer schema', t => {
+  const f = fixture(t), result = captureDiskBaseline({...f.options, apply: true});
   const ledger = JSON.parse(fs.readFileSync(result.file, 'utf8'));
   assert.equal(hash(fs.readFileSync(result.file)), result.sha256);
   assert.equal(ledger.schema, 'root-current-physical-ledger/1');
@@ -84,8 +78,8 @@ test('apply hashes bounded FDs, shares hardlink hashes and emits the exact consu
   assert.throws(() => captureDiskBaseline({...f.options, apply: true}), /DISK_BASELINE_NEW_OUTPUT_REQUIRED/);
 });
 
-test('required explicit prefs include stage configs and only two closed LocalAppData settings', () => {
-  const f = fixture(), old = process.env.LOCALAPPDATA;
+test('required explicit prefs include stage configs and only two closed LocalAppData settings', t => {
+  const f = fixture(t), old = process.env.LOCALAPPDATA;
   const local = path.join(f.root, 'local');
   try {
     process.env.LOCALAPPDATA = local;
@@ -98,9 +92,9 @@ test('required explicit prefs include stage configs and only two closed LocalApp
   } finally {if (old === undefined) delete process.env.LOCALAPPDATA; else process.env.LOCALAPPDATA = old;}
 });
 
-test('stale, unknown, wrong root ID and duplicate inputs refuse before output', () => {
+test('stale, unknown, wrong root ID and duplicate inputs refuse before output', t => {
   for (const kind of ['stale','unknown','root','duplicate']) {
-    const f = fixture();
+    const f = fixture(t);
     if (kind === 'stale') f.value.observedAtUTC = new Date(Date.now() - LIMITS.freshnessMs - 1000).toISOString();
     if (kind === 'unknown') f.value.approved = true;
     if (kind === 'root') f.value.health.filesystemIds.stagingPath = '1:2';
@@ -110,9 +104,9 @@ test('stale, unknown, wrong root ID and duplicate inputs refuse before output', 
   }
 });
 
-test('explicit bounded profile context survives plans and own-fixture capture without native admission', () => {
+test('explicit bounded profile context survives plans and own-fixture capture without native admission', t => {
   for (const profileId of ['ptndev1016', 'ihUVbd-eX', 'other', 'A'.repeat(200)]) {
-    const f = fixture(); f.value.health.profileId = profileId; const options = f.refresh();
+    const f = fixture(t); f.value.health.profileId = profileId; const options = f.refresh();
     const plan = captureDiskBaseline(options);
     assert.deepEqual(plan.health, f.value.health);
     assert.equal(plan.nativeContextVerified, false); assert.equal(plan.effectsAllowed, false);
@@ -128,20 +122,20 @@ test('explicit bounded profile context survives plans and own-fixture capture wi
   }
 });
 
-test('malformed or absent profile IDs and changed raw context pins are refused before output', () => {
+test('malformed or absent profile IDs and changed raw context pins are refused before output', t => {
   for (const profileId of [undefined, null, 1, {}, [], '', 'A'.repeat(201), 'with space', 'bad/profile', 'bad\\profile', 'x\n', '\u00e9']) {
-    const f = fixture(); f.value.health.profileId = profileId;
+    const f = fixture(t); f.value.health.profileId = profileId;
     assert.throws(() => captureDiskBaseline({...f.refresh(), apply: true}), /DISK_BASELINE_INVALID_CONTEXT/);
     assert.equal(fs.existsSync(f.output), false);
   }
-  const f = fixture(), oldPin = f.options.inputSHA256;
+  const f = fixture(t), oldPin = f.options.inputSHA256;
   f.value.health.profileId = 'ihUVbd-eX'; f.refresh();
   assert.throws(() => captureDiskBaseline({...f.options, inputSHA256: oldPin, apply: true}), /DISK_BASELINE_INPUT_SHA_DIFFERS/);
   assert.equal(fs.existsSync(f.output), false);
 });
 
-test('duplicate JSON keys, wrong raw SHA and unbounded preference scope cannot admit a ledger', () => {
-  const f = fixture();
+test('duplicate JSON keys, wrong raw SHA and unbounded preference scope cannot admit a ledger', t => {
+  const f = fixture(t);
   assert.throws(() => captureDiskBaseline({...f.options, inputSHA256: '0'.repeat(64)}), /DISK_BASELINE_INPUT_SHA_DIFFERS/);
   const foreign = path.join(f.root, 'unrelated.json'); write(foreign, '{}'); f.value.preferenceCandidates.push(foreign);
   assert.throws(() => captureDiskBaseline(f.refresh()), /DISK_BASELINE_PREFERENCE_SCOPE_REFUSED/);
@@ -149,15 +143,15 @@ test('duplicate JSON keys, wrong raw SHA and unbounded preference scope cannot a
   assert.throws(() => captureDiskBaseline({...f.options, inputSHA256: hash(fs.readFileSync(f.input))}));
 });
 
-test('missing required preference is a refusal rather than silently reduced coverage', () => {
-  const f = fixture(); fs.unlinkSync(f.explicit);
+test('missing required preference is a refusal rather than silently reduced coverage', t => {
+  const f = fixture(t); fs.unlinkSync(f.explicit);
   assert.throws(() => captureDiskBaseline({...f.options, apply: true}));
   assert.equal(fs.existsSync(f.output), false);
 });
 
-test('custom targets, traversal, Windows aliases, duplicate paths and non-hardlinks refuse', () => {
+test('custom targets, traversal, Windows aliases, duplicate paths and non-hardlinks refuse', t => {
   for (const kind of ['target','traversal','dot','device','duplicate','copy']) {
-    const f = fixture();
+    const f = fixture(t);
     if (kind === 'target') f.manifest.files[0].target = 'elsewhere';
     if (kind === 'traversal') f.manifest.files[0].relPath = '../outside';
     if (kind === 'dot') f.manifest.files[0].relPath = 'trailing./x';
@@ -169,35 +163,35 @@ test('custom targets, traversal, Windows aliases, duplicate paths and non-hardli
   }
 });
 
-test('default target permits only absent or empty string, never malformed falsy or object values', () => {
+test('default target permits only absent or empty string, never malformed falsy or object values', t => {
   for (const target of [false, 0, null, {}, []]) {
-    const f = fixture(); f.manifest.files[0].target = target;
+    const f = fixture(t); f.manifest.files[0].target = target;
     assert.throws(() => captureDiskBaseline(f.refresh()), /DISK_BASELINE_CUSTOM_TARGET_REFUSED/);
     assert.equal(fs.existsSync(f.output), false);
   }
-  const omitted = fixture(); delete omitted.manifest.files[0].target;
+  const omitted = fixture(t); delete omitted.manifest.files[0].target;
   assert.equal(captureDiskBaseline(omitted.refresh()).status, 'plan');
 });
 
-test('current supported manifest must explicitly name the expected game even with identical root paths', () => {
+test('current supported manifest must explicitly name the expected game even with identical root paths', t => {
   for (const gameId of ['other-game', undefined, null, 0]) {
-    const f = fixture(); f.manifest.gameId = gameId;
+    const f = fixture(t); f.manifest.gameId = gameId;
     assert.throws(() => captureDiskBaseline(f.refresh()), /DISK_BASELINE_MANIFEST_REFUSED/);
     assert.equal(fs.existsSync(f.output), false);
   }
 });
 
-test('new preference during hashing is found by final discovery', () => {
-  const f = fixture();
+test('new preference during hashing is found by final discovery', t => {
+  const f = fixture(t);
   duringRead(f, () => write(path.join(path.dirname(f.cet), 'new.json'), '{}'), () => {
     assert.throws(() => captureDiskBaseline({...f.options, apply: true}), /DISK_BASELINE_DISCOVERY_CHANGED/);
   });
   assert.equal(fs.existsSync(f.output), false);
 });
 
-test('manifest or explicit preference changes during hashing cannot publish the baseline', () => {
+test('manifest or explicit preference changes during hashing cannot publish the baseline', t => {
   for (const kind of ['manifest','preference']) {
-    const f = fixture();
+    const f = fixture(t);
     duringRead(f, () => fs.appendFileSync(kind === 'manifest' ? f.manifestPath : f.explicit, '\n'), () => {
       assert.throws(() => captureDiskBaseline({...f.options, apply: true}), /DISK_BASELINE_FILE_CHANGED/);
     });
@@ -205,8 +199,8 @@ test('manifest or explicit preference changes during hashing cannot publish the 
   }
 });
 
-test('actual source swap between path observation and FD open is refused before hashing replacement', () => {
-  const f = fixture(), original = fs.openSync; let swapped = false;
+test('actual source swap between path observation and FD open is refused before hashing replacement', t => {
+  const f = fixture(t), original = fs.openSync; let swapped = false;
   try {
     fs.openSync = (file, ...args) => {
       if (!swapped && norm(file) === norm(f.deployed)) {
@@ -220,9 +214,9 @@ test('actual source swap between path observation and FD open is refused before 
   assert.equal(hash(fs.readFileSync(f.staged)), hash(f.payload));
 });
 
-test('actual writes and new hardlink aliases during FD hashing invalidate the checkpoint', () => {
+test('actual writes and new hardlink aliases during FD hashing invalidate the checkpoint', t => {
   for (const kind of ['write','link']) {
-    const f = fixture();
+    const f = fixture(t);
     duringRead(f, () => kind === 'write' ? fs.appendFileSync(f.staged, 'changed') : fs.linkSync(f.staged, path.join(f.stage, 'alias.bin')), () => {
       assert.throws(() => captureDiskBaseline({...f.options, apply: true}), /DISK_BASELINE_|PHYSICAL_PROOF_CHANGED/);
     });
@@ -230,32 +224,38 @@ test('actual writes and new hardlink aliases during FD hashing invalidate the ch
   }
 });
 
-test('context root replacement while hashing is not accepted as the original filesystem context', () => {
-  const f = fixture();
+test('context root replacement while hashing is not accepted as the original filesystem context', t => {
+  const f = fixture(t);
   duringRead(f, () => {fs.renameSync(f.downloads, f.downloads + '-old'); fs.mkdirSync(f.downloads);}, () => {
     assert.throws(() => captureDiskBaseline({...f.options, apply: true}), /DISK_BASELINE_PARENT_CHANGED|DISK_BASELINE_FILE_CHANGED/);
   });
   assert.equal(fs.existsSync(f.output), false);
 });
 
-test('reparse discovery and reparse output ancestors are refused without traversing them', () => {
-  const f = fixture(), foreign = path.join(f.root, 'foreign'); fs.mkdirSync(foreign);
+test('reparse discovery and reparse output ancestors are refused without traversing them', async t => {
+  const f = fixture(t), foreign = path.join(f.root, 'foreign'); fs.mkdirSync(foreign);
   const link = path.join(path.dirname(f.cet), 'linked'); fs.symlinkSync(foreign, link, process.platform === 'win32' ? 'junction' : 'dir');
   assert.throws(() => captureDiskBaseline(f.options), /DISK_BASELINE_REPARSE_OR_PARENT/);
-  const clean = fixture(), outLink = path.join(clean.root, 'linked'); fs.symlinkSync(foreign, outLink, process.platform === 'win32' ? 'junction' : 'dir');
-  assert.throws(() => captureDiskBaseline({...clean.options, output: path.join(outLink, 'out'), apply: true}), /DISK_BASELINE_REPARSE_OR_PARENT/);
+  let ownRoot;
+  await t.test('fixture teardown unlinks the junction and leaves the other root alone', subtest => {
+    const clean = fixture(subtest), outLink = path.join(clean.root, 'linked');
+    ownRoot = clean.root;
+    fs.symlinkSync(foreign, outLink, process.platform === 'win32' ? 'junction' : 'dir');
+    assert.throws(() => captureDiskBaseline({...clean.options, output: path.join(outLink, 'out'), apply: true}), /DISK_BASELINE_REPARSE_OR_PARENT/);
+  });
+  assert.equal(fs.existsSync(ownRoot), false);
   assert.deepEqual(fs.readdirSync(foreign), []);
 });
 
-test('fixed candidate and manifest budgets refuse oversized metadata without huge disk files', () => {
-  const a = fixture(); a.value.preferenceCandidates = Array(LIMITS.candidates + 1).fill(a.explicit);
+test('fixed candidate and manifest budgets refuse oversized metadata without huge disk files', t => {
+  const a = fixture(t); a.value.preferenceCandidates = Array(LIMITS.candidates + 1).fill(a.explicit);
   assert.throws(() => captureDiskBaseline(a.refresh()), /DISK_BASELINE_INVALID_CANDIDATES/);
-  const b = fixture(); b.manifest.files = Array(LIMITS.pairs + 1).fill(b.manifest.files[0]);
+  const b = fixture(t); b.manifest.files = Array(LIMITS.pairs + 1).fill(b.manifest.files[0]);
   assert.throws(() => captureDiskBaseline(b.refresh()), /DISK_BASELINE_MANIFEST_REFUSED/);
 });
 
-test('a destination appearing immediately before mkdir is preserved, never overwritten or adopted', () => {
-  const f = fixture(), original = fs.mkdirSync; let appeared = false;
+test('a destination appearing immediately before mkdir is preserved, never overwritten or adopted', t => {
+  const f = fixture(t), original = fs.mkdirSync; let appeared = false;
   try {
     fs.mkdirSync = (dir, ...args) => {
       if (path.resolve(dir) === f.output && !appeared) {appeared = true; original(dir); fs.writeFileSync(path.join(dir, 'foreign'), 'keep');}
@@ -266,8 +266,8 @@ test('a destination appearing immediately before mkdir is preserved, never overw
   assert.equal(appeared, true); assert.deepEqual(fs.readdirSync(f.output), ['foreign']);
 });
 
-test('partial write is retained and cannot be overwritten or automatically retried', () => {
-  const f = fixture(), original = fs.writeFileSync;
+test('partial write is retained and cannot be overwritten or automatically retried', t => {
+  const f = fixture(t), original = fs.writeFileSync;
   try {
     fs.writeFileSync = (file, bytes, ...args) => {
       if (typeof file === 'number') {original(file, bytes.subarray(0, 10), ...args); throw Error('OWN_WRITE_FAILED');}
@@ -279,8 +279,8 @@ test('partial write is retained and cannot be overwritten or automatically retri
   assert.throws(() => captureDiskBaseline({...f.options, apply: true}), /DISK_BASELINE_NEW_OUTPUT_REQUIRED/);
 });
 
-test('an identical-byte hardlink replacement of the output after close is not adopted', () => {
-  const f = fixture(), originalOpen = fs.openSync, originalClose = fs.closeSync;
+test('an identical-byte hardlink replacement of the output after close is not adopted', t => {
+  const f = fixture(t), originalOpen = fs.openSync, originalClose = fs.closeSync;
   const file = path.join(f.output, 'ROOT-DISK-BEFORE.json'); let outputFD, changed = false;
   try {
     fs.openSync = (name, flags, ...args) => {
@@ -301,8 +301,8 @@ test('an identical-byte hardlink replacement of the output after close is not ad
   assert.equal(changed, true); assert.ok(fs.statSync(file).nlink >= 2);
 });
 
-test('late output mutation during the final scan cannot receive a stale success SHA', () => {
-  const f = fixture(), original = fs.opendirSync;
+test('late output mutation during the final scan cannot receive a stale success SHA', t => {
+  const f = fixture(t), original = fs.opendirSync;
   const file = path.join(f.output, 'ROOT-DISK-BEFORE.json'); let changed = false;
   try {
     fs.opendirSync = (...args) => {
@@ -314,8 +314,8 @@ test('late output mutation during the final scan cannot receive a stale success 
   assert.equal(changed, true); assert.equal(fs.readFileSync(file, 'utf8').endsWith(' '), true);
 });
 
-test('a reparse replacement immediately after output mkdir does not receive any baseline write', () => {
-  const f = fixture(), original = fs.mkdirSync, foreign = path.join(f.root, 'foreign'); original(foreign);
+test('a reparse replacement immediately after output mkdir does not receive any baseline write', t => {
+  const f = fixture(t), original = fs.mkdirSync, foreign = path.join(f.root, 'foreign'); original(foreign);
   let changed = false;
   try {
     fs.mkdirSync = (name, ...args) => {
@@ -331,8 +331,8 @@ test('a reparse replacement immediately after output mkdir does not receive any 
   assert.equal(changed, true); assert.deepEqual(fs.readdirSync(foreign), []);
 });
 
-test('CLI errors are bounded fixed codes and do not expose paths or stack traces', () => {
-  const f = fixture();
+test('CLI errors are bounded fixed codes and do not expose paths or stack traces', t => {
+  const f = fixture(t);
   const child = spawnSync(process.execPath, [fileURLToPath(new URL('./capture-disk-baseline.mjs', import.meta.url)),
     '--input', path.join(f.root, 'missing-private-input.json'), '--input-sha256', '0'.repeat(64)], {encoding: 'utf8', timeout: 5000});
   assert.equal(child.status, 1); assert.equal(child.stdout, ''); assert.match(child.stderr, /^DISK_BASELINE_[A-Z_]+\r?\n$/);
@@ -348,8 +348,8 @@ function logLink(f, name = 'ArchiveXL', suffix = '.log') {
     mtimeNs:String(st.mtimeNs),ctimeNs:String(st.ctimeNs),linkTextSHA256:hash(fs.readlinkSync(file,{encoding:'buffer'})),fileAttributes:1056};
   return {file,pin};
 }
-test('only exact independently pinned log links are excluded without following targets', () => {
-  const f=fixture(), a=logLink(f), b=logLink(f,'Codeware'), c=logLink(f,'TweakXL');
+test('only exact independently pinned log links are excluded without following targets', t => {
+  const f=fixture(t), a=logLink(f), b=logLink(f,'Codeware'), c=logLink(f,'TweakXL');
   f.value.excludedLogLinks=[c.pin,a.pin,b.pin]; const opts=f.refresh(), original=fs.openSync;
   try {
     fs.openSync=(file,...args)=>{assert.ok(![a.file,b.file,c.file,path.join(f.root,'never-read-target')].map(norm).includes(norm(file)));return original(file,...args);};
@@ -358,26 +358,26 @@ test('only exact independently pinned log links are excluded without following t
     assert.equal(ledger.settings.length,3); assert.equal(ledger.nativeContextVerified,false);
   } finally {fs.openSync=original;}
 });
-test('unadmitted and JSON links remain held and do not create output', () => {
+test('unadmitted and JSON links remain held and do not create output', t => {
   for (const [name,suffix,pinned] of [['Unknown','.log',false],['ArchiveXL','.log',false],['ArchiveXL','.json',true]]) {
-    const f=fixture(), link=logLink(f,name,suffix); if(pinned)f.value.excludedLogLinks=[link.pin];
+    const f=fixture(t), link=logLink(f,name,suffix); if(pinned)f.value.excludedLogLinks=[link.pin];
     assert.throws(()=>captureDiskBaseline({...f.refresh(),apply:true}),/DISK_BASELINE_/); assert.equal(fs.existsSync(f.output),false);
   }
 });
-test('closed link pin types, attributes, duplicate and unused pins refuse', () => {
+test('closed link pin types, attributes, duplicate and unused pins refuse', t => {
   for(const mutate of [p=>p.fileAttributes|=0x10,p=>p.fileAttributes=32,p=>p.links='2',p=>p.bytes=0,p=>p.extra=true,p=>p.nodeId='1:2',p=>p.linkTextSHA256='0'.repeat(64)]) {
-    const f=fixture(), a=logLink(f); mutate(a.pin);f.value.excludedLogLinks=[a.pin];
+    const f=fixture(t), a=logLink(f); mutate(a.pin);f.value.excludedLogLinks=[a.pin];
     assert.throws(()=>captureDiskBaseline(f.refresh()),/DISK_BASELINE_/);
   }
   for(const mode of ['duplicate','missing','null']) {
-    const f=fixture(), a=logLink(f);f.value.excludedLogLinks=mode==='duplicate'?[a.pin,a.pin]:mode==='null'?null:[a.pin];
+    const f=fixture(t), a=logLink(f);f.value.excludedLogLinks=mode==='duplicate'?[a.pin,a.pin]:mode==='null'?null:[a.pin];
     if(mode==='missing')fs.unlinkSync(a.file);
     assert.throws(()=>captureDiskBaseline(f.refresh()),/DISK_BASELINE_/);
   }
 });
-test('pinned log link retarget, disappearance and generation drift during payload reads hold', () => {
+test('pinned log link retarget, disappearance and generation drift during payload reads hold', t => {
   for(const mode of ['retarget','missing','generation']) {
-    const f=fixture(), a=logLink(f);f.value.excludedLogLinks=[a.pin];const opts=f.refresh();
+    const f=fixture(t), a=logLink(f);f.value.excludedLogLinks=[a.pin];const opts=f.refresh();
     duringRead(f,()=>{
       if(mode==='generation')fs.lutimesSync(a.file,new Date(1000),new Date(1000));
       else {fs.unlinkSync(a.file);if(mode==='retarget')fs.symlinkSync(path.join(f.root,'another-never-read-target'),a.file,'file');}

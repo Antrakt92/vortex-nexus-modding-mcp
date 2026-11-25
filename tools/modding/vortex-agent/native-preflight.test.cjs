@@ -1,10 +1,10 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const {TIMEOUT_MS,readNativePreflight}=require('./native-preflight.cjs');
+const {fixtureDirectory}=require('./test-fixture-directory.cjs');
 const scratch=path.resolve(__dirname,'../../../local-state');
-function fixture() {
-  for(let p=scratch;;p=path.dirname(p)) {if(fs.existsSync(p))assert.equal(fs.lstatSync(p).isSymbolicLink(),false);if(p===path.dirname(p))break;}
-  fs.mkdirSync(scratch,{recursive:true});const root=fs.mkdtempSync(path.join(scratch,'native-preflight-test-'));
+function fixture(t) {
+  const root=fixtureDirectory(t,scratch,'native-preflight-test-');
   const roots=Object.fromEntries(['gamePath','stagingPath','downloadPath'].map(k=>{const p=path.join(root,k);fs.mkdirSync(p);return[k,p];}));
   const state={app:{extensions:{}},settings:{gameMode:{discovered:{game:{path:roots.gamePath}}}},persistent:{profiles:{profile:{gameId:'game'}}}};
   const api={getState:()=>state,getLoadedExtensions:()=>[]},selectors={activeGameId:()=> 'game',activeProfileId:()=> 'profile',installPathForGame:()=>roots.stagingPath,downloadPathForGame:()=>roots.downloadPath};
@@ -17,8 +17,8 @@ function fixture() {
 }
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 
-test('extension queue retains orphan removals, exact state keys and loaded effective IDs without info payloads',async()=>{
- const f=fixture();f.state.app.extensions={randomKey:{path:f.root,version:'0.13.2',enabled:'failed',remove:false,bundled:false,
+test('extension queue retains orphan removals, exact state keys and loaded effective IDs without info payloads',async t=>{
+ const f=fixture(t);f.state.app.extensions={randomKey:{path:f.root,version:'0.13.2',enabled:'failed',remove:false,bundled:false,
    get info(){assert.fail('private info');},account:'not-returned'},orphan:{remove:true},unset:{remove:undefined}};
  f.api.getLoadedExtensions=()=>[{name:'effective-ID',path:f.root,dynamic:true,get info(){assert.fail('loaded info');}}, {name:'static',dynamic:false}];
  const r=await f.run();assert.equal(r.status,'ok');assert.equal(r.extensions.available,true);assert.equal(r.extensions.complete,true);
@@ -30,8 +30,8 @@ test('extension queue retains orphan removals, exact state keys and loaded effec
  r.extensions.stateRows[0].remove.value=false;assert.equal((await f.run()).extensions.pendingRemovalCount,1);
 });
 
-test('missing extension API or state is partial and never claims an empty queue',async()=>{
- for(const mode of ['api','app','extensions','throw','primitive']){const f=fixture();
+test('missing extension API or state is partial and never claims an empty queue',async t=>{
+ for(const mode of ['api','app','extensions','throw','primitive']){const f=fixture(t);
   if(mode==='api')delete f.api.getLoadedExtensions;if(mode==='app')delete f.state.app;
   if(mode==='extensions')delete f.state.app.extensions;if(mode==='throw')f.api.getLoadedExtensions=()=>{throw Error('secret');};
   if(mode==='primitive')f.api.getLoadedExtensions=()=>{throw 'private primitive';};
@@ -40,12 +40,12 @@ test('missing extension API or state is partial and never claims an empty queue'
  }
 });
 
-test('malformed remove values are unknown instead of coerced to boolean',async()=>{
- for(const remove of [null,0,1,'false','true',{},[]]){const f=fixture();f.state.app.extensions={own:{remove}};
+test('malformed remove values are unknown instead of coerced to boolean',async t=>{
+ for(const remove of [null,0,1,'false','true',{},[]]){const f=fixture(t);f.state.app.extensions={own:{remove}};
   const r=await f.run();assert.equal(r.status,'partial');assert.equal(r.extensions.code,'NATIVE_PREFLIGHT_EXTENSIONS_INVALID');assert.equal(r.extensions.pendingRemovalCount,null);}
 });
 
-test('hostile extension descriptors and proxies never execute traps or getters',async()=>{
+test('hostile extension descriptors and proxies never execute traps or getters',async t=>{
  const fail=()=>assert.fail('extension caller code executed');
  for(const change of [
   f=>Object.defineProperty(f.state,'app',{enumerable:true,get:fail}),
@@ -58,11 +58,11 @@ test('hostile extension descriptors and proxies never execute traps or getters',
   f=>f.api.getLoadedExtensions=()=>[Object.defineProperty({},'name',{enumerable:true,get:fail})],
   f=>f.api.getLoadedExtensions=()=>[new Proxy({},{getPrototypeOf:fail})],
   f=>f.api.getLoadedExtensions=()=>Object.defineProperty([],'0',{enumerable:true,get:fail}),
- ]){const f=fixture();change(f);const r=await f.run();assert.equal(r.extensions.available,false);assert.equal(r.extensions.pendingRemovalCount,null);}
+ ]){const f=fixture(t);change(f);const r=await f.run();assert.equal(r.extensions.available,false);assert.equal(r.extensions.pendingRemovalCount,null);}
 });
 
-test('oversized or sparse extension inventories refuse without truncation',async()=>{
- for(const mode of ['state','loaded','sparse']){const f=fixture();
+test('oversized or sparse extension inventories refuse without truncation',async t=>{
+ for(const mode of ['state','loaded','sparse']){const f=fixture(t);
   if(mode==='state')f.state.app.extensions=Object.fromEntries(Array.from({length:1001},(_,i)=>['id'+i,{}]));
   else f.api.getLoadedExtensions=()=>mode==='loaded'?Array.from({length:1001},()=>({name:'own'})):Array(1);
   const r=await f.run();assert.equal(r.extensions.available,false);assert.equal(r.extensions.pendingRemovalKeys,undefined);
@@ -70,8 +70,8 @@ test('oversized or sparse extension inventories refuse without truncation',async
  }
 });
 
-test('queued changes and loaded identities are re-sampled after awaited native calls',async()=>{
- for(const mode of ['remove','loaded','unavailable']){const f=fixture();f.state.app.extensions={own:{remove:false}};
+test('queued changes and loaded identities are re-sampled after awaited native calls',async t=>{
+ for(const mode of ['remove','loaded','unavailable']){const f=fixture(t);f.state.app.extensions={own:{remove:false}};
   f.native.updater.getStatus=()=>{if(mode==='remove')f.state.app.extensions.own.remove=true;
    if(mode==='loaded')f.api.getLoadedExtensions=()=>[{name:'newly-loaded'}];
    if(mode==='unavailable')delete f.state.app.extensions;
@@ -81,122 +81,122 @@ test('queued changes and loaded identities are re-sampled after awaited native c
  }
 });
 
-test('cross-realm extension rows are data-only and loaded duplicate IDs are preserved',async()=>{
- const f=fixture(),vm=require('node:vm');f.state.app.extensions=vm.runInNewContext('({orphan:{remove:true}})');
+test('cross-realm extension rows are data-only and loaded duplicate IDs are preserved',async t=>{
+ const f=fixture(t),vm=require('node:vm');f.state.app.extensions=vm.runInNewContext('({orphan:{remove:true}})');
  f.api.getLoadedExtensions=()=>vm.runInNewContext('([{name:"duplicate",dynamic:false},{name:"duplicate",dynamic:false}])');
  const r=await f.run();assert.equal(r.extensions.pendingRemovalCount,1);assert.equal(r.extensions.loadedRows.length,2);
 });
 
-test('missing staging tag is observed before native calls without initializing the directory',async()=>{
- const f=fixture(),before=fs.readdirSync(f.roots.stagingPath);
+test('missing staging tag is observed before native calls without initializing the directory',async t=>{
+ const f=fixture(t),before=fs.readdirSync(f.roots.stagingPath);
  const r=await f.run();
  assert.deepEqual(r.staging,{available:true,tagStatus:'missing',code:'NATIVE_PREFLIGHT_STAGING_TAG_MISSING',nativeInitializationRequired:true,readinessVerified:false});
  assert.deepEqual(fs.readdirSync(f.roots.stagingPath),before);
 });
 
-test('an existing tag is only metadata, without content reads or readiness authority',async()=>{
- const f=fixture();fs.writeFileSync(path.join(f.roots.stagingPath,'__vortex_staging_folder'),'not-json');
+test('an existing tag is only metadata, without content reads or readiness authority',async t=>{
+ const f=fixture(t);fs.writeFileSync(path.join(f.roots.stagingPath,'__vortex_staging_folder'),'not-json');
  const r=await f.run();
  assert.deepEqual(r.staging,{available:true,tagStatus:'present',code:null,nativeInitializationRequired:null,readinessVerified:false});
 });
 
-test('tag changes while native getters run are unavailable rather than stale initialization advice',async()=>{
- const f=fixture();f.native.updater.getStatus=()=>{fs.writeFileSync(path.join(f.roots.stagingPath,'__vortex_staging_folder'),'new');return{seq:0,snapshot:{state:{type:'idle'}}};};
+test('tag changes while native getters run are unavailable rather than stale initialization advice',async t=>{
+ const f=fixture(t);f.native.updater.getStatus=()=>{fs.writeFileSync(path.join(f.roots.stagingPath,'__vortex_staging_folder'),'new');return{seq:0,snapshot:{state:{type:'idle'}}};};
  const r=await f.run();assert.equal(r.status,'partial');
  assert.deepEqual(r.staging,{available:false,tagStatus:'unknown',code:'NATIVE_PREFLIGHT_STAGING_TAG_CHANGED',nativeInitializationRequired:null,readinessVerified:false});
 });
 
-test('directory-shaped tag is unsafe, never missing or initialized',async()=>{
- const f=fixture();fs.mkdirSync(path.join(f.roots.stagingPath,'__vortex_staging_folder'));
+test('directory-shaped tag is unsafe, never missing or initialized',async t=>{
+ const f=fixture(t);fs.mkdirSync(path.join(f.roots.stagingPath,'__vortex_staging_folder'));
  const r=await f.run();assert.equal(r.status,'partial');assert.equal(r.staging.code,'NATIVE_PREFLIGHT_STAGING_TAG_UNSAFE');assert.equal(r.staging.nativeInitializationRequired,null);
 });
 
 test('unreadable tag remains unknown even if a later observation reports absence',async t=>{
- const f=fixture(),tag=path.join(f.roots.stagingPath,'__vortex_staging_folder'),original=fs.lstatSync;let calls=0;
+ const f=fixture(t),tag=path.join(f.roots.stagingPath,'__vortex_staging_folder'),original=fs.lstatSync;let calls=0;
  t.mock.method(fs,'lstatSync',function(p,...args){if(p===tag&&++calls===1)throw Object.assign(Error('private detail'),{code:'EACCES'});return original.call(fs,p,...args);});
  const r=await f.run();assert.equal(r.status,'partial');assert.equal(r.staging.code,'NATIVE_PREFLIGHT_STAGING_TAG_UNAVAILABLE');assert.equal(r.staging.nativeInitializationRequired,null);assert.equal(JSON.stringify(r).includes('private detail'),false);
 });
 
 test('tag symlinks and inaccessible error descriptors do not become missing',async t=>{
- const f=fixture(),tag=path.join(f.roots.stagingPath,'__vortex_staging_folder'),original=fs.lstatSync;
+ const f=fixture(t),tag=path.join(f.roots.stagingPath,'__vortex_staging_folder'),original=fs.lstatSync;
  fs.writeFileSync(tag,'own');let mode='link',reads=0;
  t.mock.method(fs,'lstatSync',function(p,...args){if(p===tag){if(mode==='link'){const s=original.call(fs,p,...args);return Object.assign(Object.create(s),{isSymbolicLink:()=>true});}throw Object.defineProperty(Error('private'),'code',{get(){reads++;assert.fail('error getter');}});}return original.call(fs,p,...args);});
  assert.equal((await f.run()).staging.code,'NATIVE_PREFLIGHT_STAGING_TAG_UNSAFE');mode='accessor';assert.equal((await f.run()).staging.code,'NATIVE_PREFLIGHT_STAGING_TAG_UNAVAILABLE');assert.equal(reads,0);
 });
-test('active native projection retains aliases, actual version and detached context without authority',async()=>{
- const f=fixture(),r=await f.run();assert.equal(r.status,'ok');assert.deepEqual(r.appVersion,{available:true,value:'2.9.1'});
+test('active native projection retains aliases, actual version and detached context without authority',async t=>{
+ const f=fixture(t),r=await f.run();assert.equal(r.status,'ok');assert.deepEqual(r.appVersion,{available:true,value:'2.9.1'});
  assert.deepEqual(r.updater,{available:true,state:'idle',sequence:7});assert.deepEqual(r.deploymentTargets.map(x=>x.typeId),['','dinput','enb']);
  assert.ok(r.deploymentTargets.every(x=>x.sameAsDefault));assert.equal(r.context.profileId,'profile');assert.match(r.context.filesystemIds.gamePath,/^\d+:\d+$/);
  assert.equal(f.live.size,0);for(const k of ['snapshotAtomic','nativeEffects','shutdownPermit','sourceAdmissionVerified'])assert.equal(r[k],false);
  r.context.filesystemIds.gamePath='changed';assert.notEqual((await f.run()).context.filesystemIds.gamePath,'changed');
 });
-test('all eight updater states are whitelisted while private fields and getters are never traversed',async()=>{
+test('all eight updater states are whitelisted while private fields and getters are never traversed',async t=>{
  for(const state of ['disabled','idle','checking','available','downgrade-offered','downloading','staged','error']){
- const f=fixture();f.native.updater.getStatus=()=>({seq:0,snapshot:{state:{type:state,get message(){assert.fail('raw private getter');},releaseNotes:'https://private.invalid/token'},justUpdatedFrom:'secret'},changes:[{url:'secret'}]});
+ const f=fixture(t);f.native.updater.getStatus=()=>({seq:0,snapshot:{state:{type:state,get message(){assert.fail('raw private getter');},releaseNotes:'https://private.invalid/token'},justUpdatedFrom:'secret'},changes:[{url:'secret'}]});
  const r=await f.run();assert.deepEqual(r.updater,{available:true,state,sequence:0});assert.equal(JSON.stringify(r).includes('secret'),false);assert.equal(JSON.stringify(r).includes('private.invalid'),false);assert.equal(f.live.size,0);}
 });
-test('distinct native targets are observed without filesystem access or admission',async()=>{
- const f=fixture(),other=path.join(f.root,'nonexistent-target');f.setTable({'':f.roots.gamePath,other});
+test('distinct native targets are observed without filesystem access or admission',async t=>{
+ const f=fixture(t),other=path.join(f.root,'nonexistent-target');f.setTable({'':f.roots.gamePath,other});
  const r=await f.run();assert.equal(r.deploymentTargets[1].path,other);assert.equal(r.deploymentTargets[1].sameAsDefault,false);assert.equal(fs.existsSync(other),false);
 });
-test('missing window/getters and thrown/rejected native errors are explicit partial without raw details',async()=>{
+test('missing window/getters and thrown/rejected native errors are explicit partial without raw details',async t=>{
  for(const mode of ['window','app','updater','throw','reject']){
- const f=fixture();if(mode==='window')f.options.getWindow=()=>{throw Error('secret/path');};
+ const f=fixture(t);if(mode==='window')f.options.getWindow=()=>{throw Error('secret/path');};
  if(mode==='app')delete f.native.app;if(mode==='updater')delete f.native.updater;
  if(mode==='throw')f.native.app.getVersion=()=>{throw Error('secret/path');};
  if(mode==='reject')f.native.updater.getStatus=()=>Promise.reject(Error('secret/path'));
  const r=await f.run();assert.equal(r.status,'partial');assert.equal(JSON.stringify(r).includes('secret'),false);assert.equal(f.live.size,0);
  assert.ok(!r.appVersion.available||!r.updater.available);}
 });
-test('hung getters timeout independently, clear timers, and observe late rejection without retry',async()=>{
- const f=fixture();let reject,calls=0;f.native.updater.getStatus=()=>{calls++;return new Promise((_,r)=>{reject=r;});};
+test('hung getters timeout independently, clear timers, and observe late rejection without retry',async t=>{
+ const f=fixture(t);let reject,calls=0;f.native.updater.getStatus=()=>{calls++;return new Promise((_,r)=>{reject=r;});};
  const flight=f.run();await tick();assert.equal(f.live.size,1);for(const cb of [...f.live.values()])cb();
  const r=await flight;assert.equal(r.appVersion.available,true);assert.deepEqual(r.updater,{available:false,code:'NATIVE_PREFLIGHT_UPDATER_TIMEOUT'});assert.equal(f.live.size,0);
  reject(Error('late private failure'));await tick();assert.equal(calls,1);
 });
-test('both hanging getters have finite projection with no static version or idle fallback',async()=>{
- const f=fixture();f.native.app.getVersion=f.native.updater.getStatus=()=>new Promise(()=>{});
+test('both hanging getters have finite projection with no static version or idle fallback',async t=>{
+ const f=fixture(t);f.native.app.getVersion=f.native.updater.getStatus=()=>new Promise(()=>{});
  const flight=f.run();await tick();assert.equal(f.live.size,2);for(const cb of [...f.live.values()])cb();const r=await flight;
  assert.equal(r.status,'partial');assert.equal(r.appVersion.available,false);assert.equal(r.updater.available,false);assert.equal(f.live.size,0);
 });
-test('invalid native versions and updater descriptors/sequence/state refuse only affected projection',async()=>{
- for(const value of ['secret/url','2.9.1\n',undefined,42,'x'.repeat(200)]){const f=fixture();f.native.app.getVersion=()=>value;const r=await f.run();assert.equal(r.appVersion.available,false);assert.equal(r.updater.available,true);}
+test('invalid native versions and updater descriptors/sequence/state refuse only affected projection',async t=>{
+ for(const value of ['secret/url','2.9.1\n',undefined,42,'x'.repeat(200)]){const f=fixture(t);f.native.app.getVersion=()=>value;const r=await f.run();assert.equal(r.appVersion.available,false);assert.equal(r.updater.available,true);}
  for(const value of [{seq:-1,snapshot:{state:{type:'idle'}}},{seq:1.5,snapshot:{state:{type:'idle'}}},{seq:0,snapshot:{state:{type:'installing'}}},Object.defineProperty({},'seq',{enumerable:true,get(){assert.fail('accessor');}}),new Proxy({},{get(){assert.fail('proxy');}})]){
- const f=fixture();f.native.updater.getStatus=()=>value;const r=await f.run();assert.equal(r.updater.available,false);assert.equal(f.live.size,0);}
+ const f=fixture(t);f.native.updater.getStatus=()=>value;const r=await f.run();assert.equal(r.updater.available,false);assert.equal(f.live.size,0);}
 });
-test('context/profile/physical root drift during IPC refuses the whole snapshot',async()=>{
- for(const mode of ['profile','game','root']){const f=fixture();f.native.updater.getStatus=()=>{if(mode==='profile')f.selectors.activeProfileId=()=> 'new';if(mode==='game')f.state.persistent.profiles.profile.gameId='other';if(mode==='root'){const old=f.roots.gamePath;fs.renameSync(old,old+'-old');fs.mkdirSync(old);}return{seq:0,snapshot:{state:{type:'idle'}}};};
+test('context/profile/physical root drift during IPC refuses the whole snapshot',async t=>{
+ for(const mode of ['profile','game','root']){const f=fixture(t);f.native.updater.getStatus=()=>{if(mode==='profile')f.selectors.activeProfileId=()=> 'new';if(mode==='game')f.state.persistent.profiles.profile.gameId='other';if(mode==='root'){const old=f.roots.gamePath;fs.renameSync(old,old+'-old');fs.mkdirSync(old);}return{seq:0,snapshot:{state:{type:'idle'}}};};
  await assert.rejects(f.run(),/NATIVE_PREFLIGHT_CONTEXT_(?:INVALID|CHANGED)/);assert.equal(f.live.size,0);}
 });
-test('canonical target table is sampled after await, aliases cannot appear or retarget silently',async()=>{
+test('canonical target table is sampled after await, aliases cannot appear or retarget silently',async t=>{
  for(const table of [f=>({'':f.roots.gamePath}),f=>({'':f.roots.gamePath,enb:f.root,dinput:f.roots.gamePath})]){
- const f=fixture();f.native.updater.getStatus=()=>{f.setTable(table(f));return{seq:0,snapshot:{state:{type:'idle'}}};};await assert.rejects(f.run(),/NATIVE_PREFLIGHT_TARGETS_CHANGED/);assert.equal(f.live.size,0);}
+ const f=fixture(t);f.native.updater.getStatus=()=>{f.setTable(table(f));return{seq:0,snapshot:{state:{type:'idle'}}};};await assert.rejects(f.run(),/NATIVE_PREFLIGHT_TARGETS_CHANGED/);assert.equal(f.live.size,0);}
 });
-test('table limits, unsafe paths/IDs, symbols, accessors, proxies and inherited data reject before IPC',async()=>{
+test('table limits, unsafe paths/IDs, symbols, accessors, proxies and inherited data reject before IPC',async t=>{
  const fns=[f=>({enb:f.roots.gamePath}),f=>({'':'relative'}),f=>({'':'https://private.invalid'}),f=>({'':f.roots.gamePath,'bad\n':f.root}),f=>({'':f.root,'https://secret':f.root}),f=>({'':f.root,constructor:f.root}),f=>Object.assign(Object.create(null),{'':f.root},JSON.parse('{"__proto__":"x"}')),f=>Object.fromEntries(Array.from({length:33},(_,i)=>[i?String(i):'',f.root])),
  f=>Object.assign(Object.create({enb:f.root}),{'':f.root}),f=>Object.defineProperty({},'',{enumerable:true,get(){assert.fail('getter');}}),f=>Object.assign({'':f.root},{[Symbol('x')]:f.root}),f=>new Proxy({},{ownKeys(){assert.fail('proxy');}})];
- for(const make of fns){const f=fixture();f.setTable(make(f));f.native.app.getVersion=()=>assert.fail('IPC called');await assert.rejects(f.run(),/NATIVE_PREFLIGHT_TARGETS_INVALID/);assert.equal(f.live.size,0);}
+ for(const make of fns){const f=fixture(t);f.setTable(make(f));f.native.app.getVersion=()=>assert.fail('IPC called');await assert.rejects(f.run(),/NATIVE_PREFLIGHT_TARGETS_INVALID/);assert.equal(f.live.size,0);}
 });
 
-test('monotonic deadline rejects overdue resolution even before timer callback runs',async()=>{
- const f=fixture();let now=0;f.timers.now=()=>now;
+test('monotonic deadline rejects overdue resolution even before timer callback runs',async t=>{
+ const f=fixture(t);let now=0;f.timers.now=()=>now;
  f.native.updater.getStatus=()=>{now=TIMEOUT_MS+1;return {seq:0,snapshot:{state:{type:'idle'}}};};
  const r=await f.run();assert.equal(r.status,'partial');assert.equal(r.updater.code,'NATIVE_PREFLIGHT_UPDATER_TIMEOUT');assert.equal(f.live.size,0);
 });
 
-test('ordinary cross-realm target maps remain data-only and preserve native aliases',async()=>{
- const f=fixture(),vm=require('node:vm');
+test('ordinary cross-realm target maps remain data-only and preserve native aliases',async t=>{
+ const f=fixture(t),vm=require('node:vm');
  const table=vm.runInNewContext('('+JSON.stringify({'':f.roots.gamePath,enb:f.roots.gamePath})+')');
  assert.notEqual(Object.getPrototypeOf(table),Object.prototype);f.setTable(table);
  const r=await f.run();assert.equal(r.status,'ok');assert.deepEqual(r.deploymentTargets.map(row=>row.typeId),['','enb']);
 });
-test('ordinary cross-realm updater IPC records project the actual state without exposing payload',async()=>{
- const f=fixture(),vm=require('node:vm');
+test('ordinary cross-realm updater IPC records project the actual state without exposing payload',async t=>{
+ const f=fixture(t),vm=require('node:vm');
  f.native.updater.getStatus=()=>vm.runInNewContext('({seq:9,snapshot:{state:{type:"staged",releaseNotes:"secret"}},changes:[]})');
  const r=await f.run();assert.deepEqual(r.updater,{available:true,state:'staged',sequence:9});assert.equal(JSON.stringify(r).includes('secret'),false);
 });
 
-test('cross-realm custom classes, forged prototypes, proxy prototypes and constructor accessors remain refused',async()=>{
+test('cross-realm custom classes, forged prototypes, proxy prototypes and constructor accessors remain refused',async t=>{
  const vm=require('node:vm');
  const hostile=[
   f=>vm.runInNewContext('new (class Table {constructor(){this[" "]="x";}})()'),
@@ -205,7 +205,7 @@ test('cross-realm custom classes, forged prototypes, proxy prototypes and constr
   f=>Object.assign(Object.create(Object.defineProperty(Object.create(null),'constructor',{get(){assert.fail('constructor accessor');}})),{'':f.root}),
   f=>Object.assign(Object.create({get [Symbol.toStringTag](){assert.fail('toStringTag getter');}}),{'':f.root}),
  ];
- for(const make of hostile){const f=fixture();f.setTable(make(f));await assert.rejects(f.run(),/NATIVE_PREFLIGHT_TARGETS_INVALID/);}
- const f=fixture();f.native.updater.getStatus=()=>vm.runInNewContext('new (class Reply {constructor(){this.seq=1;this.snapshot={state:{type:"idle"}};}})()');
+ for(const make of hostile){const f=fixture(t);f.setTable(make(f));await assert.rejects(f.run(),/NATIVE_PREFLIGHT_TARGETS_INVALID/);}
+ const f=fixture(t);f.native.updater.getStatus=()=>vm.runInNewContext('new (class Reply {constructor(){this.seq=1;this.snapshot={state:{type:"idle"}};}})()');
  assert.equal((await f.run()).updater.available,false);
 });
