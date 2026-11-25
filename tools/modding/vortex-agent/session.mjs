@@ -5,12 +5,12 @@ import { MAX_RESPONSE_BYTES, remote } from './bridge.mjs';
 import {CONTEXT_KEYS, ROOTS, validateContext, validatePlan, planQueue} from './plan-contract.mjs';
 import {canonicalPlanId, createPlanJournal} from './plan-journal.mjs';
 import strictJSON from './strict-json.cjs';
+import downloadIdentity from './download-identity.cjs';
 import receipts from './receipts.cjs';
 import hosts from './official-vortex-hosts.cjs';
 export {validateContext, validatePlan} from './plan-contract.mjs';
 
 const PROTOCOL = 'vortex-agent/1';
-const id = value => typeof value === 'string' && value.length > 0 && value.length <= 200 && !/[\x00-\x1f]/.test(value);
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const canonical = value => Array.isArray(value) ? value.map(canonical) : object(value)
   ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
@@ -154,7 +154,7 @@ function verifiedAcknowledgement(value, operation, args, receipt = false) {
   insist(object(value) && value.protocol === PROTOCOL && value.operation === operation && value.requestId === args.requestId
     && value.operationCompleted === true && value.diskDeploymentVerified === false, 'WRITE_ACKNOWLEDGEMENT_UNCERTAIN');
   if (operation === 'deploy_mods') insist(value.deploymentPromiseResolved === true, 'WRITE_ACKNOWLEDGEMENT_UNCERTAIN');
-  else if (operation === 'download_nexus') insist(id(value.downloadId) && typeof value.reused === 'boolean'
+  else if (operation === 'download_nexus') insist(downloadIdentity.validDownloadId(value.downloadId) && typeof value.reused === 'boolean'
     && (!args.reuseOnly || value.reused) && value.autoInstall === false && value.archiveSha256Verified === true
     && value.archiveCRCVerified === false && value.size === args.size, 'WRITE_ACKNOWLEDGEMENT_UNCERTAIN');
   else if (operation === 'install_local_archive') {
@@ -162,7 +162,7 @@ function verifiedAcknowledgement(value, operation, args, receipt = false) {
     insist(Object.keys(value).every(key => allowed.includes(key))
       && INSTALL_AUTHORITY_KEYS.every(key => Object.hasOwn(value, key))
       && value.verificationRequired === receipts.VERIFICATION
-      && value.modId === path.win32.basename(args.archivePath, '.zip') && id(value.downloadId)
+      && value.modId === path.win32.basename(args.archivePath, '.zip') && downloadIdentity.validDownloadId(value.downloadId)
       && value.installedRecordVerified === true && value.enabled === false && value.archiveSha256Verified === true
       && Number.isSafeInteger(value.payloadFilesVerified) && value.payloadFilesVerified > 0 && value.payloadFilesVerified <= 4096,
     'WRITE_ACKNOWLEDGEMENT_UNCERTAIN');

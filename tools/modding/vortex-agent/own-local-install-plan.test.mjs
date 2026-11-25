@@ -53,6 +53,22 @@ function fixture(t, hooks = {}) {
   return {journal, calls, writes, stored, call, run: (value = plan(), options = {}) => runPlan(value, {apply: true, call, journal, ...options})};
 }
 
+test('a supported opaque download ID survives local install acknowledgement and durable receipt checks', async t => {
+  const downloadId = 'd'.repeat(512);
+  const mock = fixture(t, {after(name, args, {result, record}) {
+    if (name === 'install_local_archive') {
+      result.downloadId = downloadId;
+      record.completion.downloadId = downloadId;
+    }
+  }});
+  const result = await mock.run();
+  assert.equal(result.status, 'completed');
+  assert.equal(result.completed[0].downloadId, downloadId);
+  const {attempt, completion} = mock.stored.get(install().requestId);
+  assert.equal(receipts.validCompletion(completion, attempt), true);
+  assert.equal(receipts.validCompletion({...completion, downloadId: downloadId + 'd'}, attempt), false);
+});
+
 test('direct session CLI validates a local-install reply and finishes its plan journal', async t => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'own-install-cli-'));
   t.after(() => fs.rmSync(workspace, {recursive: true}));

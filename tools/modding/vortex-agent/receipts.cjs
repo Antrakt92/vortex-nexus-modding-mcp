@@ -1,5 +1,6 @@
 'use strict';
 const path = require('node:path');
+const { validDownloadId } = require('./download-identity.cjs');
 const PROTOCOL = 'vortex-agent/1', VERSION = 2;
 const VERIFICATION = 'External manifest/owners/protected hashes/staging-game bytes/hardlink verification and runtime acceptance';
 const operations = new Set(['install_download', 'install_local_archive', 'set_mods_enabled', 'deploy_mods', 'download_nexus', 'advance_collection_wizard', 'respond_collection_dialog', 'advance_collection_update_prompt', 'respond_native_dialog']);
@@ -86,10 +87,10 @@ function validCompletion(value, attempt) {
     && JSON.stringify(value.modIds) === JSON.stringify(a.modIds) && value.enabled === a.enabled && value.enabledFlagsVerified === true;
   if (value.operation === 'deploy_mods') return keys(value, [...fields, 'deploymentPromiseResolved']) && value.deploymentPromiseResolved === true;
   if (value.operation === 'download_nexus') return keys(value, [...fields, 'downloadId', 'reused', 'archiveSha256Verified', 'size', 'autoInstall', 'archiveCRCVerified'])
-    && id(value.downloadId) && typeof value.reused === 'boolean' && (!a.reuseOnly || value.reused) && value.archiveSha256Verified === true
+    && validDownloadId(value.downloadId) && typeof value.reused === 'boolean' && (!a.reuseOnly || value.reused) && value.archiveSha256Verified === true
     && value.size === a.size && value.autoInstall === false && value.archiveCRCVerified === false;
   if (value.operation === 'install_local_archive') return keys(value, [...fields, 'modId', 'downloadId', 'installedRecordVerified', 'enabled', 'archiveSha256Verified', 'payloadFilesVerified'])
-    && value.modId === path.basename(a.archivePath, '.zip') && id(value.downloadId) && value.installedRecordVerified === true && value.enabled === false
+    && value.modId === path.basename(a.archivePath, '.zip') && validDownloadId(value.downloadId) && value.installedRecordVerified === true && value.enabled === false
     && value.archiveSha256Verified === true && Number.isSafeInteger(value.payloadFilesVerified)
     && value.payloadFilesVerified > 0 && value.payloadFilesVerified <= 4096;
   return false; // The legacy general-purpose install_download remains disabled.

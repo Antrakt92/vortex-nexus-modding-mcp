@@ -69,9 +69,10 @@ function fixture(t, options = {}) {
       if (options.missingListener === name) return false;
       if (name === 'import-downloads') {
         const [[archive], callback] = args;
+        const id = options.importId ?? 'newdownload';
         fs.copyFileSync(archive, path.join(downloadPath, path.basename(archive)));
-        state.persistent.downloads.files.newdownload = { state: options.importState ?? 'finished', game: [G], localPath: path.basename(archive) };
-        queueMicrotask(() => callback(['newdownload']));
+        state.persistent.downloads.files[id] = { state: options.importState ?? 'finished', game: [G], localPath: path.basename(archive) };
+        queueMicrotask(() => callback([id]));
       } else if (name === 'start-install-download') {
         const [downloadId, installOptions, callback] = args;
         started();
@@ -334,6 +335,18 @@ test('reports a terminal import state without dispatching installation', async t
   }
 });
 
+test('an invalid native import ID holds the original effect before installation', async t => {
+  for (const importId of ['x'.repeat(513), 'tracked\x7f']) {
+    const f = fixture(t, { importId });
+    await assert.rejects(installLocalArchive(f.api, f.args, f.services), /LOCAL_ARCHIVE_IMPORT_RESULT_INVALID/);
+    assert.deepEqual(f.calls.map(call => call.name), ['import-downloads']);
+    assert.equal(f.counts().effectCount, 1);
+    assert.equal(f.state.persistent.downloads.files[importId]?.state, 'finished');
+    await assert.rejects(installLocalArchive(f.api, f.args, f.services), /LOCAL_ARCHIVE_NATIVE_OPERATION_HELD/);
+    assert.equal(f.counts().effectCount, 1);
+  }
+});
+
 test('rejects native wrong returned ID and keeps operation held against replay', async t => {
   const f = fixture(t, { wrongId: true });
   await assert.rejects(installLocalArchive(f.api, f.args, f.services), /LOCAL_ARCHIVE_INSTALLED_IDENTITY_MISMATCH/);
@@ -423,8 +436,8 @@ test('active profile drift before will-install aborts before staging files', asy
   assert.equal(fs.existsSync(path.join(f.args.stagingPath, ID)), false);
 });
 
-function guardedFixture(t) {
-  const f = fixture(t), dir = path.join(f.root, 'receipts');
+function guardedFixture(t, options) {
+  const f = fixture(t, options), dir = path.join(f.root, 'receipts');
   for (const key of ['gamePath', 'stagingPath', 'downloadPath']) f.args[key] = fs.realpathSync(f.args[key]);
   f.state.settings = { gameMode: { discovered: { [G]: { path: f.args.gamePath } } } };
   const selectors = {
@@ -441,6 +454,24 @@ function guardedFixture(t) {
   });
   return { ...f, dir, operations };
 }
+
+test('reconciliation keeps local install evidence and all valid observations when a stored ID is malformed', async t => {
+  const bad = 'download\x7f', f = guardedFixture(t, {importId: bad});
+  await assert.rejects(f.operations.install_local_archive(f.args), /LOCAL_ARCHIVE_IMPORT_RESULT_INVALID/);
+  const record = f.state.persistent.downloads.files[bad];
+  f.state.persistent.downloads.files['retained-a'] = {...record};
+  f.state.persistent.downloads.files['retained-b'] = {...record};
+  f.state.persistent.mods[G][ID] = {state: 'installed', installationPath: ID, archiveId: bad};
+  const result = guard.safe(await f.operations.reconcile_operation({requestId: f.args.requestId}), f.api, 'reconcile_operation');
+  assert.equal(result.attempt.requestId, f.args.requestId);
+  assert.equal(result.failure.requestId, f.args.requestId);
+  assert.equal(result.interlock.requestId, f.args.requestId);
+  assert.equal(result.terminalOperationVerified, false);
+  assert.equal(result.localInstall.downloadId, null);
+  assert.equal(result.localInstall.replayAllowed, false);
+  assert.deepEqual(result.download.map(row => row.id), ['retained-a', 'retained-b']);
+  assert.deepEqual(result.receiptIssues, ['DOWNLOAD_IDENTITY_UNVERIFIABLE']);
+});
 
 for (const [label, change, error] of [
   ['installed flags', state => { state.persistent.profiles[P].modState[ID] = { enabled: true }; },

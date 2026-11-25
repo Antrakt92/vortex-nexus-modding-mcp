@@ -1,4 +1,5 @@
 import {createToolCaller, inspectDownloadSession} from './session.mjs';
+import downloadIdentity from './download-identity.cjs';
 
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const positive = value => Number.isSafeInteger(value) && value > 0;
@@ -21,7 +22,7 @@ export function validateCollectionRequest(input) {
 }
 
 function validObservation(row, gameId) {
-  return object(row) && id(row.id) && states.has(row.state)
+  return object(row) && downloadIdentity.validDownloadId(row.id) && states.has(row.state)
     && (row.size === null || Number.isSafeInteger(row.size) && row.size >= 0)
     && typeof row.identityVerified === 'boolean' && typeof row.identityAmbiguous === 'boolean'
     && (row.installedModId === undefined || id(row.installedModId))

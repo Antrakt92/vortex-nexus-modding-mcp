@@ -456,6 +456,7 @@ function createOperations(api, actions, selectors, options = {}) {
         check(args);
       }
       insist(typeof id === 'string' && id.length > 0, 'DOWNLOAD_ID_MISSING');
+      insist(downloads.validDownloadId(id), 'DOWNLOAD_ID_INVALID');
       const initializedBy = Date.now() + (options.initializationGraceMs ?? 5000);
       let observed = false;
       // No timeout releases the mutation lock while a download is still in progress.
@@ -559,6 +560,13 @@ function createOperations(api, actions, selectors, options = {}) {
         needToDeploy: state.persistent?.deployment?.needToDeploy?.[attempt.gameId] ?? null,
         diskDeploymentVerified: false,
       } : null;
+      const observedDownloadId = id => {
+        if (downloads.validDownloadId(id)) return id;
+        issues.push('DOWNLOAD_IDENTITY_UNVERIFIABLE');
+        return null;
+      };
+      const observedDownloads = entries => entries.flatMap(([id, item]) =>
+        observedDownloadId(id) === null ? [] : [{ id, state: item.state, terminalObserved: downloads.TERMINAL.has(item.state) }]);
       let download = [];
       let localInstall = null;
       let installDiagnostics = null, installDiagnosticsSource = 'unavailable';
@@ -580,14 +588,12 @@ function createOperations(api, actions, selectors, options = {}) {
         const mod = state.persistent?.mods?.[attempt.gameId]?.[modId];
         localInstall = { modId, installed: mod?.state === 'installed',
           enabled: effectiveEnabled(state, attempt.profileId, modId),
-          downloadId: typeof mod?.archiveId === 'string' ? mod.archiveId : null, replayAllowed: false };
-        download = Object.entries(state.persistent?.downloads?.files || {})
-          .filter(([, d]) => d.localPath === path.basename(attempt.parameters.archivePath))
-          .map(([id, d]) => ({ id, state: d.state, terminalObserved: downloads.TERMINAL.has(d.state) }));
+          downloadId: mod?.archiveId == null ? null : observedDownloadId(mod.archiveId), replayAllowed: false };
+        download = observedDownloads(Object.entries(state.persistent?.downloads?.files || {})
+          .filter(([, d]) => d.localPath === path.basename(attempt.parameters.archivePath)));
       }
       if (attempt?.operation === 'download_nexus') {
-        try { download = downloads.matchingDownloads(state.persistent?.downloads?.files || {}, attempt.parameters, state, selectors, catalog)
-          .map(([id, d]) => ({ id, state: d.state, terminalObserved: downloads.TERMINAL.has(d.state) })); }
+        try { download = observedDownloads(downloads.matchingDownloads(state.persistent?.downloads?.files || {}, attempt.parameters, state, selectors, catalog)); }
         catch { issues.push('DOWNLOAD_IDENTITY_UNVERIFIABLE'); }
       }
       insist(directoryIdentity() === originalDirectory, 'RECEIPT_DIRECTORY_UNVERIFIABLE');

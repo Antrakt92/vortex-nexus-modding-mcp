@@ -5,6 +5,9 @@ const ACTIVE = new Set(['init', 'started', 'finalizing']);
 const TERMINAL = new Set(['finished', 'failed', 'paused', 'redirect', 'cancelled', 'canceled', 'removed']);
 const aliases = { skyrimse: 'skyrimspecialedition', skyrimvr: 'skyrimspecialedition', falloutnv: 'newvegas', fallout4vr: 'fallout4', teso: 'elderscrollsonline' };
 const present = value => value !== undefined && value !== null;
+function validDownloadId(value) {
+  return typeof value === 'string' && value.length > 0 && value.length <= 512 && !/[\x00-\x1f\x7f]/.test(value);
+}
 function positiveId(value) {
   if (typeof value === 'string' && /^[1-9]\d*$/.test(value)) value = Number(value);
   return Number.isSafeInteger(value) && value > 0 ? value : null;
@@ -108,4 +111,4 @@ function matchingDownloads(files, args, state, selectors, catalog) {
   if (matches.length > 1) throw Error('AMBIGUOUS_EXISTING_DOWNLOAD');
   return matches;
 }
-module.exports = { ACTIVE, TERMINAL, positiveId, domainForGame, resolveDownload, matchingDownloads, catalogFromDisk, catalogSnapshot };
+module.exports = { ACTIVE, TERMINAL, validDownloadId, positiveId, domainForGame, resolveDownload, matchingDownloads, catalogFromDisk, catalogSnapshot };

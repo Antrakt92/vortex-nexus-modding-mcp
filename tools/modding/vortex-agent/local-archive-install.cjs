@@ -5,7 +5,7 @@ const crypto = require('node:crypto');
 const { inspectOwnZip, LIMITS } = require('./own-zip.cjs');
 const { validateLocalArchiveName, assertLocalArchiveAdmission } = require('./local-archive-policy.cjs');
 const { createInstallDiagnostics } = require('./install-diagnostics.cjs');
-const { TERMINAL } = require('./download-identity.cjs');
+const { TERMINAL, validDownloadId } = require('./download-identity.cjs');
 const need = (ok, code) => { if (!ok) throw Error(code); };
 const stamp = s => [s.dev, s.ino, s.size, s.mtimeNs, s.ctimeNs, s.nlink].join(':');
 const hooks = new WeakMap();
@@ -265,7 +265,7 @@ async function installLocalArchive(api, args, { check, checkContext = check, eff
       nativeStarted = true;
       return native(api, 'import-downloads', cb => [[args.archivePath], values => cb(null, values), true], timeoutMs, active);
     }, () => { verifyArchives(); verifyImportDestination(); });
-    need(Array.isArray(ids) && ids.length === 1 && typeof ids[0] === 'string' && ids[0], 'LOCAL_ARCHIVE_IMPORT_RESULT_INVALID');
+    need(Array.isArray(ids) && ids.length === 1 && validDownloadId(ids[0]), 'LOCAL_ARCHIVE_IMPORT_RESULT_INVALID');
     active.downloadId = ids[0];
     diagnostics.phase('import_settle');
     await diagnostics.wait('import_settle', async () => {
