@@ -6,6 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -314,6 +315,63 @@ function Test-Path {
                 self.assertNotEqual(result.returncode, 0)  # Test-Path refuses before any executable invocation.
                 observed = next(line[4:] for line in result.stdout.splitlines() if line.startswith("EXE="))
                 self.assertEqual(Path(observed), expected / "local-state/nexus-cli/1.1.1/nexusmods.exe")
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows PowerShell wrapper")
+    def test_powershell_wrapper_preserves_exact_native_arguments_and_exit_code(self):
+        script = """
+$ProgressPreference = 'SilentlyContinue'
+if (Get-Variable PSNativeCommandArgumentPassing -ErrorAction SilentlyContinue) {
+    $PSNativeCommandArgumentPassing = 'Legacy'
+}
+$hasNativeErrorPreference = $null -ne (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue)
+if ($hasNativeErrorPreference) {
+    $PSNativeCommandUseErrorActionPreference = $true
+}
+$arguments = ConvertFrom-Json $env:NEXUS_TEST_ARGUMENTS
+& $env:NEXUS_TEST_WRAPPER -B -S -c 'import json,sys; print(json.dumps(sys.argv[1:])); sys.exit(17)' @arguments |
+    ForEach-Object { $_ }
+$nativeExit = $LASTEXITCODE
+if ($hasNativeErrorPreference -and -not $PSNativeCommandUseErrorActionPreference) {
+    throw 'Wrapper changed caller native error preference.'
+}
+exit $nativeExit
+"""
+        argv = ['search', '--game', 'cyberpunk2077', '--query', 'foo "inside space"', '--version',
+                'C:\\folder with spaces\\', r'backslash\"quote', 'line\nnext', 'tab\tnext',
+                'mod ""', 'мод', '& | ; %SystemRoot%', '']
+        with tempfile.TemporaryDirectory(prefix="nexus wrapper argv ") as directory:
+            root = Path(directory)
+            exe = root / "local-state/nexus-cli/1.1.1/nexusmods.exe"
+            exe.parent.mkdir(parents=True)
+            # Use the existing Python executable as an inert argv recorder. The
+            # only modified bytes in the fixture wrapper are the runtime pins.
+            interpreter = Path(getattr(sys, '_base_executable', None) or sys.executable)
+            shutil.copyfile(interpreter, exe)
+            pin = hashlib.sha256(exe.read_bytes()).hexdigest()
+            source = (HERE / "nexusmods.ps1").read_text(encoding="utf-8")
+            start = source.index("$runtimePins = [ordered]@{")
+            end = source.index("\n$runtimeRoot = ", start)
+            wrapper = root / "nexusmods.ps1"
+            wrapper.write_text(source[:start] + f"$runtimePins = [ordered]@{{ 'nexusmods.exe' = '{pin}' }}" + source[end:],
+                               encoding="utf-8")
+            env = {**os.environ, "NEXUS_TEST_WRAPPER": str(wrapper), "NEXUS_WORKSPACE": str(root),
+                   "PYTHONHOME": sys.base_prefix,
+                   "PATH": str(interpreter.parent) + os.pathsep + os.environ.get("PATH", "")}
+            ps51 = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+            for executable in filter(None, [ps51, shutil.which("pwsh.exe")]):
+                command = [str(executable), "-NoProfile", "-NonInteractive", "-EncodedCommand",
+                           base64.b64encode(script.encode("utf-16le")).decode("ascii")]
+                for arguments in (argv, [*argv[:-1], '--%', '%SystemRoot%', '']):
+                    with self.subTest(executable=executable, arguments=arguments):
+                        result = subprocess.run(command, cwd=root, env={**env, "NEXUS_TEST_ARGUMENTS": json.dumps(arguments)},
+                                                capture_output=True, text=True, timeout=15)
+                        self.assertEqual(result.returncode, 17, result.stderr)
+                        self.assertEqual(json.loads(result.stdout), arguments)
+                invalid = subprocess.run(command, cwd=root, env={**env, "NEXUS_TEST_ARGUMENTS": json.dumps(['bad\0value'])},
+                                         capture_output=True, text=True, timeout=15)
+                self.assertNotEqual(invalid.returncode, 17)
+                self.assertEqual(invalid.stdout, '')
+                self.assertIn('Nexus CLI arguments cannot contain NUL', invalid.stderr)
 
 
 if __name__ == "__main__":

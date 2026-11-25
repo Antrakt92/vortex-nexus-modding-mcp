@@ -57,5 +57,28 @@ foreach ($name in $runtimePins.Keys) {
         throw "Nexus CLI runtime differs: $name. Restore the pinned release before running it."
     }
 }
-& $exe @args
+$nativeArguments = @(foreach ($argument in $args) {
+    $value = [string]$argument
+    if ($value.IndexOf([char]0) -ge 0) { throw 'Nexus CLI arguments cannot contain NUL.' }
+    $value
+})
+$supportsStandard = $PSVersionTable.PSVersion -ge [version]'7.3'
+# Standard mode also consumes the exact stop-parsing token, even via splatting.
+$useStandard = $supportsStandard -and ('--%' -cnotin $nativeArguments)
+if ($supportsStandard) {
+    $PSNativeCommandArgumentPassing = if ($useStandard) { 'Standard' } else { 'Legacy' }
+    if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+        # Preserve the executable's own exit code even if the caller enables
+        # automatic PowerShell errors for native commands.
+        $PSNativeCommandUseErrorActionPreference = $false
+    }
+}
+if (-not $useStandard) {
+    # Keep legacy PowerShell's whitespace scan inside quotes; the Windows C
+    # runtime reads paired quotes inside the argument as one literal quote.
+    $nativeArguments = @(foreach ($argument in $nativeArguments) {
+        '"' + ($argument -replace '(\\*)"', '$1$1""' -replace '(\\+)\z', '$1$1') + '"'
+    })
+}
+& $exe @nativeArguments
 exit $LASTEXITCODE
