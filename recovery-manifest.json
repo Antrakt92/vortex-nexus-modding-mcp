@@ -672,7 +672,7 @@
     },
     {
       "path": "tools/modding/nexus-publish/README.md",
-      "sha256_lf": "77cd94069a20c3635519fb699af2e584135dc4825d775965277a96f17ddaa1c0"
+      "sha256_lf": "3058bed842d5c62a7308454037ed8d785e0790f892958adba56107c322fab530"
     },
     {
       "path": "tools/modding/nexus-publish/check-credential.py",
@@ -700,7 +700,7 @@
     },
     {
       "path": "tools/modding/nexus-publish/publish.py",
-      "sha256_lf": "867878c0ca7626109dc4ae7cf38165c7803012ef5c95aa7d7347b8b44f0812be"
+      "sha256_lf": "e76637fcfdbe4b6998a90e9b861f623c88508dc0d8dcf2ff2e9f84fb4c3f95cd"
     },
     {
       "path": "tools/modding/nexus-publish/release-assets.py",
@@ -736,7 +736,7 @@
     },
     {
       "path": "tools/modding/nexus-publish/tests/test_publish.py",
-      "sha256_lf": "405e2881f965b5e5ae134d4905650a61f922917bec23b9719a6a303ef2854d3b"
+      "sha256_lf": "66576fe96fe79e223f27dd70f576630f701264c9a8e482876cccdc1d6e0a1244"
     },
     {
       "path": "tools/modding/nexus-publish/tests/test_repair.py",
