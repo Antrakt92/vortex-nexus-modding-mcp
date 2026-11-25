@@ -99,7 +99,11 @@ numbers/booleans; it does not infer installation completion or force recalculati
 `list_unsolved_conflicts` checks each recorded pair against the settled active
 profile and refuses pairs with missing, non-installed or disabled endpoints.
 Vortex retains a shared conflict snapshot, so a successful list does not prove
-that Vortex ran a fresh conflict calculation for this profile.
+that Vortex ran a fresh conflict calculation for this profile. The read accepts
+up to 20,000 conflict groups, 20,000 pair rows, 50,000 filename references and
+4 MiB of raw UTF-8 filename data. Mirrored rows and resolved pairs count toward
+these limits. An exceeded limit returns `NATIVE_CONFLICT_READ_LIMIT`. The MCP
+transport separately limits the serialized response.
 
 The bridge also exposes `inspect_session` with optional `{ "diagnostics": true }`.
 It composes existing curated reads with at most four in flight, checks context

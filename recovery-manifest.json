@@ -760,7 +760,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/README.md",
-      "sha256_lf": "b25a270cb7222ddec57743a6cb8c51a08dcb0f8248038a0467c766cd09f15875"
+      "sha256_lf": "3d19556d0093ec2004838d81c0bc2e69e9ecaf7fcb6e622aaccbb67580fc7419"
     },
     {
       "path": "tools/modding/vortex-agent/archive-temp-lease.test.py",
@@ -1032,7 +1032,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/inspection.cjs",
-      "sha256_lf": "b5d9cb6ef78cb909c36fd40c24adb0bf6e6eb5cbb2fbdfc0edb2184ec7d92309"
+      "sha256_lf": "b211a25bfbaec0de78173952f7670fa1fae9dbf09be585078a851c35f4b27010"
     },
     {
       "path": "tools/modding/vortex-agent/install-diagnostics.cjs",
@@ -1236,7 +1236,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/native-conflicts.test.mjs",
-      "sha256_lf": "0839e049fde44df44334fb0a31b616a92ca79b6fb1fcd8e861986a0ac397094c"
+      "sha256_lf": "d439766d1f726fe46c8a888b4ca36f3c82274070f8f279973a7c18ef0a6864b7"
     },
     {
       "path": "tools/modding/vortex-agent/native-copy-error-patch.test.mjs",

@@ -68,6 +68,9 @@ function collectionHealth(api, selectors) {
     stalled: typeof session?.stalled === 'boolean' ? session.stalled : null, counters,
   }, recalculationVerified: false, diskDeploymentVerified: false };
 }
+const CONFLICT_DETAIL_LIMITS = Object.freeze({
+  groups: 20_000, rows: 20_000, filenames: 50_000, filenameBytes: 4 * 1024 * 1024,
+});
 function unresolvedConflicts(api, selectors, util) {
   const state = api.getState(), gameId = selectors.activeGameId(state), profileId = selectors.activeProfileId(state);
   const profile = state.persistent?.profiles?.[profileId];
@@ -86,15 +89,31 @@ function unresolvedConflicts(api, selectors, util) {
     insist(rules === undefined || Array.isArray(rules), 'NATIVE_CONFLICT_STATE_INVALID');
     return (rules || []).some(rule => ruleTypes.has(rule?.type) && util.testModReference(target, rule.reference));
   };
-  let entries = 0;
-  for (const [modId, conflicts] of Object.entries(state.session.dependencies.conflicts)) {
+  let groups = 0, rows = 0, filenames = 0, filenameBytes = 0;
+  const conflictGroups = state.session.dependencies.conflicts;
+  for (const modId in conflictGroups) {
+    if (!Object.hasOwn(conflictGroups, modId)) continue;
+    insist(++groups <= CONFLICT_DETAIL_LIMITS.groups, 'NATIVE_CONFLICT_READ_LIMIT');
+    const conflicts = conflictGroups[modId];
     insist(Array.isArray(conflicts), 'NATIVE_CONFLICT_STATE_INVALID');
+    rows += conflicts.length;
+    insist(rows <= CONFLICT_DETAIL_LIMITS.rows, 'NATIVE_CONFLICT_READ_LIMIT');
     for (const entry of conflicts) {
-      insist(++entries <= 20000, 'NATIVE_CONFLICT_READ_LIMIT');
-      const other = entry?.otherMod;
-      insist(other != null && typeof other.id === 'string' && typeof modId === 'string'
-        && Array.isArray(entry.files) && entry.files.every(file => typeof file === 'string')
+      const other = entry?.otherMod, files = entry?.files;
+      insist(other != null && typeof other.id === 'string' && Array.isArray(files)
         && [null, 'before', 'after'].includes(entry.suggestion), 'NATIVE_CONFLICT_STATE_INVALID');
+      // Charge raw references before duplicate and resolution filters. One
+      // symmetric pair can hold two large filename lists even when it emits one.
+      filenames += files.length;
+      insist(filenames <= CONFLICT_DETAIL_LIMITS.filenames, 'NATIVE_CONFLICT_READ_LIMIT');
+      for (const file of files) {
+        insist(typeof file === 'string', 'NATIVE_CONFLICT_STATE_INVALID');
+        // UTF-16 length is a lower bound on UTF-8 bytes, so skip counting an
+        // already oversized string.
+        insist(file.length <= CONFLICT_DETAIL_LIMITS.filenameBytes - filenameBytes, 'NATIVE_CONFLICT_READ_LIMIT');
+        filenameBytes += Buffer.byteLength(file, 'utf8');
+        insist(filenameBytes <= CONFLICT_DETAIL_LIMITS.filenameBytes, 'NATIVE_CONFLICT_READ_LIMIT');
+      }
       // Vortex can still expose its prior profile's global conflict map after
       // a same-game switch. Unchanged membership alone does not prove freshness.
       insist(activeInstalled(modId) && activeInstalled(other.id), 'NATIVE_CONFLICT_DETAILS_UNAVAILABLE');
@@ -105,7 +124,7 @@ function unresolvedConflicts(api, selectors, util) {
       if (matches(mods[modId].rules, other) || matches(mods[other.id].rules, mods[modId])) continue;
       candidates.push({ modId, modName: util.renderModName(mods[modId]),
         otherModId: other.id, otherModName: typeof other.name === 'string' ? other.name : other.id,
-        files: [...entry.files], suggestion: entry.suggestion });
+        files, suggestion: entry.suggestion });
     }
   }
   // Native dependencyState.modRules is private and can resolve additional pairs.
@@ -113,7 +132,7 @@ function unresolvedConflicts(api, selectors, util) {
   // proves no candidate was removed by that fallback in this snapshot.
   if (native.count === 0) return [];
   insist(candidates.length === native.count, 'NATIVE_CONFLICT_DETAILS_UNAVAILABLE');
-  return candidates;
+  return candidates.map(candidate => ({ ...candidate, files: [...candidate.files] }));
 }
 async function conflicts(api, selectors, args) {
   const state = api.getState(), profileId = selectors.activeProfileId(state);
