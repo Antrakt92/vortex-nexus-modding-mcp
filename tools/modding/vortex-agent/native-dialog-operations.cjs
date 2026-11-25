@@ -195,8 +195,12 @@ function createNativeDialogSession(api, selectors, {receipts,controllerOptions={
     },
     async read_native_dialog_operation(args) {
       const {requestId:id}=object(args,['requestId']); need(requestId(id),'REQUEST_ID_INVALID'); plainParents(control);
-      return {protocol:PROTOCOL,operation:OP,requestId:id,...await inspect(id),replayAllowed:false,
-        globalInterlockChanged:false,installationCompleted:false};
+      const result=await inspect(id);
+      const ordinaryResponseHeld=result.held?.effectsMayHaveOccurred===true&&result.attempt.action!=='cancel';
+      return {protocol:PROTOCOL,operation:OP,requestId:id,...result,replayAllowed:false,
+        globalInterlockChanged:false,installationCompleted:false,...(ordinaryResponseHeld?{
+          instruction:'Use read_native_dialog_operation and reconcile_operation with the original requestId. The ordinary receipt may already verify dismissal while the control receipt is held. Reconcile before another response.'
+        }:{})};
     },
   };
 }

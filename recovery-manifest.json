@@ -324,7 +324,7 @@
     },
     {
       "path": "docs/NATIVE-DIALOGS.md",
-      "sha256_lf": "64a4e9353d73fbbfec5e001dcef84182891f4693e7d4562289a24f92e6d6a408"
+      "sha256_lf": "db631de2d1de5b80e78e7b034c6165c1bc45c782174926452a47091f916689ec"
     },
     {
       "path": "docs/NATIVE-DISPATCH-CONTRACT.md",
@@ -928,7 +928,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/extension.cjs",
-      "sha256_lf": "ad65cfd6ecfc3bad1c0c162422d91ad2aec1ab24b862f2dfde39fa6c12ec04a0"
+      "sha256_lf": "b9cc0d5a766031d2422743a338bff862c963ea56ea9f0672c8a037f920f976a3"
     },
     {
       "path": "tools/modding/vortex-agent/file-proof-backend.cjs",
@@ -1276,11 +1276,11 @@
     },
     {
       "path": "tools/modding/vortex-agent/native-dialog-operations.cjs",
-      "sha256_lf": "7673c1c98887c99c3f88b507201ce190683072fe0a7a71c5ade26f34748f7bc0"
+      "sha256_lf": "bbfbf259bcdb8b671ef63a9367e28be301919295b98e212a6b74fe5aa482364c"
     },
     {
       "path": "tools/modding/vortex-agent/native-dialog-operations.test.cjs",
-      "sha256_lf": "4c09ee94ba77eb0cf7833e28d155cf5c829d36a0d921e96fe8146404a4d3c91c"
+      "sha256_lf": "8952d4da342ed52db15785fa0c25c2ada7167635e3046eb37813b1697a3d3275"
     },
     {
       "path": "tools/modding/vortex-agent/native-dialog-serialization.test.cjs",
