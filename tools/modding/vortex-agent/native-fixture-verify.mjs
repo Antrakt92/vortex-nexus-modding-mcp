@@ -406,6 +406,8 @@ if (before.mode === 'stopped') {
 const log = fs.readFileSync(path.join(root, 'userdata/vortex.log'), 'utf8');
 assert.match(log, /clean application end/);
 const nativeDialogObserved = receipt.events.some(row => row.phase === 'authenticated-native-dialog-readiness');
+const allNativeDialogActions = input.nativeDialogProbeMode === 'all-actions/1';
+assert.ok(input.nativeDialogProbeMode === undefined || allNativeDialogActions && stock211 && input.nativeDialogProbe === true);
 if (stock211) assert.equal(nativeDialogObserved, input.nativeDialogProbe === true);
 if (input.nativeDialogProbe || (input.hostVersion === '2.10.1' && (nativeDialogObserved || input.ownLocalPlan || input.candidateAssessment))) {
   const observed = event('authenticated-native-dialog-readiness');
@@ -444,6 +446,80 @@ if (input.nativeDialogProbe) {
   assert.equal(attempt.dialogId, observed.dialogId);
   assert.deepEqual(completion.response, observed.response);
 }
+if (allNativeDialogActions) {
+  const activeProfileId = 'native-agent-fixture', secondProfileId = 'native-agent-dialog-second';
+  const receiptDir = 'local-state/vortex-agent-build/receipts';
+  const digest = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  let previous = event('authenticated-native-dialog-cancel'), unchanged;
+  for (const [suffix, family, action, label, eligibleActions] of [
+    ['ignore', 'dependency_warning', 'ignore_dependencies', 'Ignore', ['cancel', 'ignore_dependencies']],
+    ['update', 'previous_version', 'update_current_profile', 'Update current profile', ['cancel', 'update_current_profile']],
+  ]) {
+    const observed = event('authenticated-native-dialog-' + suffix);
+    assert.ok(receipt.events.indexOf(previous) < receipt.events.indexOf(observed));
+    previous = observed;
+    const { requestId, dialogId, active, native, response, ledger, reconciliation, before, after } = observed;
+    assert.equal(requestId, input.runId + '_dialog_' + suffix);
+    assert.equal(dialogId, input.runId + '_synthetic_question_' + suffix);
+    assert.equal(active.dialogId, dialogId);
+    assert.equal(active.family, family);
+    assert.equal(active.status, 'ready');
+    assert.equal(active.queueSize, 1);
+    assert.deepEqual(active.eligibleActions, eligibleActions);
+    assert.match(active.fingerprint, /^[a-f0-9]{64}$/);
+    assert.deepEqual(native, { action: label, input: { remember: false } });
+
+    const stem = path.join(receiptDir, requestId);
+    const attempt = read(stem + '.attempt.json'), completion = read(stem + '.completion.json');
+    assert.equal(receipts.validAttempt(attempt), true);
+    assert.equal(receipts.validCompletion(completion, attempt), true);
+    assert.equal(attempt.operation, 'respond_native_dialog');
+    assert.equal(attempt.requestId, requestId);
+    assert.deepEqual([attempt.gameId, attempt.profileId], ['cyberpunk2077', activeProfileId]);
+    assert.deepEqual([attempt.parameters.dialogId, attempt.parameters.fingerprint, attempt.parameters.action],
+      [dialogId, active.fingerprint, action]);
+    assert.equal(completion.nativeDialogDismissalVerified, true);
+    assert.equal(completion.abortOnly, false);
+    assert.equal(completion.installationCompleted, false);
+    assert.equal(completion.diskDeploymentVerified, false);
+    const { receiptVersion, at, ...acknowledged } = completion;
+    assert.deepEqual({ ...acknowledged, status: 'complete' }, response);
+    assert.deepEqual(reconciliation.attempt, attempt);
+    assert.deepEqual(reconciliation.completion, completion);
+    assert.deepEqual(reconciliation.receiptIssues, []);
+    assert.equal(reconciliation.failure, null);
+    assert.equal(reconciliation.interlock, null);
+    assert.equal(reconciliation.terminalOperationVerified, true);
+    assert.equal(fs.existsSync(path.join(root, stem + '.failed.json')), false);
+
+    const controlStem = path.join(receiptDir, 'native-dialog-control', requestId);
+    const controlAttempt = read(controlStem + '.attempt.json'), controlCompletion = read(controlStem + '.completion.json');
+    const binding = { schema: 'native-dialog-control-ledger/1', operation: 'respond_native_dialog', requestId,
+      parametersDigest: digest(attempt.parameters), dialogKey: digest([attempt.gameId, attempt.profileId, dialogId, active.fingerprint]),
+      gameId: attempt.gameId, profileId: attempt.profileId, action, dialogId, fingerprint: active.fingerprint };
+    const { at: attemptAt, ...attemptRest } = controlAttempt, { at: completionAt, ...completionRest } = controlCompletion;
+    assert.ok(Number.isFinite(Date.parse(attemptAt)) && Number.isFinite(Date.parse(completionAt)));
+    assert.deepEqual(attemptRest, { ...binding, noReplay: true });
+    assert.deepEqual(completionRest, { ...binding, response });
+    assert.equal(ledger.status, 'complete');
+    assert.deepEqual(ledger.attempt, controlAttempt);
+    assert.deepEqual(ledger.completion, controlCompletion);
+    assert.equal(ledger.held, null);
+    assert.equal(ledger.replayAllowed, false);
+    assert.equal(ledger.installationCompleted, false);
+    assert.equal(fs.existsSync(path.join(root, controlStem + '.held.json')), false);
+
+    assert.deepEqual(Object.keys(before.profiles).sort(), [secondProfileId, activeProfileId]);
+    assert.deepEqual(before.profiles[secondProfileId], { id: secondProfileId, gameId: 'cyberpunk2077',
+      name: 'PRIVATE inactive dialog fixture', modState: {}, lastActivated: 0, features: {} });
+    assert.deepEqual(before.profiles[activeProfileId].modState, {});
+    assert.deepEqual(before.mods, {});
+    assert.deepEqual(after, before);
+    if (unchanged) assert.deepEqual(before, unchanged);
+    unchanged = after;
+  }
+  assert.ok(receipt.events.indexOf(previous) < receipt.events.indexOf(event('authenticated-installed-readback')));
+}
 const proof = { passed: true, root, checks: ['native import/install', 'authenticated compiled agent enable/deploy/disable/restore', 'manifest ownership', 'deployed hardlink identity', 'original hash and filesystem identity restored', 'post-shutdown game/staging hashes', 'ZIP size/SHA-256/CRC',
   input.ownLocalPlan ? 'eleven durable completions without unresolved marker' : completionSuffixes.length === 5 ? 'five durable completions without unresolved marker' : 'four durable completions without unresolved marker',
   ...(input.withExistingMod ? ['existing mod/flags/staged identity preserved', 'same-archive collision refused before effects'] : []),
@@ -459,6 +535,7 @@ const proof = { passed: true, root, checks: ['native import/install', 'authentic
         'authenticated local install readiness and inactive fixture collection session'] : [])]),
   ...(nativeDialogObserved ? ['authenticated native dialog queue read'] : []),
   ...(input.nativeDialogProbe ? ['authenticated Cancel reached the stock renderer callback with remember=false'] : []),
+  ...(allNativeDialogActions ? ['authenticated Ignore and Update current profile reached synthetic stock renderer callbacks with remember=false, exact control and ordinary receipts, and unchanged fixture profiles/mods'] : []),
   'clean native shutdown'], nexusReuse: receipt.nexusReuse, at: new Date().toISOString() };
 if (mode !== '--check-only') fs.writeFileSync(path.join(root, 'independent-verification.json'), JSON.stringify(proof, null, 2), { flag: 'wx' });
 console.log(JSON.stringify(proof));

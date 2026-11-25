@@ -226,6 +226,9 @@ async function run(api) {
       'CANDIDATE_ASSESSMENT_REQUIRES_EXISTING_CURATED_FIXTURE');
     must(!input.ownLocalPlan || input.installRoute === 'mcp-local-archive' && input.withExistingMod && !input.candidateAssessment,
       'OWN_LOCAL_PLAN_REQUIRES_EXCLUSIVE_EXISTING_CURATED_FIXTURE');
+    must(input.nativeDialogProbeMode === undefined || input.nativeDialogProbeMode === 'all-actions/1'
+      && input.nativeDialogProbe === true && input.hostVersion === '2.11.0'
+      && input.installRoute === 'mcp-local-archive', 'FIXTURE_NATIVE_DIALOG_MODE_INVALID');
     boundary(false); save();
     if (input.ownLocalPlan) {
       // Preflight actual Electron ESM support before any fixture installation.
@@ -314,29 +317,66 @@ async function run(api) {
       }
       if (input.nativeDialogProbe) {
         must(nativeDialog.status === 'empty', 'FIXTURE_DIALOG_PROBE_REQUIRES_EMPTY_QUEUE');
-        const title = 'Updating may break dependencies';
-        const requestId = input.runId + '_dialog_cancel';
-        const dialogId = input.runId + '_synthetic_question';
-        const callback = api.showDialog('question', title, {
+        const dependency = {
+          title: 'Updating may break dependencies', family: 'dependency_warning',
           text: "You're updating a mod that others depend upon and the update doesn't seem to be compatible (according to the dependency information). If you continue we have to disable these dependencies, otherwise you'll continually get warnings about it.",
-          options: { wrap: true },
-          checkboxes: [{ id: 'remember', value: false, text: 'Remember my choice' }],
-        }, [{ label: 'Cancel' }, { label: 'Ignore' }], dialogId);
-        const active = await rpc(token, 'read_native_dialog', { gameId: G, profileId: P });
-        must(active.dialogId === dialogId && active.family === 'dependency_warning'
-          && active.queueSize === 1, 'FIXTURE_DIALOG_PROBE_WRONG_QUESTION');
+          labels: ['Cancel', 'Ignore'], allowed: ['cancel', 'ignore_dependencies'],
+        };
         const pins = Object.fromEntries(['gameId', 'profileId', 'gamePath', 'stagingPath', 'downloadPath', 'filesystemIds'].map(k => [k, health[k]]));
-        const response = await rpc(token, 'respond_native_dialog', {
-          ...pins, requestId, dialogId, fingerprint: active.fingerprint, action: 'cancel',
-        });
-        const native = await bounded(callback, 'FIXTURE_DIALOG_CALLBACK_TIMEOUT', 5000);
-        const ledger = await rpc(token, 'read_native_dialog_operation', { requestId });
-        must(response.nativeDialogDismissalVerified === true && response.abortOnly === true
-          && response.installationCompleted === false && native.action === 'Cancel'
-          && native.input.remember === false && ledger.status === 'complete',
-        'FIXTURE_DIALOG_PROBE_CANCEL_NOT_VERIFIED');
-        must((await rpc(token, 'list_dialogs')).length === 0, 'FIXTURE_DIALOG_PROBE_QUEUE_NOT_EMPTY');
-        note('authenticated-native-dialog-cancel', { requestId, dialogId, response, native, ledgerStatus: ledger.status });
+        async function answer(question, suffix, action, label) {
+          const requestId = input.runId + '_dialog_' + suffix;
+          const dialogId = input.runId + '_synthetic_question' + (suffix === 'cancel' ? '' : '_' + suffix);
+          const callback = api.showDialog('question', question.title, {
+            text: question.text, options: { wrap: true },
+            checkboxes: [{ id: 'remember', value: false, text: 'Remember my choice' }],
+          }, question.labels.map(label => ({ label })), dialogId);
+          const active = await rpc(token, 'read_native_dialog', { gameId: G, profileId: P });
+          must(active.dialogId === dialogId && active.family === question.family && active.queueSize === 1
+            && isDeepStrictEqual(active.eligibleActions, question.allowed), 'FIXTURE_DIALOG_PROBE_WRONG_QUESTION');
+          const response = await rpc(token, 'respond_native_dialog', {
+            ...pins, requestId, dialogId, fingerprint: active.fingerprint, action,
+          });
+          const native = await bounded(callback, 'FIXTURE_DIALOG_CALLBACK_TIMEOUT', 5000);
+          const ledger = await rpc(token, 'read_native_dialog_operation', { requestId });
+          must(response.nativeDialogDismissalVerified === true && response.abortOnly === (action === 'cancel')
+            && response.installationCompleted === false && isDeepStrictEqual(native, { action: label, input: { remember: false } })
+            && ledger.status === 'complete', 'FIXTURE_DIALOG_PROBE_RESPONSE_NOT_VERIFIED');
+          must((await rpc(token, 'list_dialogs')).length === 0, 'FIXTURE_DIALOG_PROBE_QUEUE_NOT_EMPTY');
+          return { requestId, dialogId, active, response, native, ledger };
+        }
+        const cancel = await answer(dependency, 'cancel', 'cancel', 'Cancel');
+        note('authenticated-native-dialog-cancel', { requestId: cancel.requestId, dialogId: cancel.dialogId,
+          response: cancel.response, native: cancel.native, ledgerStatus: cancel.ledger.status });
+        if (input.nativeDialogProbeMode === 'all-actions/1') {
+          const second = { id: 'native-agent-dialog-second', gameId: G, name: 'PRIVATE inactive dialog fixture',
+            modState: {}, lastActivated: 0, features: {} };
+          api.store.dispatch(actions.setProfile(second));
+          boundary();
+          const snapshot = () => {
+            const s = api.getState();
+            return structuredClone({ profiles: s.persistent.profiles, mods: s.persistent.mods[G] ?? {} });
+          };
+          const before = snapshot();
+          must(isDeepStrictEqual(before.profiles[second.id], second) && Object.keys(before.mods).length === 0,
+            'FIXTURE_DIALOG_PROFILE_BASELINE_INVALID');
+          const previous = {
+            title: 'PRIVATE synthetic earlier mod version', family: 'previous_version',
+            text: 'An older version of this mod is already installed. You can replace the existing one - which will update all profiles - or install this one alongside it. In the latter case both versions will be available and only the active profile will be updated. ',
+            labels: ['Cancel', 'Update all profiles', 'Update current profile'], allowed: ['cancel', 'update_current_profile'],
+          };
+          for (const [question, suffix, action, label] of [
+            [dependency, 'ignore', 'ignore_dependencies', 'Ignore'],
+            [previous, 'update', 'update_current_profile', 'Update current profile'],
+          ]) {
+            const observed = await answer(question, suffix, action, label);
+            const reconciliation = await rpc(token, 'reconcile_operation', { requestId: observed.requestId });
+            boundary();
+            const after = snapshot();
+            must(isDeepStrictEqual(before, after) && reconciliation.terminalOperationVerified === true
+              && reconciliation.interlock === null, 'FIXTURE_DIALOG_ORDINARY_PROOF_INVALID');
+            note('authenticated-native-dialog-' + suffix, { ...observed, reconciliation, before, after });
+          }
+        }
       }
     }
     const target = contained(path.join(input.game, input.payloadPath));
