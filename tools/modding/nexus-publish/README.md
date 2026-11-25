@@ -428,8 +428,13 @@ python tools/modding/nexus-publish/publish.py local-state/nexus-publish-setup/sy
 The official repository has **no automated test script/suite**. Its shell
 `run-test-upload` invokes authenticated `gh act`; that was not run. Its documented
 `local-action` runs TypeScript through `@github/local-action` with a `.env` file;
-the guarded runner executes its production `dist/index.js` entrypoint directly
-with environment-only input instead. There is no official dry-run mode; our
+the guarded runner executes a verified copy of its production `dist/index.js`
+with environment-only input. The copy preserves the original bytes, entrypoint
+layout and ESM package type in an isolated directory. On Windows the runner
+keeps the copy and its package metadata read-locked through the child call.
+An ordinary staging cleanup failure reports a separate warning and preserves
+the operation's existing receipt and outcome.
+There is no official dry-run mode; our
 offline dry-run never executes the action.
 
 Dependency identity reviewed: official Nexus repository/package, MIT;

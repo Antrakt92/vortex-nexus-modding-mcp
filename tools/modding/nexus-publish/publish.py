@@ -12,11 +12,12 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import uuid
 import zipfile
 import zlib
 from datetime import datetime, timezone
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -29,6 +30,8 @@ STATE = configured_path("NEXUS_STATE_DIR", workspace_root() / "local-state/nexus
 API = "https://api.nexusmods.com/v3"
 HERE = Path(__file__).resolve().parent
 MANIFEST_LIMIT = 1024 * 1024
+# The 455,577-byte pinned action fits 1 MiB even with Git CRLF conversion.
+ACTION_BUNDLE_LIMIT = 1024 * 1024
 ID_RE = re.compile(r"(?:[1-9][0-9]{0,19}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\Z")
 ACTION_FIELDS = {"description", "display_name", "category", "archive_existing_version",
                  "primary_mod_manager_download", "allow_mod_manager_download",
@@ -53,9 +56,9 @@ def sha256(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def bundle_sha256(path):
+def bundle_sha256(data):
     # Git for Windows may check out CRLF; accept only that deterministic text checkout conversion.
-    return hashlib.sha256(Path(path).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+    return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
 
 
 def valid_id(value):
@@ -165,7 +168,9 @@ def verify_action(action):
                                   check=True, text=True).stdout.strip()
         undici = subprocess.run([node or "node", "-p", "process.versions.undici"], capture_output=True,
                                 check=True, text=True).stdout.strip()
-        if head != PIN or bundle_sha256(action / "dist/index.js") != BUNDLE_SHA256:
+        with (action / "dist/index.js").open("rb") as entry:
+            bundle = entry.read(ACTION_BUNDLE_LIMIT + 1)
+        if head != PIN or len(bundle) > ACTION_BUNDLE_LIMIT or bundle_sha256(bundle) != BUNDLE_SHA256:
             raise Blocked("Official action pin or bundle hash mismatch.")
         if int(version.lstrip("v").split(".")[0]) != 24:
             raise Blocked("Use Node 24 for this pinned action.")
@@ -174,7 +179,37 @@ def verify_action(action):
             raise Blocked("Use reviewed Node 24 with built-in Undici 7.18.2 or later in the 7.x line.")
     except (OSError, subprocess.SubprocessError, ValueError):
         raise Blocked("Pinned action checkout and Node 24 are required.") from None
-    return node
+    return node, bundle
+
+
+@contextmanager
+def stage_action(bundle):
+    # The reviewed bundle imports only Node built-ins. Preserve its documented
+    # ESM package type, basename and dist layout without using the mutable checkout.
+    temporary = tempfile.TemporaryDirectory(prefix="nexus-reviewed-action-")
+    root = Path(temporary.name)
+
+    def cleanup():
+        try:
+            temporary.cleanup()
+        except OSError:
+            print(f"Warning: verified uploader staging cleanup incomplete ({root.name}).", file=sys.stderr)
+
+    with ExitStack() as locks:
+        locks.callback(cleanup)
+        entry = root / "dist/index.js"
+        entry.parent.mkdir()
+        for path, expected in ((root / "package.json", b'{"type":"module"}\n'), (entry, bundle)):
+            with path.open("xb") as stream:
+                stream.write(expected)
+                stream.flush()
+                os.fsync(stream.fileno())
+            if os.name == "nt":
+                locks.enter_context(frozen_archive(path))
+            with path.open("rb") as stream:
+                if stream.read(len(expected) + 1) != expected:
+                    raise Blocked("Staged official action bytes differ.")
+        yield root
 
 
 def child_environment(manifest, key):
@@ -493,7 +528,7 @@ def execute_locked(manifest, path, state, action, credential, invoke, read):
     lock = target_lock_path(manifest, state)
     if lock.exists():
         raise Blocked("This target has an unresolved or concurrent attempt, including another version. Reconcile first.")
-    node = verify_action(action)
+    node, bundle = verify_action(action)
     if credential is None:
         raise Blocked("No approved credential source configured.")
     key = credential()
@@ -501,7 +536,7 @@ def execute_locked(manifest, path, state, action, credential, invoke, read):
             or any(ord(c) < 32 for c in key)):
         raise Blocked("Credential unavailable or invalid.")
     validate_target(manifest, key, read)
-    with frozen_archive(manifest["archive"]):
+    with frozen_archive(manifest["archive"]), stage_action(bundle) as staged:
         if sha256(manifest["archive"]) != manifest["sha256"]:
             raise Blocked("Archive changed since preflight.")
         data = record(manifest, "attempt")
@@ -524,7 +559,7 @@ def execute_locked(manifest, path, state, action, credential, invoke, read):
                 unlink_owned(lock, data, manifest)
             raise
         try:
-            report = invoke(manifest, key, action, node)
+            report = invoke(manifest, key, staged, node)
             data["action_running"] = False
             data["action_complete"] = report.get("ok") is True
             data["version_id"] = report.get("version_id") if valid_id(report.get("version_id")) else None

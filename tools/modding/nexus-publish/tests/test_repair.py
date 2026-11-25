@@ -80,7 +80,7 @@ class RepairTests(unittest.TestCase):
         self.assertTrue(p.target_lock_path(self.m, self.root).exists())
         with p.operation_lock(self.m, self.root):
             pass  # OS released the dead process's lock; durable uncertainty still blocks below.
-        with patch.object(p, "verify_action", return_value="modeled-node"), self.assertRaises(p.Blocked):
+        with patch.object(p, "verify_action", return_value=("modeled-node", b"synthetic action")), self.assertRaises(p.Blocked):
             p.execute({**self.m, "version": "2.0"}, publish=True, state=self.root,
                       credential=lambda: self.fail("key accessed"), invoke=lambda *a: self.fail("action invoked"))
         result = subprocess.run(self.worker("reconcile"), capture_output=True, text=True, timeout=10)
@@ -145,7 +145,7 @@ class RepairTests(unittest.TestCase):
             write(target, data, exclusive)
 
         with (patch.object(p, 'write_receipt', side_effect=fail_before_receipt),
-              patch.object(p, 'verify_action', return_value='modeled-node'),
+              patch.object(p, 'verify_action', return_value=('modeled-node', b'synthetic action')),
               self.assertRaisesRegex(PermissionError, 'synthetic write failure')):
             p.execute(self.m, publish=True, state=self.root, credential=lambda: 'mock-secret-never-log',
                       invoke=lambda *args: self.fail('action invoked'), read=self.read)
@@ -166,7 +166,7 @@ class RepairTests(unittest.TestCase):
             write(target, data, exclusive)
 
         with (patch.object(p, 'write_receipt', side_effect=fail_after_receipt),
-              patch.object(p, 'verify_action', return_value='modeled-node'),
+              patch.object(p, 'verify_action', return_value=('modeled-node', b'synthetic action')),
               self.assertRaisesRegex(PermissionError, 'synthetic partial receipt')):
             p.execute(self.m, publish=True, state=self.root, credential=lambda: 'mock-secret-never-log',
                       invoke=lambda *args: self.fail('action invoked'), read=self.read)
@@ -208,7 +208,7 @@ class RepairTests(unittest.TestCase):
         with self.assertRaises(p.Blocked): p.load_receipt(path, self.m)
 
     def test_cancellation_preserves_unknown_owner_and_releases_only_os_lock(self):
-        with patch.object(p, "verify_action", return_value="modeled-node"):
+        with patch.object(p, "verify_action", return_value=("modeled-node", b"synthetic action")):
             def cancel(*args): raise KeyboardInterrupt()
             result = p.execute(self.m, publish=True, state=self.root, credential=lambda: "mock-secret-never-log",
                                invoke=cancel, read=self.read)
@@ -228,7 +228,7 @@ class RepairTests(unittest.TestCase):
             def interrupted(*args):
                 self.assertIsNone(child.poll())
                 raise KeyboardInterrupt()
-            with patch.object(p, 'verify_action', return_value='modeled-node'):
+            with patch.object(p, 'verify_action', return_value=('modeled-node', b'synthetic action')):
                 result = p.execute(self.m, publish=True, state=self.root,
                                    credential=lambda: 'mock-secret-never-log',
                                    invoke=interrupted, read=self.read)
@@ -288,7 +288,7 @@ class RepairTests(unittest.TestCase):
         def interrupted(route, key):
             if route.startswith("/mod-file-versions/"): raise KeyboardInterrupt()
             return self.read(route, key)
-        with patch.object(p, "verify_action", return_value="modeled-node"):
+        with patch.object(p, "verify_action", return_value=("modeled-node", b"synthetic action")):
             result = p.execute(self.m, publish=True, state=self.root, credential=lambda: "mock-secret-never-log",
                                invoke=lambda *a: {"ok": True, "version_id": "987"}, read=interrupted)
         self.assertEqual(result["outcome"], "unknown")
