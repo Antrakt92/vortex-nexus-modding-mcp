@@ -824,11 +824,11 @@
     },
     {
       "path": "tools/modding/vortex-agent/collection-dialog-controller.cjs",
-      "sha256_lf": "bcda71ee9f497ce516f1ab6527a7b8fbad77d0545de9fc0222eb9cbe73c2f4f9"
+      "sha256_lf": "592627fae7d46fb68d1de2cf399e817faf3b29416efd8079e1581f2597f8b699"
     },
     {
       "path": "tools/modding/vortex-agent/collection-dialog-controller.test.cjs",
-      "sha256_lf": "ca66e1785cf1825cbac9f531911fa7e495f8f961419bc6d4f8bfe3fd5f723c57"
+      "sha256_lf": "f0c79991edc7d35221caf80c1c873ddb30bf2dbcb064bdc3db31c160f3408b82"
     },
     {
       "path": "tools/modding/vortex-agent/collection-dialog-policy.cjs",
@@ -848,19 +848,19 @@
     },
     {
       "path": "tools/modding/vortex-agent/collection-update-prompt.cjs",
-      "sha256_lf": "bbb3fd1268c05d0e527ded7b39220cd5bbc6d266e33cba953d2a5a1e9746b749"
+      "sha256_lf": "a11a9ba6ef7e3d245eeac598210eb64cf95a416c57ee167595dd4b82d76517de"
     },
     {
       "path": "tools/modding/vortex-agent/collection-update-prompt.test.cjs",
-      "sha256_lf": "6df5101fdefb454c197903a30224547c44183c8019c6b86b4568e31f7cce5f9a"
+      "sha256_lf": "f40f0ba384fdee775d619dedf01bdf45a5f06bb4942f88ba742c1ad8e67a9ef6"
     },
     {
       "path": "tools/modding/vortex-agent/collection-wizard-controller.cjs",
-      "sha256_lf": "872e364ecf78910ce646bcad9ede5a8fd3e199ed4c7c3f4b0f298051f4e9206f"
+      "sha256_lf": "658b8fba9c1e8efec5b21880e72df0d8b1f58c9bebe5a87ca862c070c3aa3d95"
     },
     {
       "path": "tools/modding/vortex-agent/collection-wizard-controller.test.cjs",
-      "sha256_lf": "ed89fcbb08107a2b28f78afc9ffa7d72d603ff6c78eeaa9ea2627f3e3b15f693"
+      "sha256_lf": "4bea8ca42c87d5bc6cd1265d415376e1f04f1f42caa863ca4a7a6d9a019dfe16"
     },
     {
       "path": "tools/modding/vortex-agent/collection-wizard-dom.cjs",
@@ -1260,11 +1260,11 @@
     },
     {
       "path": "tools/modding/vortex-agent/native-dialog-controller.cjs",
-      "sha256_lf": "329ab70bcd8afc93558377ed1608bb941ede9a8a1a2afe507b8c35974593fe30"
+      "sha256_lf": "a20bc0832c844b3f19fda9faa26b0260b4dd20ab0b2e60b601c3f140f5109b82"
     },
     {
       "path": "tools/modding/vortex-agent/native-dialog-controller.test.cjs",
-      "sha256_lf": "e02ebc61f641ff02844891597c6849c68c279af6b5983efd03a5ec849493f2d1"
+      "sha256_lf": "20d2eec0e639313f29b74c59f07545678b65902398fe3f996009fa36d50557e3"
     },
     {
       "path": "tools/modding/vortex-agent/native-dialog-host-admission.cjs",

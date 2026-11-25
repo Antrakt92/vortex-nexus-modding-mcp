@@ -118,6 +118,15 @@ test('post-effect source admission that never settles cannot defeat dismissal de
  const r=await controller.read({gameId:'game',profileId:'profile'});await assert.rejects(controller.respond(f.args(r,'cancel'),'owned'),/EFFECT_UNCERTAIN/);assert.equal(f.calls.length,1);
 });
 
+test('source admission finishing at the deadline cannot certify native dismissal',async()=>{
+ const f=fixture(),request={gameId:'game',profileId:'profile'};let clock=100;
+ const controller=createNativeDialogController(f.api,{selectors:f.selectors,now:()=>clock,
+   assertRead(){if(f.calls.length)clock=110;},assertRespond(){},transitionTimeoutMs:10,pollMs:1});
+ const read=await controller.read(request);
+ await assert.rejects(controller.respond(f.args(read,'cancel'),'owned'),/EFFECT_UNCERTAIN_RECONCILE/);
+ assert.equal(f.calls.length,1);
+});
+
 
 test('guarded effect arms first then synchronously checks and invokes the fixed callback exactly once',async()=>{
  const f=fixture(),events=[];const controller=createNativeDialogController(f.api,{selectors:f.selectors,assertRead(){},assertRespond(){},async performResponse(invoke,eligible,context,scope){assert.equal(context,'owned');assert.equal(scope.abortOnly,false);events.push('durable-intent');await Promise.resolve();eligible();events.push('eligible');invoke();events.push('invoked');}});

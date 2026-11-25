@@ -72,6 +72,22 @@ async function fixture() {
     set sourceValid(v) { sourceValid = v; }, set prepareHook(v) { prepareHook = v; }, set clickHook(v) { clickHook = v; } };
 }
 
+test('a delayed poll cannot certify an update prompt dismissal at the deadline', async t => {
+  const f = await fixture(); f.bind(); await f.controller.prepare(f.args);
+  f.clickHook = () => {}; f.controller.click(f.args);
+  let elapsed = 1000, wall = 1000; const timers = [];
+  t.mock.method(require('node:perf_hooks').performance, 'now', () => elapsed);
+  t.mock.method(Date, 'now', () => wall);
+  t.mock.method(globalThis, 'setTimeout', run => { timers.push(run); });
+  const result = f.controller.waitForTransition(f.args);
+  assert.equal(timers.length, 1);
+  f.doc.children = [];
+  elapsed = wall = 1005; timers.shift()();
+  await assert.rejects(result, /COLLECTION_UPDATE_PROMPT_DISMISSAL_TIMEOUT/);
+  await assert.rejects(f.controller.prepare(f.args), /ACTION_CONSUMED/);
+  assert.equal(f.clicks, 1);
+});
+
 test('idle readiness verifies host sources before another collection update begins',async()=>{
  const f=await fixture();const initial=await f.controller.readiness();assert.equal(initial.status,'idle');assert.equal(initial.sourceAdmitted,true);
  f.sourceValid=false;const held=await f.controller.readiness();assert.equal(held.status,'held');assert.equal(held.sourceAdmitted,false);

@@ -1,5 +1,6 @@
 'use strict';
 const crypto = require('node:crypto');
+const { performance } = require('node:perf_hooks');
 const { createWizardHostAdmission } = require('./collection-wizard-host.cjs');
 // Official 2.9.1 ASAR ec3a29d58ea65a1ca84e456742c894a19efe96920a6710063d221d451a26d59a.
 // Renderer171 eventHandlers.ts SHA 7e2769980f6c7d44599829d4631ff022a181fd700e8dbc87deccc06af28b8a12.
@@ -178,8 +179,14 @@ function createCollectionUpdatePromptController(api, options) {
     validate,
     click(args) { validate(args); prepared.consumed = true; prepared.element.click(); return true; },
     async waitForTransition(args) {
-      const deadline = Date.now() + (options.transitionTimeoutMs ?? 15000);
-      while (!verifyDismissal(args)) { need(Date.now() < deadline, 'DISMISSAL_TIMEOUT'); await new Promise(resolve => setTimeout(resolve, options.pollMs ?? 100)); }
+      const deadline = performance.now() + (options.transitionTimeoutMs ?? 15000);
+      for (;;) {
+        need(performance.now() < deadline, 'DISMISSAL_TIMEOUT');
+        const observed = verifyDismissal(args), remaining = deadline - performance.now();
+        need(remaining > 0, 'DISMISSAL_TIMEOUT');
+        if (observed) break;
+        await new Promise(resolve => setTimeout(resolve, Math.min(options.pollMs ?? 100, Math.ceil(remaining))));
+      }
       return { ...Object.fromEntries(['oldModId', 'collectionId', 'collectionSlug', 'revisionNumber', 'action'].map(key => [key, binding[key]])),
         nativePromptDismissalVerified: true, installationCompleted: false };
     },

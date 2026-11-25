@@ -1,4 +1,5 @@
 'use strict';
+const {performance}=require('node:perf_hooks');
 const {isProxy} = require('node:util/types');
 const {validateCollectionDialog} = require('./collection-dialog-policy.cjs');
 const {createWizardHostAdmission} = require('./collection-wizard-host.cjs');
@@ -209,8 +210,14 @@ function createCollectionDialogController(api,{selectors,util,getBinding,admit,a
     },
     async waitForTransition(args){const r=prepared;need(r&&r.requestId===field(args,'requestId'),'PREPARATION_REQUIRED');
       need(r.phase==='waiting','TRANSITION_UNAVAILABLE');
-      const deadline=Date.now()+transitionTimeoutMs;
-      try{while(!checkTransition(r)){need(Date.now()<deadline,'TRANSITION_TIMEOUT');await new Promise(resolve=>setTimeout(resolve,pollMs));}
+      const deadline=performance.now()+transitionTimeoutMs;
+      try{
+        for(;;){
+          need(performance.now()<deadline,'TRANSITION_TIMEOUT');
+          const observed=checkTransition(r),remaining=deadline-performance.now();
+          need(remaining>0,'TRANSITION_TIMEOUT');if(observed)break;
+          await new Promise(resolve=>setTimeout(resolve,Math.min(pollMs,Math.ceil(remaining))));
+        }
         r.result=Object.freeze({...r.target,nativeDialogDismissalVerified:true,installationCompleted:false});return r.result;
       }catch(e){hold(r,e);}
     },

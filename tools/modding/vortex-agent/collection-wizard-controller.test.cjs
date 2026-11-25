@@ -50,6 +50,20 @@ test('resume cannot manufacture query binding',async()=>{const f=fixture();await
 test('preexisting owner is not a new installation even after same ID event',async()=>{const f=fixture();f.s.persistent.mods.cyberpunk2077.owner=f.owner;await f.c.initialized;f.install();await assert.rejects(f.c.prepare(f.args),/BINDING_UNAVAILABLE/);});
 test('consumed click cannot repeat after native callback throws',async()=>{const f=fixture();await f.c.initialized;f.install();await f.c.prepare(f.args);f.element.click=()=>{throw Error('native-failure');};assert.throws(()=>f.c.click(f.args),/native-failure/);assert.throws(()=>f.c.click(f.args),/PREPARATION_REQUIRED/);await assert.rejects(f.c.prepare({...f.args,requestId:'other_request'}),/ACTION_ALREADY_CONSUMED/);});
 test('no native transition is not success and cannot be retried',async()=>{const f=fixture();await f.c.initialized;f.install();await f.c.prepare(f.args);f.element.click=()=>{};f.c.click(f.args);await assert.rejects(f.c.waitForTransition(f.args),/TRANSITION_TIMEOUT/);await assert.rejects(f.c.prepare(f.args),/ACTION_ALREADY_CONSUMED/);});
+test('a delayed poll cannot certify a wizard transition at the deadline',async t=>{
+ const f=fixture();await f.c.initialized;f.install();await f.c.prepare(f.args);
+ f.element.click=()=>{};f.c.click(f.args);
+ let elapsed=1000,wall=1000;const timers=[];
+ t.mock.method(require('node:perf_hooks').performance,'now',()=>elapsed);
+ t.mock.method(Date,'now',()=>wall);
+ t.mock.method(globalThis,'setTimeout',(run,ms)=>{timers.push({run,ms});});
+ const result=f.c.waitForTransition(f.args);
+ assert.equal(timers.length,1);
+ f.s.session.collections.activeSession=f.session();f.mode='working';
+ elapsed=wall=1005;timers.shift().run();
+ await assert.rejects(result,/COLLECTION_WIZARD_TRANSITION_TIMEOUT/);
+ await assert.rejects(f.c.prepare(f.args),/ACTION_ALREADY_CONSUMED/);
+});
 test('another native session is not completion',async()=>{const f=fixture();await f.c.initialized;f.install();await f.c.prepare(f.args);f.c.click(f.args);f.s.session.collections.activeSession.collectionId='other';await assert.rejects(f.c.waitForTransition(f.args),/SESSION_IDENTITY_CHANGED/);});
 test('Install Now retains the first matching native session through transition verification',async()=>{
  const f=fixture();await f.c.initialized;f.install();await f.c.prepare(f.args);f.c.click(f.args);

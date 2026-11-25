@@ -1,5 +1,6 @@
 'use strict';
 const crypto=require('node:crypto');
+const {performance}=require('node:perf_hooks');
 const {isProxy}=require('node:util/types');
 const {QUESTION_TEXT}=require('./collection-dialog-policy.cjs');
 const DEPENDENCY_TEXT="You're updating a mod that others depend upon and the update doesn't seem to be compatible (according to the dependency information). If you continue we have to disable these dependencies, otherwise you'll continually get warnings about it.";
@@ -27,7 +28,7 @@ function classify(d){
  if(d.content.text===QUESTION_TEXT&&digest(d.actions)===digest(['Cancel','Update all profiles','Update current profile']))return{family:'previous_version',actions:{cancel:'Cancel',update_current_profile:'Update current profile'}};
  throw Error('NATIVE_DIALOG_UNSUPPORTED_QUESTION');
 }
-function createNativeDialogController(api,{selectors,assertRead,assertRespond,performResponse=(invoke,eligible)=>{eligible();return invoke();},now=Date.now,sleep=ms=>new Promise(r=>setTimeout(r,ms)),transitionTimeoutMs=15000,pollMs=100}={}){
+function createNativeDialogController(api,{selectors,assertRead,assertRespond,performResponse=(invoke,eligible)=>{eligible();return invoke();},now=()=>performance.now(),sleep=ms=>new Promise(r=>setTimeout(r,ms)),transitionTimeoutMs=15000,pollMs=100}={}){
  need(typeof api?.getState==='function'&&typeof api?.closeDialog==='function'&&typeof selectors?.activeGameId==='function'&&typeof selectors?.activeProfileId==='function','API_UNAVAILABLE');
  need(typeof assertRead==='function'&&typeof assertRespond==='function'&&typeof performResponse==='function'&&typeof now==='function'&&typeof sleep==='function','ADMISSION_REQUIRED');
  need(Number.isInteger(transitionTimeoutMs)&&transitionTimeoutMs>0&&transitionTimeoutMs<=15000&&Number.isInteger(pollMs)&&pollMs>0&&pollMs<=1000,'WAIT_BOUND_INVALID');
@@ -46,7 +47,16 @@ function createNativeDialogController(api,{selectors,assertRead,assertRespond,pe
   const observedTail=current.ids.filter(id=>retained.has(id));
   need(tail.length===observedTail.length&&tail.every((id,i)=>observedTail[i]===id),'OTHER_DIALOG_CHANGED');
  }
- async function bounded(task,deadline){const budget=deadline-now();need(budget>0,'DISMISSAL_TIMEOUT');let timer;try{return await Promise.race([Promise.resolve().then(task),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('NATIVE_DIALOG_DISMISSAL_TIMEOUT')),budget);})]);}finally{clearTimeout(timer);}}
+ async function bounded(task,deadline){
+  const budget=deadline-now();need(budget>0,'DISMISSAL_TIMEOUT');let timer;
+  try{
+   const result=await Promise.race([
+    Promise.resolve().then(()=>{need(now()<deadline,'DISMISSAL_TIMEOUT');return task();}),
+    new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('NATIVE_DIALOG_DISMISSAL_TIMEOUT')),Math.ceil(budget));}),
+   ]);
+   need(now()<deadline,'DISMISSAL_TIMEOUT');return result;
+  }finally{clearTimeout(timer);}
+ }
  function evidence(){return{callbackOriginVerified:false,targetArchiveIdentityVerified:false,installationCompleted:false,dialogDismissalOnly:true};}
  return Object.freeze({
   async read(args){need(!busy,'ACTION_PENDING');busy=true;try{
@@ -77,10 +87,11 @@ function createNativeDialogController(api,{selectors,assertRead,assertRespond,pe
     // A response can enqueue a follow-up anywhere. Preserve every other
     // question observed before dispatch in its original relative order.
     retainTail(latest,current);
+    need(now()<deadline,'DISMISSAL_TIMEOUT');
     if(!current.ids.includes(a.dialogId)){
      return{schema:'native-dialog-response/1',action:a.action,dialogId:a.dialogId,nativeDialogDismissalVerified:true,remember:false,abortOnly:scope.abortOnly,...evidence()};
     }
-    need(current.fingerprint===r.fingerprint,'FRONT_CHANGED');need(now()<deadline,'DISMISSAL_TIMEOUT');await bounded(()=>sleep(pollMs),deadline);
+    need(current.fingerprint===r.fingerprint,'FRONT_CHANGED');await bounded(()=>sleep(Math.min(pollMs,Math.ceil(deadline-now()))),deadline);
    }
   }catch(error){if(attempted)throw Error('NATIVE_DIALOG_EFFECT_UNCERTAIN_RECONCILE');throw error;}finally{busy=false;}
   }
