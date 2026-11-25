@@ -1099,10 +1099,6 @@
       "sha256_lf": "e80a8f14fc5610c9d83968e7014d2a448cedf5a51627aa960dc8d26d0475c603"
     },
     {
-      "path": "tools/modding/vortex-agent/live-check.mjs",
-      "sha256_lf": "f167cbcb157ffbce20fcec5f20280c3c797d150fc57f0a37836bb446461937d1"
-    },
-    {
       "path": "tools/modding/vortex-agent/local-archive-install.cjs",
       "sha256_lf": "10fb7cb01714ebcfa08a468ffb954933db3875bb0660f6b324a644abef672cfd"
     },
