@@ -313,6 +313,8 @@ def install_lock():
     UPGRADES.mkdir(parents=True, exist_ok=True)
     lock = UPGRADES / 'install.lock'
     owner = f'{os.getpid()}:{uuid.uuid4().hex}'
+    owner_bytes = owner.encode('utf-8')
+    windows_generation = None
     pending = None
     acquired = False
     try:
@@ -326,19 +328,50 @@ def install_lock():
                 handle.flush()
                 os.fsync(handle.fileno())
             if os.name == 'nt':
-                pending.rename(lock)
+                windows_generation = prepared_receipt_generation(pending, owner_bytes)
+                if windows_generation is None:
+                    pending = None
+                    raise RuntimeError('Prepared installer lock changed; acquisition refused')
+                try:
+                    pending.rename(lock)
+                    if prepared_receipt_generation(lock, owner_bytes) != windows_generation or os.path.lexists(pending):
+                        raise RuntimeError('Published installer lock could not be verified; acquisition refused')
+                    acquired = True
+                except (OSError, KeyboardInterrupt) as error:
+                    # A caught interrupt can arrive after Windows moved the
+                    # exact lock even though the installer never entered.
+                    acquired = False
+                    cleanup = None
+                    if not os.path.lexists(pending) and \
+                            prepared_receipt_generation(lock, owner_bytes) == windows_generation and \
+                            not os.path.lexists(pending):
+                        cleanup = lock
+                    elif prepared_receipt_generation(pending, owner_bytes) == windows_generation:
+                        cleanup = pending
+                    pending = None
+                    if cleanup is not None:
+                        try:
+                            cleanup.unlink()
+                        except OSError:
+                            error.add_note('Installer lock cleanup failed; inspect lock state before retry')
+                    raise
                 pending = None
             else:
                 os.link(pending, lock)
-            acquired = True
+                acquired = True
         finally:
-            if pending is not None:
+            if pending is not None and (windows_generation is None or
+                                        prepared_receipt_generation(pending, owner_bytes) == windows_generation):
                 pending.unlink(missing_ok=True)
         yield
     finally:
         if acquired:
             no_reparse(lock)
-            if lock.read_text(encoding='utf-8') != owner:
+            if windows_generation is not None:
+                owned = prepared_receipt_generation(lock, owner_bytes) == windows_generation
+            else:
+                owned = lock.read_text(encoding='utf-8') == owner
+            if not owned:
                 raise RuntimeError('Installer lock ownership changed; cleanup refused')
             lock.unlink()
 

@@ -850,6 +850,62 @@ class UpgradeTests(unittest.TestCase):
             self.assertTrue((upgrade.UPGRADES / 'install.lock').is_file())
         self.assertEqual(list(upgrade.UPGRADES.iterdir()), [])
 
+    @unittest.skipUnless(upgrade.os.name == 'nt', 'Windows reserved-name rename')
+    def test_interruption_after_windows_lock_rename_releases_exact_owned_lock(self):
+        rename = Path.rename
+        lock = upgrade.UPGRADES / 'install.lock'
+
+        def interrupted_rename(file, destination):
+            renamed = rename(file, destination)
+            if destination == lock:
+                raise KeyboardInterrupt('synthetic interrupt after lock rename')
+            return renamed
+
+        with patch.object(Path, 'rename', interrupted_rename):
+            with self.assertRaisesRegex(KeyboardInterrupt, 'after lock rename'):
+                with upgrade.install_lock():
+                    self.fail('Installer ran after lock acquisition was interrupted')
+        self.assertFalse(lock.exists())
+        with upgrade.install_lock():
+            self.assertTrue(lock.exists())
+        self.assertEqual(list(upgrade.UPGRADES.iterdir()), [])
+
+    @unittest.skipUnless(upgrade.os.name == 'nt', 'Windows reserved-name rename')
+    def test_windows_lock_rename_cannot_admit_identical_replacement(self):
+        rename = Path.rename
+        lock = upgrade.UPGRADES / 'install.lock'
+        for interrupt in (False, True):
+            with self.subTest(interrupt=interrupt):
+                formerly_owned = upgrade.UPGRADES / 'formerly-owned'
+                staged_replacements = []
+
+                def replaced_rename(file, destination):
+                    renamed = rename(file, destination)
+                    if destination == lock:
+                        rename(lock, formerly_owned)
+                        lock.write_bytes(formerly_owned.read_bytes())
+                        file.write_bytes(b'ordinary independent staging output')
+                        staged_replacements.append(file)
+                        if interrupt:
+                            raise KeyboardInterrupt('synthetic interrupt after lock rename')
+                    return renamed
+
+                expected_error = KeyboardInterrupt if interrupt else RuntimeError
+                expected_message = 'after lock rename' if interrupt else 'Published installer lock could not be verified'
+                with patch.object(Path, 'rename', replaced_rename):
+                    with self.assertRaisesRegex(expected_error, expected_message):
+                        with upgrade.install_lock():
+                            self.fail('Installer ran with an unverified lock')
+                self.assertEqual(lock.read_bytes(), formerly_owned.read_bytes())
+                self.assertFalse(lock.samefile(formerly_owned))
+                staged_replacement, = staged_replacements
+                self.assertEqual(staged_replacement.read_bytes(), b'ordinary independent staging output')
+                with self.assertRaises(FileExistsError):
+                    with upgrade.install_lock():
+                        self.fail('Installer displaced an unverified lock')
+                lock.unlink()
+                formerly_owned.unlink()
+
     def test_posix_pending_lock_cleanup_failure_releases_our_published_lock(self):
         filesystem = Mock(wraps=upgrade.os)
         filesystem.name = 'posix'
