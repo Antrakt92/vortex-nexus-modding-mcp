@@ -1068,7 +1068,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/install.test.py",
-      "sha256_lf": "c3e69ab5a6ed9d06f7e989b4f6938423951286ab834319a45b53f7e827da3bf0"
+      "sha256_lf": "ebc19026053420039d3df7a33f685a6d03f361500f7baf4d3497ff0cec7d74bb"
     },
     {
       "path": "tools/modding/vortex-agent/installed-candidate-assessment.cjs",
@@ -1156,7 +1156,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/manage-install.py",
-      "sha256_lf": "ca0ffef894fba08dbfd5790653440d129b3fb7eb1e4aafff89de197710ca5957"
+      "sha256_lf": "e6749fd23073afd43cdea942abb42c85a07c2bf8272d4147cf2c4ababb1fd211"
     },
     {
       "path": "tools/modding/vortex-agent/mod-record-fingerprint-serialization.test.cjs",
