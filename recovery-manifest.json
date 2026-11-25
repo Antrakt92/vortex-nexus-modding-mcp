@@ -804,7 +804,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/capture-disk-baseline.test.mjs",
-      "sha256_lf": "aa72eebf3c007fe50d5ca7254b3a4772db6c797602e15d5df4b6fe976466b995"
+      "sha256_lf": "762fe30bcfd71591c969cecc14fb27a47d83f10fbda3effd2b07ed4b45a0d7a1"
     },
     {
       "path": "tools/modding/vortex-agent/catalog-snapshot.test.mjs",
@@ -2712,7 +2712,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/native-preflight.test.cjs",
-      "sha256_lf": "da14761a1d58e59cc0c23be8d785e74597755550cea6007fc23d66d9862134ad"
+      "sha256_lf": "7781b52f2091b8d143e45d9a7c82c7e99e29add4bb60b2884f71077b0105b72a"
     },
     {
       "path": "tools/modding/vortex-agent/native-promise-preload.test.mjs",
@@ -3237,6 +3237,10 @@
     {
       "path": "tools/modding/vortex-agent/technical-settings.test.cjs",
       "sha256_lf": "b65bafc248d5d273bfc813cd8e65fe7e28dfa6e3cb2c0285e907265d5fa368e0"
+    },
+    {
+      "path": "tools/modding/vortex-agent/test-fixture-directory.cjs",
+      "sha256_lf": "c35c0616c8eb76a0e884ced5d0a1f85f755c9aa41d2909444419a79f26377447"
     },
     {
       "path": "tools/modding/vortex-agent/tests.mjs",
