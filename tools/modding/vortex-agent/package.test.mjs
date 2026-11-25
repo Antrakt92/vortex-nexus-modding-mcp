@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { compileInputs, runtimeWorkspace } from './build.mjs';
 const ROOT = paths.build;
 const sha = async file => crypto.createHash('sha256').update(await fs.readFile(file)).digest('hex');
@@ -37,7 +37,7 @@ test('packaged entrypoint and source/lockfile provenance match verified isolated
   assert.equal(provenance.sourceOffer.repository, 'https://github.com/Antrakt92/vortex-nexus-modding-mcp');
 });
 
-async function buildFixture(t) {
+async function buildFixture(t, envOverrides = {}) {
   const prefix = path.join(os.tmpdir(), 'vortex-build-guard-');
   const root = await fs.mkdtemp(prefix);
   t.after(async () => {
@@ -45,10 +45,17 @@ async function buildFixture(t) {
     assert((await fs.lstat(root)).isDirectory());
     await fs.rm(root, { recursive: true, force: true });
   });
-  const env = { ...process.env, NEXUS_WORKSPACE: root, NEXUS_RUNTIME_WORKSPACE: root };
-  const run = (...args) => spawnSync(process.execPath, [fileURLToPath(new URL('./build.mjs', import.meta.url)), ...args],
+  const env = { ...process.env, ...envOverrides, NEXUS_WORKSPACE: root, NEXUS_RUNTIME_WORKSPACE: root };
+  const invoke = (nodeArgs, args) => spawnSync(process.execPath,
+    [...nodeArgs, fileURLToPath(new URL('./build.mjs', import.meta.url)), ...args],
     { env, encoding: 'utf8', windowsHide: true });
-  return {root, build: path.join(root, 'local-state/vortex-agent-build'), run};
+  const run = (...args) => invoke([], args);
+  const runIntercepted = async (script, ...args) => {
+    const preload = path.join(root, 'build-fixture.mjs');
+    await fs.writeFile(preload, script);
+    return invoke(['--import', pathToFileURL(preload).href], args);
+  };
+  return {root, build: path.join(root, 'local-state/vortex-agent-build'), run, runIntercepted};
 }
 
 test('builder accepts exactly one phase before creating build output', async t => {
@@ -60,6 +67,108 @@ test('builder accepts exactly one phase before creating build output', async t =
     assert.deepEqual(await fs.readdir(root), []);
   }
 });
+
+test('prepare can retry an interrupted snapshot copy without adopting the unfinished tree',
+  { skip: process.platform !== 'win32' }, async t => {
+    const {build, run, runIntercepted} = await buildFixture(t);
+    const result = await runIntercepted(`
+      import fs from 'node:fs/promises';
+      const copy = fs.copyFile;
+      let calls = 0;
+      fs.copyFile = async (...args) => {
+        if (++calls === 2) throw Error('Synthetic copy interruption');
+        return copy(...args);
+      };
+    `, '--prepare');
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Synthetic copy interruption/);
+    const tree = path.join(build, 'upstream');
+    await assert.rejects(fs.lstat(tree), {code: 'ENOENT'});
+    const [pending] = await fs.readdir(build);
+    assert.match(pending, /^upstream-pending-/);
+    const retained = await fs.readdir(path.join(build, pending));
+    assert.ok(retained.length > 0);
+    const retry = run('--prepare');
+    assert.equal(retry.status, 0, retry.stderr);
+    assert.deepEqual(await fs.readdir(path.join(build, pending)), retained);
+    assert.ok((await fs.lstat(path.join(tree, 'UPSTREAM-PROVENANCE.json'))).isFile());
+  });
+
+test('prepare refuses a competing empty final tree that appears at publication',
+  { skip: process.platform !== 'win32' }, async t => {
+    const {build, runIntercepted} = await buildFixture(t);
+    const result = await runIntercepted(`
+      import fs from 'node:fs/promises';
+      const rename = fs.rename;
+      fs.rename = async (temporary, destination) => {
+        await fs.mkdir(destination);
+        return rename(temporary, destination);
+      };
+    `, '--prepare');
+    assert.notEqual(result.status, 0);
+    assert.deepEqual(await fs.readdir(path.join(build, 'upstream')), []);
+    const pending = (await fs.readdir(build)).find(name => name.startsWith('upstream-pending-'));
+    assert.ok(pending);
+    assert.ok((await fs.lstat(path.join(build, pending, 'UPSTREAM-PROVENANCE.json'))).isFile());
+  });
+
+test('non-Windows preparation retains exclusive direct creation without using directory rename', async t => {
+  const {build, runIntercepted} = await buildFixture(t);
+  const nonWindows = `
+    import fs from 'node:fs/promises';
+    if (process.platform === 'win32') Object.defineProperty(process, 'platform', {value: 'linux'});
+    fs.rename = () => { throw Error('Portable prepare must not use directory rename'); };
+  `;
+  const result = await runIntercepted(nonWindows, '--prepare');
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(await fs.readdir(build), ['upstream']);
+  const provenance = path.join(build, 'upstream', 'UPSTREAM-PROVENANCE.json');
+  const original = await fs.readFile(provenance);
+  const retry = await runIntercepted(nonWindows, '--prepare');
+  assert.notEqual(retry.status, 0);
+  assert.match(retry.stderr, /Build tree already exists/);
+  assert.deepEqual(await fs.readFile(provenance), original);
+});
+
+const gitContext = process.env.VORTEX_BUILD_TEST_GIT_CONTEXT;
+test('prepare can retry the pinned Git fallback after checkout is interrupted',
+  { skip: process.platform !== 'win32' || !gitContext }, async t => {
+    assert.ok(path.isAbsolute(gitContext));
+    const {build, runIntercepted} = await buildFixture(t, {NEXUS_CONTEXT_ROOT: gitContext});
+    const vendor = fileURLToPath(new URL('../../../dependencies/vortex-mcp', import.meta.url));
+    const withoutVendor = `
+      import fs from 'node:fs/promises';
+      const access = fs.access;
+      fs.access = async (file, ...args) => {
+        if (file === ${JSON.stringify(vendor)}) throw Object.assign(Error('No vendored snapshot'), {code: 'ENOENT'});
+        return access(file, ...args);
+      };
+    `;
+    const checkoutInterrupted = await runIntercepted(withoutVendor + `
+      import childProcess from 'node:child_process';
+      import { syncBuiltinESMExports } from 'node:module';
+      const execFileSync = childProcess.execFileSync;
+      childProcess.execFileSync = (file, args, options) => {
+        if (file === 'git' && args[0] === 'checkout') throw Error('Synthetic checkout interruption');
+        return execFileSync(file, args, options);
+      };
+      syncBuiltinESMExports();
+    `, '--prepare');
+    assert.notEqual(checkoutInterrupted.status, 0);
+    assert.match(checkoutInterrupted.stderr, /Synthetic checkout interruption/);
+    const tree = path.join(build, 'upstream');
+    await assert.rejects(fs.lstat(tree), {code: 'ENOENT'});
+    const [pending] = await fs.readdir(build);
+    assert.match(pending, /^upstream-pending-/);
+    assert.ok((await fs.lstat(path.join(build, pending, '.git'))).isDirectory());
+
+    const retry = await runIntercepted(withoutVendor, '--prepare');
+    assert.equal(retry.status, 0, retry.stderr);
+    assert.deepEqual((await fs.readdir(build)).sort(), ['upstream', pending].sort());
+    const head = spawnSync('git', ['rev-parse', 'HEAD'], {cwd: tree, encoding: 'utf8', windowsHide: true});
+    assert.equal(head.status, 0, head.stderr);
+    assert.equal(head.stdout.trim(), 'd10277b8858ad6d411765aa93131219f4a24533e');
+  });
 
 test('build refusal preserves files aliased to a generated regression fixture', async t => {
   const {root, build, run} = await buildFixture(t);

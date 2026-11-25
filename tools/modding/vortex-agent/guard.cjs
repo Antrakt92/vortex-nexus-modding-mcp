@@ -145,7 +145,7 @@ function fileStamp(stat) { return `${stat.dev}:${stat.ino}:${stat.size}:${stat.m
 async function archive(api, args, id, selectors = {}, catalog) {
   const projection = () => {
     const state = api.getState(), record = state.persistent?.downloads?.files?.[id];
-    const resolved = downloads.resolveDownload(record, state, selectors, catalog);
+    const resolved = downloads.resolveDownload(record, state, selectors, downloads.catalogSnapshot(catalog));
     return { state: record?.state, localPath: record?.localPath, ...resolved };
   };
   const pinned = projection();

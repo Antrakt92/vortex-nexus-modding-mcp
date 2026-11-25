@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 MODULE = Path(__file__).with_name('manage-install.py')
 spec = importlib.util.spec_from_file_location('isolated_upgrade', MODULE)
@@ -75,6 +75,47 @@ class UpgradeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'pin mismatch'):
             upgrade.install(self.new, '0' * 64)
         self.assertEqual(upgrade.sha(self.plugins / 'vortex-agent/index.js'), self.old)
+
+    def test_upgrade_receipt_publication_failure_restores_original_and_can_retry(self):
+        target = self.plugins / 'vortex-agent'
+        original = {file.name: file.read_bytes() for file in target.iterdir()}
+        original_identity = upgrade.directory_identity(target)
+        publish = upgrade.os.replace
+
+        def fail_receipt(source, destination):
+            if Path(destination).name == 'upgrade.json':
+                self.assertEqual(upgrade.sha(target / 'index.js'), self.new)
+                raise OSError('synthetic receipt publication failure')
+            return publish(source, destination)
+
+        with patch.object(upgrade.os, 'replace', side_effect=fail_receipt):
+            with self.assertRaisesRegex(OSError, 'synthetic receipt publication failure'):
+                upgrade.install(self.new, self.old)
+        self.assertEqual({file.name: file.read_bytes() for file in target.iterdir()}, original)
+        self.assertEqual(upgrade.directory_identity(target), original_identity)
+        self.assertEqual(list(upgrade.UPGRADES.glob('*/upgrade.json')), [])
+        upgrade.install(self.new, self.old)
+        receipt, = upgrade.UPGRADES.glob('*/upgrade.json')
+        self.assertEqual(json.loads(receipt.read_text(encoding='utf-8'))['sha256'], self.new)
+        self.assertEqual(upgrade.sha(target / 'index.js'), self.new)
+
+    def test_upgrade_receipt_flush_failure_refuses_before_swap(self):
+        target = self.plugins / 'vortex-agent'
+        original_identity = upgrade.directory_identity(target)
+        fsync = upgrade.os.fsync
+
+        def fail_receipt_flush(fd):
+            if any(upgrade.UPGRADES.glob('*/upgrade.json.pending')):
+                raise OSError('synthetic receipt flush failure')
+            fsync(fd)
+
+        with patch.object(upgrade.os, 'fsync', side_effect=fail_receipt_flush):
+            with self.assertRaisesRegex(OSError, 'synthetic receipt flush failure'):
+                upgrade.install(self.new, self.old)
+        self.assertEqual(upgrade.sha(target / 'index.js'), self.old)
+        self.assertEqual(upgrade.directory_identity(target), original_identity)
+        self.assertEqual(list(upgrade.UPGRADES.glob('*/upgrade.json')), [])
+        self.assertFalse((upgrade.UPGRADES / 'install.lock').exists())
 
     def test_sibling_plan_journal_does_not_break_flat_receipt_preservation(self):
         journal = self.root / 'plan-journals' / ('a' * 64)
@@ -642,6 +683,41 @@ class UpgradeTests(unittest.TestCase):
             with upgrade.install_lock():
                 (self.root / 'upgrades/install.lock').write_bytes(b'synthetic replacement owner')
         self.assertEqual((self.root / 'upgrades/install.lock').read_bytes(), b'synthetic replacement owner')
+
+    def test_failed_installer_lock_flush_leaves_no_active_lock_and_can_retry(self):
+        with patch.object(upgrade.os, 'fsync', side_effect=OSError('synthetic lock flush failure')):
+            with self.assertRaisesRegex(OSError, 'synthetic lock flush failure'):
+                with upgrade.install_lock():
+                    self.fail('Installer ran without a durably initialized lock')
+        self.assertEqual(list(upgrade.UPGRADES.iterdir()), [])
+        with upgrade.install_lock():
+            self.assertTrue((upgrade.UPGRADES / 'install.lock').is_file())
+        self.assertEqual(list(upgrade.UPGRADES.iterdir()), [])
+
+    def test_posix_pending_lock_cleanup_failure_releases_our_published_lock(self):
+        filesystem = Mock(wraps=upgrade.os)
+        filesystem.name = 'posix'
+        unlink = Path.unlink
+        pending = []
+
+        def fail_pending_cleanup(file, *args, **kwargs):
+            if file.name.startswith('.install-lock-'):
+                lock = file.with_name('install.lock')
+                self.assertTrue(lock.samefile(file))
+                pending.append(file)
+                raise OSError('synthetic pending lock cleanup failure')
+            return unlink(file, *args, **kwargs)
+
+        with patch.object(upgrade, 'os', filesystem), patch.object(Path, 'unlink', fail_pending_cleanup):
+            with self.assertRaisesRegex(OSError, 'synthetic pending lock cleanup failure'):
+                with upgrade.install_lock():
+                    self.fail('Installer ran after lock initialization failed')
+        filesystem.link.assert_called_once()
+        self.assertFalse((upgrade.UPGRADES / 'install.lock').exists())
+        self.assertEqual(list(upgrade.UPGRADES.iterdir()), pending)
+        with upgrade.install_lock():
+            self.assertTrue((upgrade.UPGRADES / 'install.lock').is_file())
+        self.assertEqual(list(upgrade.UPGRADES.iterdir()), pending)
 
     def test_maintained_source_changed_during_staging_refuses_swap(self):
         maintained = self.root / 'maintained'

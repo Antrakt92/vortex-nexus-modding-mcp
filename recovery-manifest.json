@@ -224,7 +224,7 @@
     },
     {
       "path": "docs/COLLECTION-DOWNLOADS.md",
-      "sha256_lf": "8287bcb9a2d235e20e1341319d049df405786b525aa6c5d11a8c8810e0816ba9"
+      "sha256_lf": "d175a56898a414dc8c953d39b8abd326feab6b696b9610fa8f4a3725339fa9f2"
     },
     {
       "path": "docs/COLLECTION-RELEASES.md",
@@ -484,7 +484,7 @@
     },
     {
       "path": "docs/RESTORE.md",
-      "sha256_lf": "6a8133ebee67a3d26072651624ebf13f141cb06844d10dadd06691fabb1aece9"
+      "sha256_lf": "c419a645f1b6096c14eba36cdbc0b290c8b9c47e47d21342b1cc0c620279f224"
     },
     {
       "path": "docs/STOCK-LOCAL-INSTALL.md",
@@ -768,7 +768,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/audit-fixes.test.mjs",
-      "sha256_lf": "0153c4f6b2f2d3902fac43081705a037092758f2d254932b0ff90717712cd81e"
+      "sha256_lf": "be0c0a9d59e403e749ce363b0175f1d8775de43f68762f4863b16cde712b517c"
     },
     {
       "path": "tools/modding/vortex-agent/bridge-audit.test.mjs",
@@ -792,7 +792,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/build.mjs",
-      "sha256_lf": "2196fa6b9fc03a2811a634aa00394ee8a354ad00b40836b0ebbbbafe61d32a87"
+      "sha256_lf": "7dd233ea7a08707ad0cda5d411ca6f384338efd7372d72ddbb23e8bee01e5112"
     },
     {
       "path": "tools/modding/vortex-agent/candidate-assessment-serialization.test.mjs",
@@ -808,7 +808,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/catalog-snapshot.test.mjs",
-      "sha256_lf": "73cfe21afc8bf812bd13d217cc8862d18d11696cecde73c3739ff91a0827d5dd"
+      "sha256_lf": "854f3bc6dfaac964c101d4bad42b6bcbe9ade8c4be7a50441c5ed9dc9b9f4aca"
     },
     {
       "path": "tools/modding/vortex-agent/child-terminal-observer.cjs",
@@ -912,7 +912,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/download-identity.cjs",
-      "sha256_lf": "8e23a7b6fbe7f2842f83186db38446c85c212caba77cde21eccf4c245b0dd247"
+      "sha256_lf": "d83da019f5fc9bc870acdf72657b034af62e976ba72897afe934c8eb297cc7a5"
     },
     {
       "path": "tools/modding/vortex-agent/extension-admission-source-probe.test.mjs",
@@ -984,7 +984,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/guard.cjs",
-      "sha256_lf": "fb44cb5d404f5c1fed04e48b96805a84a1d64331ffa87b4f4cda382c473204a9"
+      "sha256_lf": "8ece5187052f86acbe02ff7f696ead920aa8e3572577d62ac98be984311ed754"
     },
     {
       "path": "tools/modding/vortex-agent/helper-source-proof.cjs",
@@ -1064,7 +1064,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/install.test.py",
-      "sha256_lf": "703bc076fa71b19d60fd3aaa3177726646b34eafbc80c6d422b0c4334df6297c"
+      "sha256_lf": "181b5ea0289ed42de12c0b1d6fdf604bf50e6b6d3d8e2dea4e7bb697dceda2e5"
     },
     {
       "path": "tools/modding/vortex-agent/installed-candidate-assessment.cjs",
@@ -1148,7 +1148,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/manage-install.py",
-      "sha256_lf": "e9ea093ecaf7fda2b6adc12781bbc9767dedda330128ab7dbea90fa525d3f6f2"
+      "sha256_lf": "5915796ccd7b27f8865f9edf5cb0b4f324b5d22e76a45ca6fbbd80d591723a62"
     },
     {
       "path": "tools/modding/vortex-agent/mod-record-fingerprint-serialization.test.cjs",
@@ -3052,7 +3052,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/package.test.mjs",
-      "sha256_lf": "763ba27a8b165578936da5ff753a23dc354f52b2dd58b42e98cd1724cce4d3c5"
+      "sha256_lf": "3c10407c943e8f5f66438e54fa4329a08ab9bfd0838331f53a839aeebc3ab044"
     },
     {
       "path": "tools/modding/vortex-agent/paths-core.cjs",

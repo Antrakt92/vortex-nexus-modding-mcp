@@ -189,6 +189,68 @@ async function preservePreviousBuild(plugin) {
     await fs.copyFile(path.join(copiedSources, name), path.join(archive, 'src', name), fs.constants.COPYFILE_EXCL);
 }
 const run = (cmd, args, cwd = BUILD) => execFileSync(cmd, args, { cwd, stdio: 'inherit', shell: process.platform === 'win32' && cmd.endsWith('.cmd') });
+async function directoryIdentity(directory) {
+  const info = await fs.lstat(directory, { bigint: true });
+  if (!info.isDirectory() || info.isSymbolicLink()) throw Error('Build directory changed');
+  return `${info.dev}:${info.ino}`;
+}
+
+async function requireNewTree(tree) {
+  try { await fs.lstat(tree); }
+  catch (error) { if (error.code === 'ENOENT') return; throw error; }
+  throw Error('Build tree already exists; inspect it rather than overwrite');
+}
+
+async function materializeBuildTree(target, snapshot) {
+  if (snapshot) {
+    for (const name of Object.keys(snapshot.currentFileSHA256)) {
+      const destination = path.join(target, ...name.split('/'));
+      await fs.mkdir(path.dirname(destination), { recursive: true });
+      await fs.copyFile(path.join(vendor, ...name.split('/')), destination, fs.constants.COPYFILE_EXCL);
+    }
+    await fs.copyFile(path.join(vendor, 'UPSTREAM-PROVENANCE.json'), path.join(target, 'UPSTREAM-PROVENANCE.json'), fs.constants.COPYFILE_EXCL);
+  } else {
+    run('git', ['clone', '--no-hardlinks', CACHE, target]);
+    run('git', ['checkout', '--detach', PIN], target);
+  }
+  const prepared = await checkBuildTree(target);
+  if (snapshot && prepared.acceptedSourceTreeSHA256 !== snapshot.acceptedSourceTreeSHA256)
+    throw Error('Pinned upstream source changed while copying');
+}
+
+async function prepareBuildTree(tree) {
+  await fs.mkdir(BUILD, { recursive: true });
+  const buildIdentity = await directoryIdentity(BUILD);
+  await requireNewTree(tree);
+  let hasVendor = true;
+  try { await fs.access(vendor); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; hasVendor = false; }
+  const snapshot = hasVendor ? await verifyPinnedSnapshot(vendor) : null;
+  if (process.platform !== 'win32') {
+    // POSIX rename can replace an empty competing directory. Retain exclusive
+    // direct creation there rather than overwrite another writer's entry.
+    await noReparsePaths(tree);
+    if (await directoryIdentity(BUILD) !== buildIdentity) throw Error('Build directory changed during preparation');
+    await fs.mkdir(tree);
+    await materializeBuildTree(tree, snapshot);
+    return;
+  }
+
+  const pending = await fs.mkdtemp(path.join(BUILD, 'upstream-pending-'));
+  const pendingIdentity = await directoryIdentity(pending);
+  await materializeBuildTree(pending, snapshot);
+
+  await noReparsePaths(pending, tree);
+  if (await directoryIdentity(BUILD) !== buildIdentity || await directoryIdentity(pending) !== pendingIdentity)
+    throw Error('Build directory changed before publication');
+  await requireNewTree(tree);
+  // A complete tree is published at once. Windows rename cannot replace an
+  // ordinary directory that was created by another writer at this path.
+  await fs.rename(pending, tree);
+  if (await directoryIdentity(BUILD) !== buildIdentity || await directoryIdentity(tree) !== pendingIdentity)
+    throw Error('Prepared build directory changed during publication');
+}
+
 export async function main(argv = process.argv.slice(2)) {
   const phases = ['--prepare', '--regression', '--patch', '--compile', '--package'];
   const [phase] = argv;
@@ -203,28 +265,7 @@ export async function main(argv = process.argv.slice(2)) {
   await noReparseTree(path.join(buildTree, 'adapted-dist'));
   await noReparseTree(path.join(BUILD, 'plugin/vortex-agent'));
 if (phase === '--prepare') {
-  await fs.mkdir(BUILD, { recursive: true });
-  const tree = path.join(BUILD, 'upstream');
-  try { await fs.access(tree); throw new Error('Build tree already exists; inspect it rather than overwrite'); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; }
-  let snapshot, hasVendor = false;
-  try { await fs.access(vendor); hasVendor = true; }
-  catch (error) { if (error.code !== 'ENOENT') throw error; }
-  if (hasVendor) snapshot = await verifyPinnedSnapshot(vendor);
-  if (snapshot) {
-    await fs.mkdir(tree);
-    for (const name of Object.keys(snapshot.currentFileSHA256)) {
-      const destination = path.join(tree, ...name.split('/'));
-      await fs.mkdir(path.dirname(destination), { recursive: true });
-      await fs.copyFile(path.join(vendor, ...name.split('/')), destination, fs.constants.COPYFILE_EXCL);
-    }
-    await fs.copyFile(path.join(vendor, 'UPSTREAM-PROVENANCE.json'), path.join(tree, 'UPSTREAM-PROVENANCE.json'), fs.constants.COPYFILE_EXCL);
-    await verifyPinnedSnapshot(tree);
-  } else {
-    run('git', ['clone', '--no-hardlinks', CACHE, tree]);
-    run('git', ['checkout', '--detach', PIN], tree);
-    await checkBuildTree(tree);
-  }
+  await prepareBuildTree(buildTree);
 } else if (phase === '--regression') {
   await fs.copyFile(path.join(source, 'regression.test.ts'), path.join(BUILD, 'upstream', 'src', 'regression.test.ts'));
 } else if (phase === '--patch') {

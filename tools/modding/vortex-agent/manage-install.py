@@ -286,17 +286,34 @@ def install_lock():
     UPGRADES.mkdir(parents=True, exist_ok=True)
     lock = UPGRADES / 'install.lock'
     owner = f'{os.getpid()}:{uuid.uuid4().hex}'
-    with lock.open('x', encoding='utf-8') as handle:
-        handle.write(owner)
-        handle.flush()
-        os.fsync(handle.fileno())
+    pending = None
+    acquired = False
     try:
+        try:
+            # Publish a complete owner record atomically without replacing another
+            # installer. A write or flush failure leaves no active lock.
+            with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=UPGRADES,
+                                             prefix='.install-lock-', delete=False) as handle:
+                pending = Path(handle.name)
+                handle.write(owner)
+                handle.flush()
+                os.fsync(handle.fileno())
+            if os.name == 'nt':
+                pending.rename(lock)
+                pending = None
+            else:
+                os.link(pending, lock)
+            acquired = True
+        finally:
+            if pending is not None:
+                pending.unlink(missing_ok=True)
         yield
     finally:
-        no_reparse(lock)
-        if lock.read_text(encoding='utf-8') != owner:
-            raise RuntimeError('Installer lock ownership changed; cleanup refused')
-        lock.unlink()
+        if acquired:
+            no_reparse(lock)
+            if lock.read_text(encoding='utf-8') != owner:
+                raise RuntimeError('Installer lock ownership changed; cleanup refused')
+            lock.unlink()
 
 
 def verify_runtime_workspace(provenance):
@@ -369,6 +386,13 @@ def install(expected_sha, from_sha=None, package_root=None):
         if os.path.lexists(old):
             raise RuntimeError('Upgrade rollback destination already exists')
         check_target()
+        result = {'installed': str(target), 'version': '1.1.0', 'sha256': expected_sha, 'oldBundleBackup': str(run / 'old-plugin') if from_sha else None,
+                  'receiptPins': str(run / 'receipt-pins.json'), 'receiptsUnchanged': True, 'restartPerformed': False}
+        receipt_pending = run / 'upgrade.json.pending'
+        with receipt_pending.open('x', encoding='utf-8') as output:
+            json.dump(result, output, indent=2)
+            output.flush()
+            os.fsync(output.fileno())
         stopped()
         try:
             if prior_identity is not None:
@@ -380,6 +404,9 @@ def install(expected_sha, from_sha=None, package_root=None):
                 raise RuntimeError('Staged package changed during swap')
             if receipt_pins() != pins:
                 raise RuntimeError('Receipt pins changed during upgrade')
+            # Only the final name is a success receipt. A publication failure
+            # must recover the same plugin state as any post-swap failure.
+            os.replace(receipt_pending, run / 'upgrade.json')
         except BaseException:
             # Recover an interrupted swap, but never move a concurrent foreign
             # target just because it occupies the installation pathname.
@@ -394,9 +421,6 @@ def install(expected_sha, from_sha=None, package_root=None):
                     raise RuntimeError('Saved plugin changed during failed swap; rollback refused')
                 old.rename(target)
             raise
-        result = {'installed': str(target), 'version': '1.1.0', 'sha256': expected_sha, 'oldBundleBackup': str(run / 'old-plugin') if from_sha else None,
-                  'receiptPins': str(run / 'receipt-pins.json'), 'receiptsUnchanged': True, 'restartPerformed': False}
-        (run / 'upgrade.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
         print(json.dumps(result))
 
 def sync_provenance(expected_sha, package_root=None):

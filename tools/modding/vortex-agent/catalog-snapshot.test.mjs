@@ -21,6 +21,19 @@ test('inventory reads a numeric game catalogue once per projection, never across
   assert.equal(reads, 2);
 });
 
+test('numeric catalogue rows are indexed once and duplicate IDs remain ambiguous', () => {
+  let idReads = 0;
+  const catalog = () => Array.from({length: 100}, (_, index) => ({
+    get id() { idReads++; return index < 2 ? [3333, '3333'][index] : index + 1; },
+    domain_name: 'cyberpunk2077',
+  }));
+  const files = Object.fromEntries(Array.from({length: 100}, (_, index) => ['d' + index, item()]));
+  const rows = listDownloads({getState: () => ({persistent: {downloads: {files}}})}, selectors, args, catalog);
+  assert.equal(rows.length, 100);
+  assert.ok(rows.every(row => row.identityAmbiguous === true));
+  assert.equal(idReads, 100);
+});
+
 test('inventory filters excluded download states before resolving their catalogue', () => {
   const pending = {...item(), state: 'started'};
   const finished = item(44);
