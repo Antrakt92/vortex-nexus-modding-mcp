@@ -252,7 +252,7 @@
     },
     {
       "path": "docs/GETTING-STARTED.md",
-      "sha256_lf": "3e30f96a9f3b3f2f0b04cdbfe15340a948bc855efbaa66add85ee97c1473e4d2"
+      "sha256_lf": "8bb62f6e0242bf537dc5e94d0b061fa0b64abcbdd1947cd42c5d1060bbd214eb"
     },
     {
       "path": "docs/INSTALL-WORKFLOW-PLAN.md",
@@ -484,7 +484,7 @@
     },
     {
       "path": "docs/RESTORE.md",
-      "sha256_lf": "8eb3c6521c67d61f11b5249dbef5a46bda3f320b705d3176c142e7b8bdb5233c"
+      "sha256_lf": "579f7f3953dcc055a7f90f102bd5a272eb61e8eec60d8c45be9af563f67c615c"
     },
     {
       "path": "docs/STOCK-LOCAL-INSTALL.md",
