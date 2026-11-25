@@ -30,14 +30,14 @@ function request(requestId=publicId,revision=0,generation=1){
     managerScope:'manager-fixture-'+generation,rendererGeneration:'renderer_'+generation.toString(16).padStart(32,'0'),
     admissionSHA256:h,plan};
 }
-function fixture(){
+function fixture(t){
   assert.equal(path.relative(REPO,HERE),path.join('tools','modding','vortex-agent'),
     'run the public test from its canonical tools location, not a private proposal copy');
   assert.equal(path.dirname(LOCAL_STATE),REPO);assert.equal(path.dirname(SCRATCH),LOCAL_STATE);
   const canonical=value=>process.platform==='win32'?path.resolve(value).toLowerCase():path.resolve(value);
   const ordinary=directory=>{
     const stat=fs.lstatSync(directory,{bigint:true});
-    assert(stat.isDirectory()&&!stat.isSymbolicLink(),'ordinary directory required');
+    assert(stat.isDirectory()&&!stat.isSymbolicLink()&&stat.ino!==0n,'ordinary directory required');
     assert.equal(canonical(fs.realpathSync.native(directory)),canonical(directory),'redirected directory refused');
     return `${stat.dev}:${stat.ino}`;
   };
@@ -58,7 +58,15 @@ function fixture(){
   }
   check();
   const workspace=fs.mkdtempSync(path.join(SCRATCH,'run-')),root=path.join(workspace,'executor');
-  assert.equal(path.dirname(workspace),SCRATCH);ordinary(workspace);check();
+  assert.equal(path.dirname(workspace),SCRATCH);
+  const workspaceId=ordinary(workspace);
+  check();
+  t.after(()=>{
+    check();
+    assert.equal(path.dirname(workspace),SCRATCH);
+    assert.equal(ordinary(workspace),workspaceId,'fixture workspace identity drift');
+    fs.rmSync(workspace,{recursive:true});
+  });
   return {workspace,root,store:createNativeExecutorJournal({root})};
 }
 const anchor=transition=>bytes({schema:'native-executor-anchor/1',rootId:transition.rootId,
@@ -125,15 +133,15 @@ test('invalid ID primitives/proxies cannot invoke coercion or accept an unused s
   const r=request();assert.throws(()=>intake.validateTrackedIntake({schema:intake.SCHEMA,requestId:'bad\n',plan:r.plan}),/NATIVE_TRACKED_INTAKE_INVALID/);
 });
 
-test('null anchor on a missing root returns inert metadata and creates no path',()=>{
-  const f=fixture(),result=lookup(f,null);noPermit(result);
+test('null anchor on a missing root returns inert metadata and creates no path',t=>{
+  const f=fixture(t),result=lookup(f,null);noPermit(result);
   assert.equal(result.state,'not_observed');assert.equal(result.historySealVerified,false);
   assert.equal(result.startupHoldRequired,true);assert.equal(fs.existsSync(f.root),false);
   assert.deepEqual(Object.keys(f.store),['begin','read','appendTerminal','inventory','reservePending','provision']);
 });
 
-test('existing empty root requires its exact independently supplied fixture anchor',()=>{
-  const f=fixture(),A=bytes(f.store.provision().anchor),before=snapshot(f.root);
+test('existing empty root requires its exact independently supplied fixture anchor',t=>{
+  const f=fixture(t),A=bytes(f.store.provision().anchor),before=snapshot(f.root);
   assert.equal(lookup(f,null).state,'held');
   const found=lookup(f,A);assert.equal(found.state,'not_observed');assert.equal(found.historySealVerified,true);noPermit(found);
   assert.deepEqual(snapshot(f.root),before);
@@ -142,8 +150,8 @@ test('existing empty root requires its exact independently supplied fixture anch
   }
 });
 
-test('pending lookup after lost consumer reply uses stored runtime hashes and never reserves again',()=>{
-  const f=fixture(),r=request(),{A,B}=pending(f,r),before=snapshot(f.root);
+test('pending lookup after lost consumer reply uses stored runtime hashes and never reserves again',t=>{
+  const f=fixture(t),r=request(),{A,B}=pending(f,r),before=snapshot(f.root);
   const restarted={...f,store:createNativeExecutorJournal({root:f.root})};
   assert.equal(lookup(restarted,A).state,'held','old acknowledged anchor cannot bless the new inventory');
   const later=request(publicId,0,9),found=lookup(restarted,B,later);
@@ -153,8 +161,8 @@ test('pending lookup after lost consumer reply uses stored runtime hashes and ne
   assert.deepEqual(snapshot(f.root),before);
 });
 
-test('restarted closed operation returns historical metadata; changed plan conflicts on the SAME IDs',()=>{
-  const f=fixture(),{C,r}=closed(f),before=snapshot(f.root);
+test('restarted closed operation returns historical metadata; changed plan conflicts on the SAME IDs',t=>{
+  const f=fixture(t),{C,r}=closed(f),before=snapshot(f.root);
   const restarted={...f,store:createNativeExecutorJournal({root:f.root})};
   const same=lookup(restarted,C,request(publicId,0,8));noPermit(same);
   assert.equal(same.state,'historical_closed');assert.equal(same.planId,r.planId);assert.equal(same.historySealVerified,true);
@@ -164,11 +172,11 @@ test('restarted closed operation returns historical metadata; changed plan confl
   assert.deepEqual(snapshot(f.root),before);
 });
 
-test('intent-only and reservation-only remain held, without allocating replacement IDs',()=>{
-  const f=fixture(),r=request();f.store.provision();
+test('intent-only and reservation-only remain held, without allocating replacement IDs',t=>{
+  const f=fixture(t),r=request();f.store.provision();
   createNativeIntentJournal({root:path.join(f.root,'operations')}).begin(bytes(r));
   let found=lookup(f,observedFixtureAnchor(f.store));assert.equal(found.state,'held');assert.equal(found.code,'NATIVE_EXECUTOR_LOOKUP_PARTIAL');noPermit(found);
-  const g=fixture();pending(g,r);
+  const g=fixture(t);pending(g,r);
   // Preserve the intentionally removed index outside this synthetic executor.
   fs.renameSync(path.join(g.root,'operations',r.operationId),path.join(g.workspace,'retained-intent-index'));
   const restarted={...g,store:createNativeExecutorJournal({root:g.root})};
@@ -176,25 +184,25 @@ test('intent-only and reservation-only remain held, without allocating replaceme
   assert.equal(found.operationId,r.operationId);assert.equal(found.nativeJobId,r.nativeJobId);
 });
 
-test('empty partial publication and corrupt record cannot become not_observed',()=>{
-  const f=fixture(),r=request(),{B}=pending(f,r);
+test('empty partial publication and corrupt record cannot become not_observed',t=>{
+  const f=fixture(t),r=request(),{B}=pending(f,r);
   fs.renameSync(path.join(f.root,'jobs',r.nativeJobId,'binding.json'),path.join(f.workspace,'retained-binding.json'));
   const restarted={...f,store:createNativeExecutorJournal({root:f.root})};
   const found=lookup(restarted,B);assert.equal(found.state,'held');assert.equal(found.historySealVerified,false);noPermit(found);
-  const g=fixture(),{C}=closed(g);
+  const g=fixture(t),{C}=closed(g);
   fs.writeFileSync(path.join(g.root,'operations',r.operationId,'intent.json'),'{broken fixture');
   const corrupt=lookup(g,C);assert.equal(corrupt.state,'held');noPermit(corrupt);
 });
 
-test('different real journal clients cannot overwrite an existing operation with another plan',()=>{
-  const f=fixture(),{B}=pending(f),before=snapshot(f.root),other=createNativeExecutorJournal({root:f.root});
+test('different real journal clients cannot overwrite an existing operation with another plan',t=>{
+  const f=fixture(t),{B}=pending(f),before=snapshot(f.root),other=createNativeExecutorJournal({root:f.root});
   assert.throws(()=>other.begin(bytes(request(publicId,1,2)),worker,packet),/NATIVE_EXECUTOR_/);
   const found=lookupNativeTrackedRequest(other,publicId,request(publicId,1,2).planId,B);
   assert.equal(found.state,'conflict');noPermit(found);assert.deepEqual(snapshot(f.root),before);
 });
 
-test('lost publication close reply retains the intent hold instead of refunding deterministic IDs',()=>{
-  const f=fixture(),r=request(),A=bytes(f.store.provision().anchor);
+test('lost publication close reply retains the intent hold instead of refunding deterministic IDs',t=>{
+  const f=fixture(t),r=request(),A=bytes(f.store.provision().anchor);
   const open=fs.openSync,close=fs.closeSync,pendingFDs=new Set();let interrupted=false;
   fs.openSync=function(name,...args){const fd=open.call(this,name,...args);if(String(name).includes('.intent.json.pending-'))pendingFDs.add(fd);return fd;};
   fs.closeSync=function(fd){const result=close.call(this,fd);if(pendingFDs.delete(fd)&&!interrupted){interrupted=true;throw Error('MODEL_CLOSE_REPLY_LOST');}return result;};
@@ -207,33 +215,33 @@ test('lost publication close reply retains the intent hold instead of refunding 
   assert.equal(found.operationId,r.operationId);assert.equal(found.nativeJobId,r.nativeJobId);
 });
 
-test('an existing operation ID bound to another job cannot be adopted as this public request',()=>{
-  const f=fixture(),r=request('other_request');r.operationId=request().operationId;
+test('an existing operation ID bound to another job cannot be adopted as this public request',t=>{
+  const f=fixture(t),r=request('other_request');r.operationId=request().operationId;
   const {B}=pending(f,r),found=lookup(f,B);
   assert.equal(found.state,'held');assert.equal(found.code,'NATIVE_EXECUTOR_LOOKUP_ID_CONFLICT');noPermit(found);
 });
 
-test('foreign journal and malformed bytes fail before reading any filesystem or invoking getters',()=>{
+test('foreign journal and malformed bytes fail before reading any filesystem or invoking getters',t=>{
   let calls=0;
   const foreign=Object.defineProperty({},'inventory',{get(){calls++;throw Error('GETTER');}});
   const proxy=new Proxy(foreign,{get(){calls++;throw Error('TRAP');}});
   for(const journal of [foreign,proxy])assert.throws(()=>lookupNativeTrackedRequest(journal,publicId,request().planId,null),/INVALID_JOURNAL/);
   assert.equal(calls,0);
-  const f=fixture();assert.throws(()=>lookupNativeTrackedRequest(f.store,publicId,request().planId),/INVALID_ARGUMENTS/);
+  const f=fixture(t);assert.throws(()=>lookupNativeTrackedRequest(f.store,publicId,request().planId),/INVALID_ARGUMENTS/);
   assert.throws(()=>lookup(f,Buffer.from('{}')),/INVALID_ANCHOR/);
   assert.equal(fs.existsSync(f.root),false);
 });
 
-test('caller anchor bytes are detached before the first filesystem collaborator',()=>{
-  const f=fixture(),{C}=closed(f),copy=Buffer.from(C),stat=fs.lstatSync;
+test('caller anchor bytes are detached before the first filesystem collaborator',t=>{
+  const f=fixture(t),{C}=closed(f),copy=Buffer.from(C),stat=fs.lstatSync;
   let changed=false;
   fs.lstatSync=function(...args){if(!changed){changed=true;copy.fill(0);}return stat.apply(this,args);};
   let found;try{found=lookup(f,copy);}finally{fs.lstatSync=stat;}
   assert(changed);assert.equal(found.state,'historical_closed');assert.equal(found.historySealVerified,true);
 });
 
-test('namespace mutation after the stored request read is caught by the second anchored census',()=>{
-  const f=fixture(),{C,r}=closed(f);
+test('namespace mutation after the stored request read is caught by the second anchored census',t=>{
+  const f=fixture(t),{C,r}=closed(f);
   const files=new Map([[path.join(f.root,'jobs',r.nativeJobId,'binding.json'),'binding'],
     [path.join(f.root,'operations',r.operationId,'intent.json'),'intent'],
     [path.join(f.root,'terminals',r.operationId,'terminal.json'),'terminal']]);
@@ -263,8 +271,8 @@ test('namespace mutation after the stored request read is caught by the second a
   assert.equal(found.state,'held');assert.equal(found.historySealVerified,false);noPermit(found);
 });
 
-test('reentrant read-only lookup cannot replace outer lookup or alter immutable records',()=>{
-  const f=fixture(),{C}=closed(f),before=snapshot(f.root),stat=fs.lstatSync;
+test('reentrant read-only lookup cannot replace outer lookup or alter immutable records',t=>{
+  const f=fixture(t),{C}=closed(f),before=snapshot(f.root),stat=fs.lstatSync;
   let nested,once=false;
   fs.lstatSync=function(...args){if(!once){once=true;nested=lookup(f,C);}return stat.apply(this,args);};
   let found;try{found=lookup(f,C);}finally{fs.lstatSync=stat;}
@@ -272,9 +280,9 @@ test('reentrant read-only lookup cannot replace outer lookup or alter immutable 
   assert.equal(found.state,'historical_closed');assert.deepEqual(snapshot(f.root),before);
 });
 
-test('lookup during actual journal writes returns busy without poisoning the outer writer',()=>{
+test('lookup during actual journal writes returns busy without poisoning the outer writer',t=>{
   for(const stage of ['provision','begin','reservePending','appendTerminal']){
-    const f=fixture(),r=request();let selected=null;
+    const f=fixture(t),r=request();let selected=null;
     if(stage!=='provision')selected=bytes(f.store.provision().anchor);
     if(stage==='appendTerminal')selected=anchor(f.store.reservePending(bytes(r),worker,packet,selected).transition);
     const stat=fs.lstatSync;let nested,once=false;
