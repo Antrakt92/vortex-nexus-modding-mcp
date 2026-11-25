@@ -48,8 +48,10 @@ python scripts/recovery.py sources --workspace "$env:NEXUS_WORKSPACE" --apply
 ```
 
 `source-lock.json` records release-bundle URLs, exact sizes, hashes and commits.
-The helper verifies a bundle before fetching it into a new repository under
-`<workspace>/local-state/upstream-sources`. It rejects an existing checkout with
+The helper verifies a bundle and gives Git an isolated copy of the verified
+bytes. The supplied archive is preserved. It publishes a new repository under
+`<workspace>/local-state/upstream-sources` only after verifying its commit.
+It rejects an existing checkout with
 a different commit or tracked modifications. It never copies a developer's
 uncommitted working tree. An offline bundle directory can be supplied with
 `--archive-dir 'C:/RecoveryBundles'`.

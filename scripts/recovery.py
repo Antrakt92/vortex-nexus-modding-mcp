@@ -9,6 +9,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import stat
 import subprocess
+import sys
 import tempfile
 import urllib.request
 
@@ -168,16 +169,25 @@ def run_git(args, cwd=None):
                                    encoding='utf-8', timeout=120).strip()
 
 
+def bundle_size(row):
+    size = row['bytes']
+    if type(size) is not int or not 0 < size < sys.maxsize:
+        raise ValueError('Invalid recovery bundle size pin')
+    return size
+
+
 def verify_bundle(bundle, row):
+    size = bundle_size(row)
     no_links(bundle)
     if not bundle.is_file():
         raise ValueError('Missing supplied recovery bundle: ' + bundle.name)
-    if bundle.stat().st_size != row['bytes']:
+    if bundle.stat().st_size != size:
         raise ValueError('Recovery bundle changed: ' + bundle.name)
     with bundle.open('rb') as stream:
-        data = stream.read(row['bytes'] + 1)
-    if len(data) != row['bytes'] or digest(data) != row['sha256']:
+        data = stream.read(size + 1)
+    if len(data) != size or digest(data) != row['sha256']:
         raise ValueError('Recovery bundle changed: ' + bundle.name)
+    return data
 
 
 def fetch_sources(workspace, archive_dir=None, apply=False):
@@ -223,6 +233,7 @@ def fetch_sources(workspace, archive_dir=None, apply=False):
     for row, target, bundle, result in pending:
         no_links(bundle)
         if archive_dir is None and not bundle.exists():
+            size = bundle_size(row)
             bundle.parent.mkdir(parents=True, exist_ok=True)
             url = row['url']
             if not url.startswith((
@@ -230,19 +241,28 @@ def fetch_sources(workspace, archive_dir=None, apply=False):
                     'https://github.com/Antrakt92/Nexus-Modding-Tools/releases/download/')):
                 raise ValueError('Unexpected recovery download origin')
             with urllib.request.urlopen(url, timeout=90) as response:
-                data = response.read(row['bytes'] + 1)
-            if len(data) != row['bytes'] or digest(data) != row['sha256']:
+                data = response.read(size + 1)
+            if len(data) != size or digest(data) != row['sha256']:
                 raise ValueError('Recovery download failed size/hash verification')
             write_matching(bundle, data, True)
-        verify_bundle(bundle, row)
+            del data
+        verified = verify_bundle(bundle, row)
         # Publish a checkout only after verification, so failed Git operations
         # cannot strand an incomplete repository at the final recovery path.
         target.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix='source-restore-', dir=target.parent) as tmp:
-            candidate = Path(tmp) / 'checkout'
+            private = Path(tmp)
+            frozen = private / 'verified.bundle'
+            if write_matching(frozen, verified, True) != 'created':
+                raise ValueError('Private recovery bundle already exists')
+            candidate = private / 'checkout'
             candidate.mkdir()
             run_git(['init', '--quiet'], candidate)
-            run_git(['fetch', '--quiet', '--no-tags', bundle, 'HEAD'], candidate)
+            no_links(frozen)
+            if not file_matches(frozen, verified):
+                raise ValueError('Private recovery bundle changed before fetch')
+            del verified
+            run_git(['fetch', '--quiet', '--no-tags', frozen, 'HEAD'], candidate)
             run_git(['checkout', '--quiet', '--detach', row['commit']], candidate)
             if run_git(['rev-parse', 'HEAD'], candidate) != row['commit']:
                 raise ValueError('Recovered upstream commit mismatch')

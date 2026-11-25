@@ -240,6 +240,45 @@ class RecoveryTests(unittest.TestCase):
                 git.assert_not_called()
             self.assertFalse(workspace.exists())
 
+    def test_git_fetch_consumes_the_verified_bytes_after_archive_path_changes(self):
+        for matching_head in (True, False):
+            with self.subTest(matching_head=matching_head), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                archive = root / 'archives'
+                archive.mkdir()
+                bundle = archive / 'source.bundle'
+                original, newer = b'original own bundle', b'newer own bundle'
+                bundle.write_bytes(original)
+                commit = 'a' * 40
+                (root / 'source-lock.json').write_text(json.dumps({'upstreams': [{
+                    'name': 'fixture', 'bundle': bundle.name, 'commit': commit,
+                    'bytes': len(original), 'sha256': r.digest(original)}]}))
+                workspace = root / 'workspace'
+                fetched = []
+
+                def git(args, cwd=None):
+                    if args[0] == 'init':
+                        bundle.write_bytes(newer)
+                    if args[0] == 'fetch':
+                        path = Path(args[-2])
+                        fetched.append((path, path.read_bytes()))
+                    return commit if matching_head else 'b' * 40
+
+                with mock.patch.object(r, 'ROOT', root), mock.patch.object(r, 'run_git', side_effect=git), \
+                        mock.patch.object(r.urllib.request, 'urlopen', side_effect=AssertionError('No download allowed')):
+                    if matching_head:
+                        self.assertEqual(r.fetch_sources(workspace, archive, True)['sources'][0]['state'], 'restored')
+                    else:
+                        with self.assertRaisesRegex(ValueError, 'Recovered upstream commit mismatch'):
+                            r.fetch_sources(workspace, archive, True)
+                self.assertEqual(len(fetched), 1)
+                copied, consumed = fetched[0]
+                self.assertEqual(consumed, original)
+                self.assertTrue(copied.is_relative_to(workspace))
+                self.assertFalse(copied.exists(), 'private bundle snapshot must be retired with its temporary root')
+                self.assertEqual(bundle.read_bytes(), newer)
+                self.assertEqual((workspace / 'local-state/upstream-sources/fixture').exists(), matching_head)
+
     def test_source_bundle_roundtrip_is_idempotent_and_preserves_modified_checkout(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); source = root / 'source'; source.mkdir()
