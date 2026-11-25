@@ -301,12 +301,57 @@ test('A complete, B acknowledgement lost, C pending: reconcile original B and st
   assert.equal(inspected.steps[2].state, 'intent_not_recorded'); assert.equal(inspected.resumeSupported, false);
 });
 
-test('cancellation during install waits for original receipt and stops later steps', async t => {
-  let release, entered;
-  const gate = new Promise(resolve => {release = resolve;}), started = new Promise(resolve => {entered = resolve;});
-  const f = fixture(t, {after: async name => {if (name === 'install_local_archive') {entered(); await gate;}}});
+for (const [tool, lateReply] of [
+  ['reconcile_operation', () => { throw Error('LATE_RECEIPT_FAILURE'); }],
+  ['read_local_install_readiness', readiness],
+  ['health', () => ({protocol: 'vortex-agent/1', ...context()})],
+]) test(`cancellation settles before an outstanding ${tool} read and ignores its late result`, async t => {
+  let release, entered, timer;
+  const gate = new Promise(resolve => {release = resolve;});
+  const started = new Promise(resolve => {entered = resolve;});
+  const f = fixture(t, {async before(name, args) {
+    if (name !== tool || name === 'reconcile_operation' && args.requestId !== 'own_install_0001') return;
+    entered();
+    await gate;
+    return lateReply();
+  }});
   const controller = new AbortController(), running = f.run(plan(), {signal: controller.signal});
+  await started;
+  controller.abort();
+  let promptResult;
+  try {
+    promptResult = await Promise.race([running, new Promise(resolve => {timer = setTimeout(resolve, 500);})]);
+  } finally {
+    clearTimeout(timer);
+    release();
+  }
+  const result = await running;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(promptResult?.code, 'PLAN_CANCELLED');
+  assert.equal(result.diskDeploymentVerified, false);
+  assert.equal(f.writes.length, 0);
+  assert.deepEqual(f.journal.read(result.planId).events.map(event => event.kind), ['terminal']);
+});
+
+test('cancellation during install waits for original receipt and stops later steps', async t => {
+  let release, entered, releaseReceipt, enteredReceipt, settled = false;
+  const gate = new Promise(resolve => {release = resolve;});
+  const started = new Promise(resolve => {entered = resolve;});
+  const receiptGate = new Promise(resolve => {releaseReceipt = resolve;});
+  const receiptStarted = new Promise(resolve => {enteredReceipt = resolve;});
+  const f = fixture(t, {
+    async before(name, args, {stored}) {
+      if (name === 'reconcile_operation' && stored.has(args.requestId)) {enteredReceipt(); await receiptGate;}
+    },
+    after: async name => {if (name === 'install_local_archive') {entered(); await gate;}},
+  });
+  const controller = new AbortController(), running = f.run(plan(), {signal: controller.signal});
+  void running.then(() => {settled = true;});
   await started; controller.abort(); release();
+  await receiptStarted;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(settled, false);
+  releaseReceipt();
   const result = await running; assert.equal(result.code, 'PLAN_CANCELLED'); assert.equal(f.writes.length, 1);
   assert.equal(result.completed.length, 1);
   assert.equal(f.calls.at(-1).name, 'reconcile_operation');

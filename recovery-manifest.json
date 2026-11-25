@@ -2964,7 +2964,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/own-local-install-plan.test.mjs",
-      "sha256_lf": "f3ac2aa694ebddfa064040c89b6c49701d68341bdb157d9b825b5d623649c158"
+      "sha256_lf": "5e4553508493792e8653da1af5d3843ced670cd79f3430793cfb6b4e416814ff"
     },
     {
       "path": "tools/modding/vortex-agent/own-zip.cjs",
@@ -3200,7 +3200,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/session.mjs",
-      "sha256_lf": "22bbe746a3325b69d090e34589dee369e119e2202933a282c1ef462687141ddb"
+      "sha256_lf": "8a16d313ad1fd8ffe37098238e914e4f8403c8d02397dc4213a6cfd83e17a4da"
     },
     {
       "path": "tools/modding/vortex-agent/session.test.mjs",

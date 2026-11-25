@@ -219,6 +219,21 @@ export async function runPlan(input, {apply = false, call = createToolCaller(), 
     diskDeploymentVerified: false, message: 'Offline validation only. Apply the exact reviewed plan explicitly; no Vortex calls were made.'};
   const completed = []; let current, execution;
   const checkCancellation = () => insist(!signal?.aborted, 'PLAN_CANCELLED');
+  function readBeforeEffect(name, args) {
+    checkCancellation();
+    if (!signal) return call(name, args);
+    let onAbort;
+    return new Promise((resolve, reject) => {
+      onAbort = () => reject(Error('PLAN_CANCELLED'));
+      signal.addEventListener('abort', onAbort, {once: true});
+      // The transport may still settle after cancellation. Observe its result
+      // without allowing it to restart the plan or leave an unhandled error.
+      void Promise.resolve().then(() => {
+        checkCancellation();
+        return call(name, args);
+      }).then(resolve, reject);
+    }).finally(() => signal.removeEventListener('abort', onAbort));
+  }
   try {
     execution = synchronousJournal((journal ?? createPlanJournal()).begin(plan));
     insist(object(execution) && execution.planId === planId
@@ -226,9 +241,9 @@ export async function runPlan(input, {apply = false, call = createToolCaller(), 
     // Check the entire queue before any effect: a used later ID must not cause a partial replay.
     checkCancellation();
     const preflight = await readPool(queue.map(item => async () => {
-      checkCancellation();
-      cleanUnusedReceipt(await call('reconcile_operation', {requestId: item.args.requestId}));
+      cleanUnusedReceipt(await readBeforeEffect('reconcile_operation', {requestId: item.args.requestId}));
     }), 4, {stopOnError: true});
+    checkCancellation();
     const failed = preflight.findIndex(result => result?.error);
     if (failed !== -1) {
       current = {...queue[failed], invoked: false};
@@ -236,7 +251,7 @@ export async function runPlan(input, {apply = false, call = createToolCaller(), 
     }
     if (queue.some(item => item.operation === 'install_local_archive')) {
       checkCancellation();
-      const readiness = await call('read_local_install_readiness', {});
+      const readiness = await readBeforeEffect('read_local_install_readiness', {});
       insist(object(readiness) && readiness.localArchiveInstallSupported === true && readiness.sourceAdmissionVerified === true
         && hosts.officialLocalInstallHost(readiness.hostVersion) !== undefined && readiness.nativeEffects === false
         && Number.isSafeInteger(readiness.reviewedDynamicExtensions) && readiness.reviewedDynamicExtensions >= 0
@@ -246,9 +261,9 @@ export async function runPlan(input, {apply = false, call = createToolCaller(), 
     for (const [index, item] of queue.entries()) {
       checkCancellation();
       current = {...item, invoked: false};
-      cleanUnusedReceipt(await call('reconcile_operation', {requestId: item.args.requestId}));
+      cleanUnusedReceipt(await readBeforeEffect('reconcile_operation', {requestId: item.args.requestId}));
       checkCancellation();
-      freshContext(await call('health', {}), plan.context);
+      freshContext(await readBeforeEffect('health', {}), plan.context);
       checkCancellation();
       // Persist uncertainty before sending. A failed durable write must never
       // become permission to dispatch without an inspectable original intent.
