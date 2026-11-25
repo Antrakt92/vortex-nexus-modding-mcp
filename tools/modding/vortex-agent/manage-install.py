@@ -50,8 +50,10 @@ def stopped():
         node = shutil.which('node')
         if not node:
             raise RuntimeError('Unverifiable Windows process list')
+        environment = {key: value for key, value in os.environ.items()
+                       if key.upper() in {'SYSTEMROOT', 'WINDIR', 'PATH', 'TEMP', 'TMP', 'HOME', 'USERPROFILE'}}
         result = subprocess.run([str(Path(node).resolve()), '-e', PROCESS_SNAPSHOT_SCRIPT, str(PROCESS_GUARD)],
-            capture_output=True, text=True, encoding='utf-8', timeout=15,
+            env=environment, capture_output=True, text=True, encoding='utf-8', timeout=15,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
         if result.returncode != 0 or result.stderr.strip() or len(result.stdout) > 1024 * 1024:
             raise RuntimeError('Unverifiable Windows process list')
