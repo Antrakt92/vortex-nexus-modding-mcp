@@ -118,11 +118,16 @@ function createCollectionUpdatePromptController(api, options) {
     need(['gameId', 'profileId', 'oldModId', 'collectionId', 'collectionSlug', 'revisionNumber', 'action']
       .every(key => args[key] === binding[key]), 'REQUEST_IDENTITY_CHANGED');
   }
+  function requireUnblockedPrompt() {
+    const session = state().session;
+    need(session?.collections?.activeSession === undefined, 'SESSION_ACTIVE');
+    const dialogs = session?.notifications?.dialogs;
+    need(Array.isArray(dialogs) && dialogs.length === 0, 'NATIVE_DIALOG_PENDING');
+  }
   function validate(args) {
     argsMatch(args); need(prepared && !prepared.consumed && prepared.requestId === args.requestId, 'PREPARATION_REQUIRED');
     admit.revalidate(proof); contextCheck(); checkOwner();
-    need(state().session?.collections?.activeSession === undefined, 'SESSION_ACTIVE');
-    need(Array.isArray(state().session?.notifications?.dialogs) && state().session.notifications.dialogs.length === 0, 'NATIVE_DIALOG_PENDING');
+    requireUnblockedPrompt();
     const current = inspect(); need(current.status === 'observed' && current.candidate.element === prepared.element
       && current.candidate.modal === prepared.modal, 'DOM_CHANGED');
     return true;
@@ -150,9 +155,16 @@ function createCollectionUpdatePromptController(api, options) {
           const readProof = await admitRead(); admitRead.revalidate(readProof); out.sourceAdmitted = true;
           if (!binding) { need(inspect().status === 'idle', 'PROMPT_UNBOUND'); return { ...out, status: 'idle' }; }
           contextCheck(); checkOwner();
-          need(!prepared?.consumed, 'ACTION_CONSUMED'); need(inspect().status === 'observed', 'DOM_UNAVAILABLE');
+          need(!prepared?.consumed, 'ACTION_CONSUMED');
+          requireUnblockedPrompt();
+          need(inspect().status === 'observed', 'DOM_UNAVAILABLE');
           return { ...out, status: 'ready', sourceAdmitted: true, ...Object.fromEntries(['gameId', 'profileId', 'oldModId', 'collectionId', 'collectionSlug', 'revisionNumber'].map(key => [key, binding[key]])) };
-        } catch (error) { return { ...out, reason: /^COLLECTION_UPDATE_PROMPT_[A-Z0-9_]+$/.test(error.message) ? error.message : 'COLLECTION_UPDATE_PROMPT_SOURCE_UNAVAILABLE' }; }
+        } catch (error) {
+          const reason = error?.message;
+          const known = reason === 'COLLECTION_WIZARD_UNREVIEWED_HOST'
+            || typeof reason === 'string' && /^COLLECTION_UPDATE_PROMPT_[A-Z0-9_]{1,100}$/.test(reason);
+          return { ...out, reason: known ? reason : 'COLLECTION_UPDATE_PROMPT_SOURCE_UNAVAILABLE' };
+        }
       };
       const result = readQueue.then(read, read); readQueue = result.then(() => {}, () => {}); return result;
     },

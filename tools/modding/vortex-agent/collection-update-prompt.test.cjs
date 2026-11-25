@@ -1,6 +1,7 @@
 'use strict';
 const test = require('node:test'), assert = require('node:assert/strict'), { EventEmitter } = require('node:events');
 const { createCollectionUpdatePromptController, getCollectionUpdatePromptController } = require('./collection-update-prompt.cjs');
+const { safe } = require('./serialization.cjs');
 class Element {
   constructor(tag = 'div', attrs = {}, value = '') {
     this.tag = tag; this.attrs = attrs; this.value = value; this.children = []; this.parentElement = null;
@@ -75,6 +76,40 @@ test('idle readiness verifies host sources before another collection update begi
  const f=await fixture();const initial=await f.controller.readiness();assert.equal(initial.status,'idle');assert.equal(initial.sourceAdmitted,true);
  f.sourceValid=false;const held=await f.controller.readiness();assert.equal(held.status,'held');assert.equal(held.sourceAdmitted,false);
  assert.equal(f.clicks,0);
+});
+test('readiness preserves the exact shared unsupported-host code through serialization', async () => {
+  const f = await fixture();
+  for (const [message, expected] of [
+    ['COLLECTION_WIZARD_UNREVIEWED_HOST', 'COLLECTION_WIZARD_UNREVIEWED_HOST'],
+    ['Unstructured source inspection error', 'COLLECTION_UPDATE_PROMPT_SOURCE_UNAVAILABLE'],
+  ]) {
+    f.prepareHook = () => { throw Error(message); };
+    const held = safe(await f.controller.readiness(), f.api, 'read_collection_update_prompt');
+    assert.equal(held.status, 'held');
+    assert.equal(held.sourceAdmitted, false);
+    assert.equal(held.reason, expected);
+    assert.equal(held.writesAvailable, false);
+    assert.equal(f.clicks, 0);
+  }
+});
+test('an exact bound prompt is held while a collection session or native dialog is active', async () => {
+  const f = await fixture(); f.bind();
+  for (const [area, field, blocker, expected] of [
+    ['collections', 'activeSession', {}, 'COLLECTION_UPDATE_PROMPT_SESSION_ACTIVE'],
+    ['notifications', 'dialogs', [{id: 'pending'}], 'COLLECTION_UPDATE_PROMPT_NATIVE_DIALOG_PENDING'],
+  ]) {
+    const state = f.state.session[area], previous = state[field];
+    state[field] = blocker;
+    const held = safe(await f.controller.readiness(), f.api, 'read_collection_update_prompt');
+    assert.equal(held.status, 'held');
+    assert.equal(held.sourceAdmitted, true);
+    assert.equal(held.reason, expected);
+    assert.equal(held.writesAvailable, false);
+    await assert.rejects(f.controller.prepare(f.args), {message: expected});
+    state[field] = previous;
+    assert.equal((await f.controller.readiness()).status, 'ready');
+    assert.equal(f.clicks, 0);
+  }
 });
 test('event-bound old-to-new prompt clicks once and reports only dismissal, repeatable verification', async () => {
   const f = await fixture(); assert.equal((await f.controller.readiness()).status, 'idle'); f.bind();
