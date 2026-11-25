@@ -82,8 +82,12 @@ node tools/modding/vortex-agent/build.mjs --compile
 node tools/modding/vortex-agent/build.mjs --package
 ```
 
-`--prepare` refuses an existing build tree. Do not delete or reset an existing
-tree to bypass a mismatch; inspect its inputs and provenance. Compilation and
+On Windows, `--prepare` verifies the source in an `upstream-pending-*` directory
+before publishing it as `upstream`. If preparation is interrupted, retry the same
+command. It uses a fresh pending directory and preserves the unfinished one for
+inspection. On other platforms, preparation writes into a new exclusive
+`upstream` directory and interrupted work can remain there. An existing
+`upstream` directory is refused and preserved on either path. Compilation and
 packaging recheck source, dependency and workspace pins. The package is under
 `<workspace>/local-state/vortex-agent-build/plugin/vortex-agent`.
 

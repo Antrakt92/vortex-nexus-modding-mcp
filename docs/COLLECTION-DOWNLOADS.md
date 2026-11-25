@@ -83,8 +83,9 @@ back to the agent. The general session inspector and this tool share their
 context/error/cap handling in `session.mjs`.
 
 The native download projection and acquisition-matching scan also reuse one
-fresh Nexus game-catalogue read per synchronous scan. Unrelated mod/file pairs
-are filtered before resolving numeric game metadata in the matching scan. No
+fresh Nexus game-catalogue read per synchronous scan and index numeric IDs
+once. Duplicate IDs stay ambiguous. Unrelated mod/file pairs are filtered
+before resolving numeric game metadata in the matching scan. No
 cache survives an operation: later reads and final effect preflights reload the
 catalogue. A failed catalogue read remains ambiguous for that scan and can
 recover on the next one. Domain-only records need no catalogue read.

@@ -284,12 +284,12 @@ test('audit: initialization grace allows a delayed record, then disappearance se
   await assert.rejects(g.ops.download_nexus(next), /DOWNLOAD_RECORD_MISSING/);
 });
 test('audit: numeric/domain consistency, unavailable catalogue and shared-domain ambiguity', () => {
-  const { resolveDownload, matchingDownloads } = require('./download-identity.cjs');
+  const { resolveDownload, matchingDownloads, catalogSnapshot } = require('./download-identity.cjs');
   const selectors = { knownGames: () => [{ id: 'cyberpunk2077' }, { id: 'skyrimse' }, { id: 'skyrimvr' }] };
   const record = { modInfo: { nexus: { ids: { gameId: 'cyberpunk2077', modId: '42', fileId: '43' } }, meta: { gameId: '3333' } } };
   const catalog = () => [{ id: 3333, domain_name: 'cyberpunk2077' }];
-  assert.equal(resolveDownload(record, {}, selectors, catalog).complete, true);
-  assert.equal(resolveDownload(record, {}, selectors, () => []).ambiguous, true);
+  assert.equal(resolveDownload(record, {}, selectors, catalogSnapshot(catalog)).complete, true);
+  assert.equal(resolveDownload(record, {}, selectors).ambiguous, true);
   assert.equal(resolveDownload({ modInfo: { nexus: { ids: { gameId: 'skyrimspecialedition', modId: 42, fileId: 43 } } } }, {}, selectors).complete, false);
   assert.throws(() => matchingDownloads({ old: { game: ['skyrimse'], modInfo: { nexus: { ids: { gameId: 'skyrimspecialedition', modId: 42, fileId: 43 } } } } },
     { gameId: 'skyrimvr', nexusModId: 42, nexusFileId: 43 }, {}, selectors), /AMBIGUOUS_DOWNLOAD_IDENTITY/);

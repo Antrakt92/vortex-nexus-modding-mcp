@@ -28,21 +28,26 @@ function catalogFromDisk(util) {
 // A synchronous scan sees one catalogue. Every later scan gets a fresh reader,
 // including the final acquisition preflight; failures are never cached globally.
 function catalogSnapshot(read = () => []) {
-  let loaded = false, failed = false, rows, error;
-  return () => {
-    if (!loaded) {
-      loaded = true;
-      try { rows = read(); } catch (cause) { failed = true; error = cause; }
+  let byId;
+  return numericId => {
+    if (byId === undefined) {
+      byId = new Map();
+      try {
+        const rows = read();
+        if (Array.isArray(rows)) for (const row of rows) {
+          const id = positiveId(row?.id);
+          if (id !== null) byId.set(id, byId.has(id) ? null : row.domain_name);
+        }
+      } catch { byId.clear(); }
     }
-    if (failed) throw error;
-    return rows;
+    return byId.get(numericId);
   };
 }
 function domainForGame(gameId, state, selectors) {
   const game = selectors.knownGames?.(state)?.find(g => g.id === gameId);
   return game?.details?.nexusPageId ?? aliases[gameId] ?? gameId;
 }
-function resolveDownload(item, state, selectors, catalog = () => []) {
+function resolveDownload(item, state, selectors, lookupDomain = () => undefined) {
   const info = item?.modInfo || {}, ids = info.nexus?.ids || {}, meta = info.meta || {};
   let ambiguous = false;
   const mergeId = values => {
@@ -62,12 +67,10 @@ function resolveDownload(item, state, selectors, catalog = () => []) {
     else domains.push(domain);
   }
   if (present(meta.gameId)) {
-    const numeric = positiveId(meta.gameId); let rows;
-    try { rows = catalog(); } catch { rows = []; }
-    const matches = Array.isArray(rows) ? rows.filter(row => positiveId(row.id) === numeric) : [];
-    if (numeric === null || matches.length !== 1 || typeof matches[0]?.domain_name !== 'string'
-      || !/^[a-z0-9_-]{1,200}$/.test(matches[0].domain_name)) ambiguous = true;
-    else domains.push(matches[0].domain_name);
+    const numeric = positiveId(meta.gameId);
+    const domain = numeric === null ? undefined : lookupDomain(numeric);
+    if (typeof domain !== 'string' || !/^[a-z0-9_-]{1,200}$/.test(domain)) ambiguous = true;
+    else domains.push(domain);
   }
   if (new Set(domains).size > 1) ambiguous = true;
   const domain = domains[0] ?? null;
