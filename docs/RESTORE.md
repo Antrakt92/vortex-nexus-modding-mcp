@@ -52,6 +52,10 @@ The helper verifies a bundle before fetching it into a new repository under
 a different commit or tracked modifications. It never copies a developer's
 uncommitted working tree. An offline bundle directory can be supplied with
 `--archive-dir 'C:/RecoveryBundles'`.
+When supplied, planning checks the size and SHA-256 of every bundle needed for
+recovery and reports `bundle_verification: size_and_sha256`. Existing verified
+checkouts need no bundle. The default plan needs neither bundles nor network
+access. Use `--apply` to restore the checkout and verify its commit.
 
 The maintained adapter builds from the verified source in
 `dependencies/vortex-mcp`. The recovered uploader is used by the publication

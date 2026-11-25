@@ -168,10 +168,23 @@ def run_git(args, cwd=None):
                                    encoding='utf-8', timeout=120).strip()
 
 
+def verify_bundle(bundle, row):
+    no_links(bundle)
+    if not bundle.is_file():
+        raise ValueError('Missing supplied recovery bundle: ' + bundle.name)
+    if bundle.stat().st_size != row['bytes']:
+        raise ValueError('Recovery bundle changed: ' + bundle.name)
+    with bundle.open('rb') as stream:
+        data = stream.read(row['bytes'] + 1)
+    if len(data) != row['bytes'] or digest(data) != row['sha256']:
+        raise ValueError('Recovery bundle changed: ' + bundle.name)
+
+
 def fetch_sources(workspace, archive_dir=None, apply=False):
     workspace = absolute(workspace)
     lock = json.loads((ROOT / 'source-lock.json').read_text(encoding='utf-8'))
-    results = []
+    results, pending = [], []
+    archive_root = None
     for row in lock['upstreams']:
         name = relative(row['name']).as_posix()
         if '/' in name:
@@ -189,14 +202,27 @@ def fetch_sources(workspace, archive_dir=None, apply=False):
                 raise ValueError('Existing upstream checkout differs: ' + name)
             results.append({'name': name, 'state': 'already_verified'})
             continue
-        if not apply:
-            results.append({'name': name, 'state': 'would_restore'})
-            continue
-        bundle = (absolute(archive_dir) / bundle_name) if archive_dir else workspace / 'local-state/recovery-downloads' / bundle_name
+        result = {'name': name, 'state': 'would_restore'}
+        results.append(result)
+        if archive_dir is not None:
+            if archive_root is None:
+                archive_root = absolute(archive_dir)
+            bundle = archive_root / bundle_name
+            verify_bundle(bundle, row)
+            result['bundle_verification'] = 'size_and_sha256'
+        else:
+            bundle = workspace / 'local-state/recovery-downloads' / bundle_name
+        pending.append((row, target, bundle, result))
+
+    report = {'mode': 'apply' if apply else 'plan', 'sources': results,
+              'vortex_restarted': False, 'credentials_included': False}
+    if not apply:
+        return report
+
+    # A bad supplied bundle must block the batch before any checkout is made.
+    for row, target, bundle, result in pending:
         no_links(bundle)
-        if not bundle.exists():
-            if archive_dir:
-                raise ValueError('Missing supplied recovery bundle')
+        if archive_dir is None and not bundle.exists():
             bundle.parent.mkdir(parents=True, exist_ok=True)
             url = row['url']
             if not url.startswith((
@@ -208,8 +234,7 @@ def fetch_sources(workspace, archive_dir=None, apply=False):
             if len(data) != row['bytes'] or digest(data) != row['sha256']:
                 raise ValueError('Recovery download failed size/hash verification')
             write_matching(bundle, data, True)
-        if bundle.stat().st_size != row['bytes'] or digest(bundle.read_bytes()) != row['sha256']:
-            raise ValueError('Recovery bundle changed')
+        verify_bundle(bundle, row)
         # Publish a checkout only after verification, so failed Git operations
         # cannot strand an incomplete repository at the final recovery path.
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -222,30 +247,35 @@ def fetch_sources(workspace, archive_dir=None, apply=False):
             if run_git(['rev-parse', 'HEAD'], candidate) != row['commit']:
                 raise ValueError('Recovered upstream commit mismatch')
             candidate.rename(target)
-        results.append({'name': name, 'state': 'restored'})
-    return {'mode': 'apply' if apply else 'plan', 'sources': results,
-            'vortex_restarted': False, 'credentials_included': False}
+        result['state'] = 'restored'
+    return report
 
 
 def main():
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('command', choices=['verify', 'configure', 'sources', 'skills'])
-    p.add_argument('--workspace', default=os.environ.get('NEXUS_WORKSPACE', str(ROOT)))
+    options = {'verify': set(), 'configure': {'workspace', 'apply'},
+               'sources': {'workspace', 'apply', 'archive_dir'}, 'skills': {'snapshot', 'skills_home', 'apply'}}
+    p = argparse.ArgumentParser(description=__doc__, argument_default=argparse.SUPPRESS)
+    p.add_argument('command', choices=options)
+    p.add_argument('--workspace')
     p.add_argument('--apply', action='store_true')
     p.add_argument('--archive-dir')
     p.add_argument('--snapshot')
     p.add_argument('--skills-home')
     args = p.parse_args()
+    for option in sorted(vars(args).keys() - {'command'} - options[args.command]):
+        p.error('--' + option.replace('_', '-') + ' is not supported for ' + args.command)
+    apply = getattr(args, 'apply', False)
+    workspace = getattr(args, 'workspace', os.environ.get('NEXUS_WORKSPACE', str(ROOT)))
     if args.command == 'verify':
         result = verify()
     elif args.command == 'configure':
-        result = configure(args.workspace, args.apply)
+        result = configure(workspace, apply)
     elif args.command == 'sources':
-        result = fetch_sources(args.workspace, args.archive_dir, args.apply)
+        result = fetch_sources(workspace, getattr(args, 'archive_dir', None), apply)
     else:
-        if not args.snapshot or not args.skills_home:
+        if not getattr(args, 'snapshot', None) or not getattr(args, 'skills_home', None):
             p.error('skills requires --snapshot and --skills-home')
-        result = restore_skills(args.snapshot, args.skills_home, args.apply)
+        result = restore_skills(args.snapshot, args.skills_home, apply)
     print(json.dumps(result, indent=2))
 
 
