@@ -110,8 +110,9 @@ Set `VORTEX_OWN_READ_CAPTURE_REFERENCE` and
 `VORTEX_READ_CAPTURE_TIMESTAMP_POLICY` to the exact reviewed private inputs to run
 the real-family cases. Without them those cases explicitly skip. Tests execute
 the generated held entry and module graph with native effects forbidden; they do
-not load a live Vortex extension. Test-created scratch and partial kits remain
-under ignored `local-state/` for owned cleanup/reconciliation.
+not load a live Vortex extension. They remove their own temporary directories
+after checking the held output. Partial kits from real preparation attempts
+remain under ignored `local-state/` for reconciliation.
 
 Every discovered preference must have one unique settings hash row with a valid absolute path, filesystem identity, byte count, link count and SHA-256. A discovery path without its protected hash row is refused.
 
