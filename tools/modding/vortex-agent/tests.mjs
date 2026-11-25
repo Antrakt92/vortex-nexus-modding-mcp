@@ -115,6 +115,35 @@ test('cross-process mutation exclusion', async () => {
   await Promise.all(children);
   for (let i = 0; i < events.length; i += 2) { assert.equal(events[i][1], 'entered'); assert.deepEqual(events[i + 1], [events[i][0], 'leaving']); }
 });
+test('a request stops attempting to acquire the shared mutation lock after its deadline', async () => {
+  const source = await fs.readFile(new URL('./guard.cjs', import.meta.url), 'utf8');
+  for (const delayedOpen of [false, true]) {
+    let now = 0, opens = 0, actions = 0, closes = 0, unlinks = 0, writes = 0;
+    const module = {exports: {}};
+    const handle = {async writeFile() {writes++;}, async close() {closes++;}};
+    const model = {
+      async mkdir() {},
+      async open() {
+        opens++;
+        if (!delayedOpen && opens === 1) throw Object.assign(Error('held'), {code: 'EEXIST'});
+        now = 30000;
+        return handle;
+      },
+      async unlink() {unlinks++;},
+    };
+    const mockRequire = name => name === 'node:fs/promises' ? model
+      : name === 'node:perf_hooks' ? {performance: {now: () => now}}
+        : require(name);
+    const Wall = class extends Date {static now() {return -1000000;}};
+    const context = {process, Buffer, Date: Wall, setTimeout(resolve) {now = 30000; resolve();}};
+    vm.runInNewContext('(function(require,module,exports){' + source + '\n})', context)(mockRequire, module, module.exports);
+    await assert.rejects(module.exports.exclusive(ROOT, () => actions++), /MUTATION_BUSY_INSPECT_RECEIPTS/);
+    assert.equal(opens, 1);
+    assert.deepEqual({actions, writes, closes, unlinks}, {actions: 0, writes: 0,
+      closes: Number(delayedOpen), unlinks: Number(delayedOpen)});
+  }
+});
+
 test('legacy handshake is local; notifications silent; ids preserved; reads concurrent', async () => {
   const seen = []; const handle = handler(async (method, params) => { seen.push(method); return params.name === 'health'
     ? { content: [{ type: 'text', text: '{"protocol":"vortex-agent/1"}' }] } : { tools: [] }; });

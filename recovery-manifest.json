@@ -768,7 +768,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/audit-fixes.test.mjs",
-      "sha256_lf": "14dce9977ad5a85cfc3a5a5e96adbfe5e414333cc2954ed82d122adae746e0d4"
+      "sha256_lf": "137ab8c440c531f5538cf3239ae40d8b993c5e880e7e4e4584adec153f31258a"
     },
     {
       "path": "tools/modding/vortex-agent/bridge-audit.test.mjs",
@@ -988,7 +988,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/guard.cjs",
-      "sha256_lf": "db5d171419672658a5c363d9b5accbcfbfe06b646b0a0d5df0fb041f04d9bb21"
+      "sha256_lf": "768e8cd02e6b3c7acd940385830c2214e34b57cffd00e72ad2e0394ead7d92f0"
     },
     {
       "path": "tools/modding/vortex-agent/helper-source-proof.cjs",
@@ -3252,7 +3252,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/tests.mjs",
-      "sha256_lf": "a7f36934cb63a4e882f837b2ac5796023e479671370c9a726bf4d50499801e59"
+      "sha256_lf": "e2e3dab78feb4b172eae70cc0f5bbf413411f3c6566ccbb12c6674c4869159e6"
     },
     {
       "path": "tools/modding/vortex-agent/tracked-nexus-policy.cjs",
