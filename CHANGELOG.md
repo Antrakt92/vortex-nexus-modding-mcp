@@ -8,6 +8,7 @@ embedded Vortex adapter's compatibility label.
 
 | Version | Published | Main changes |
 | --- | --- | --- |
+| [0.11.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.11.0) | 2026-11-25 | Official Vortex 2.11.0 for scoped ZIP installation and native dialogs, with safer operation and recovery checks |
 | [0.10.1](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.10.1) | 2026-11-18 | Vortex operation receipts, MCP error handling and ZIP validation fixes |
 | [0.10.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.10.0) | 2026-11-16 | Official Vortex 2.10.1, local collection assessment and queued installation questions |
 | [0.9.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.9.0) | 2026-11-16 | Native installation prompts, mod fingerprints and safer installation and recovery |
@@ -21,6 +22,54 @@ embedded Vortex adapter's compatibility label.
 | [0.2.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.2.0) | 2026-10-29 | Offline helper preparation, installation diagnostics and development dependencies |
 | [0.1.0](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/v0.1.0) | 2026-10-29 | Combined inspection, collection download reuse and coordinated plans |
 | [Recovery sources](https://github.com/Antrakt92/vortex-nexus-modding-mcp/releases/tag/recovery-sources-20261025) | 2026-10-25 | Pinned upstream Git bundles for source recovery |
+
+## 0.11.0 — 2026-11-25
+
+Add scoped support for official Vortex 2.11.0 and strengthen operation, adapter
+upgrade and source recovery checks. Changes since
+[0.10.1](https://github.com/Antrakt92/vortex-nexus-modding-mcp/compare/v0.10.1...v0.11.0).
+
+### Added
+
+- Admit the reviewed official Vortex 2.11.0 executable, application package and
+  extension set for new own-local Cyberpunk ZIPs and supported native
+  installation questions. Verified ZIPs may have the exact native installation
+  association and Vortex metadata written by this host.
+- Accept a stable UTF-8 argument file for bridge CLI tool calls and show known
+  blockers in collection update readiness.
+
+### Fixed
+
+- Require exact native transition evidence for install, deploy and dialog
+  completion. Check the settled active profile on conflict reads and exact
+  collection members on a supported wizard's Done transition.
+- Preserve opaque download IDs, failed or interrupted operation evidence and
+  reconciled receipts. Cancel pending plans promptly before effects, verify lock
+  ownership before release and publish adapter upgrade receipts without
+  replacing existing evidence.
+- Bound request fragmentation, conflict details, archive observation and
+  polling. Keep JSON-RPC IDs reserved until the response is written and list
+  bridge-provided tools once during paginated discovery.
+- Verify the complete adapter source inventory and exact provenance before
+  installation or metadata synchronization. Isolate process probes and
+  credential-related subprocesses and use the absolute system PowerShell for
+  Windows DPAPI.
+- Restore verified Git bundles under long Windows paths. Check supplied pnpm
+  archives during planning. Preserve Nexus CLI arguments and exit status, verify
+  its retained installation and run the exact staged Nexus uploader bytes with
+  credentials scoped to the upload.
+- Retire the obsolete live smoke script and clean up owned test fixtures once
+  their checks have finished.
+
+### Upgrading and verification
+
+- The suite version is 0.11.0. The embedded adapter keeps compatibility label
+  1.1.0. Rebuild and upgrade the installed extension using
+  [Restore and build](docs/RESTORE.md).
+- Isolated official Vortex 2.11.0 checks cover two ZIPs in a single plan, one
+  deployment, restoration, duplicate refusal, supported test dialogs and clean
+  shutdown. The full native collection wizard on stock Vortex 2.11.0 still
+  needs separate admission and end-to-end verification.
 
 ## 0.10.1 — 2026-11-18
 
