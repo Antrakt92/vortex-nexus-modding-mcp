@@ -16,7 +16,7 @@ const ADAPTED_SOURCE_PINS = Object.freeze({
   'paths.cjs':'d641537a2d03728c0212461d2e2e1b6ca22403b4e6cbed08f2730dcd234057ba',
   'paths-core.cjs':'b9c0fb32786134996f4ac8af68f22d29bb82b4bd4ed99abbff93c0b25b3ba032',
   'owned-zip-relay-client.mjs':'78c6e449ab80a24308e0b9aa46a843fa5548f6bb5350ca0ddee7763de4e45ad7',
-  'owned-zip-worker-client.mjs':'6f2791141500d102c73303e43eb323b668f92263154d421dd3689a3d82e004b3',
+  'owned-zip-worker-client.mjs':'5be9b81d77d4b00fc12958365baf1ac49d30dceaecc91da280d92530eb2a2b13',
 });
 function replaceOnce(text, before, after) {
   const at = text.indexOf(before);

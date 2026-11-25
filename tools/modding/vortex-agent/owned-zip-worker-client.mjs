@@ -196,7 +196,7 @@ function createWorker(requestBytes, archiveBindingBytes, staging, archiveObserve
   let child = null, ready = null, inertLifetime = null, expectedSources = null, startAttempted = false, startSent = false;
   let handoffAttempted = false, cancelAttempted = false, releaseAttempted = false;
   let childClosed = false, packetSHA256 = null, last = null, firstError = null, sequence = 0;
-  let pending = Buffer.alloc(0), stderrBytes = 0;
+  let pending = Buffer.alloc(0), discardingFrame = false, stderrBytes = 0;
   let writing = false;
   let terminal = null, destination = null, copiedProof = null;
   let preparedPacket = null, preparedBytes = null, preparedReceipt = null, explicitPrepared = false, startPreparedAttempted = false, inertAbortAttempted = false;
@@ -229,14 +229,23 @@ function createWorker(requestBytes, archiveBindingBytes, staging, archiveObserve
       effectsAllowed: false, nativeInstallAccepted: false, powerLossPersistenceVerified: false});
   }
   function terminalClosed() {return terminal?.read().childResourcesClosed === true;}
-  function observed(phase) {return archiveObserver && phase==='observer_cleanup'
-    ? ['observed','failed','held'].includes(last?.phase) || childClosed && terminalClosed()
-    : seen.has(phase) && (phase !== 'closed' || terminalClosed());}
+  function observerInertLifetime() {
+    return packetSHA256===null && Number.isSafeInteger(child?.pid) && child.pid>0
+      && inertLifetime?.length===39 && label(inertLifetime,'worker') ? inertLifetime : null;
+  }
+  const observerCleanup = phase => archiveObserver && ['observer_startup_cleanup','observer_cleanup'].includes(phase);
+  function observed(phase) {
+    if (observerCleanup(phase)) {
+      if (childClosed && terminalClosed()) return true;
+      return phase==='observer_startup_cleanup' ? observerInertLifetime()!==null : ['observed','failed','held'].includes(last?.phase);
+    }
+    return seen.has(phase) && (phase !== 'closed' || terminalClosed());
+  }
   function wake() {
     if (childClosed && terminalClosed() && occupied === owner) occupied = null;
     for (const item of [...waiters]) {
       if (observed(item.phase)) {clearTimeout(item.timer); waiters.delete(item); item.resolve(status());}
-      else if ((childClosed || firstError) && item.phase !== 'closed' && !(archiveObserver && item.phase==='observer_cleanup')) {clearTimeout(item.timer); waiters.delete(item); item.reject(error(firstError || 'WORKER_CLOSED'));}
+      else if ((childClosed || firstError) && item.phase !== 'closed' && !observerCleanup(item.phase)) {clearTimeout(item.timer); waiters.delete(item); item.reject(error(firstError || 'WORKER_CLOSED'));}
       else if (['held','cancelled'].includes(last?.phase) && !['held','cancelled','released','closed'].includes(item.phase)) {
         clearTimeout(item.timer); waiters.delete(item); item.reject(error(last.errorCode || 'WORKER_STOPPED'));
       }
@@ -244,10 +253,10 @@ function createWorker(requestBytes, archiveBindingBytes, staging, archiveObserve
   }
   function fail(code) {firstError ||= code; if(archiveObserver && observerPrimary===null)observerPrimary=error(firstError); wake();}
   function wait(phase, timeoutMs = 30000) {
-    need(['ready', 'accepted', 'closed', 'destination_prepared', ...(archiveObserver?['observation','observer_cleanup']:[]), ...PHASES].includes(phase) && Number.isSafeInteger(timeoutMs)
+    need((observerCleanup(phase) || ['ready', 'accepted', 'closed', 'destination_prepared', ...(archiveObserver?['observation']:[]), ...PHASES].includes(phase)) && Number.isSafeInteger(timeoutMs)
       && timeoutMs > 0 && timeoutMs <= 120000, 'INVALID_OBSERVATION');
     if (observed(phase)) return Promise.resolve(status());
-    if ((childClosed || firstError) && phase !== 'closed' && !(archiveObserver && phase==='observer_cleanup')) return Promise.reject(error(firstError || 'WORKER_CLOSED'));
+    if ((childClosed || firstError) && phase !== 'closed' && !observerCleanup(phase)) return Promise.reject(error(firstError || 'WORKER_CLOSED'));
     if (['held','cancelled'].includes(last?.phase) && !['held','cancelled','released','closed'].includes(phase))
       return Promise.reject(error(last.errorCode || 'WORKER_STOPPED'));
     need(waiters.size < 8, 'OBSERVER_CAPACITY');
@@ -382,16 +391,35 @@ function createWorker(requestBytes, archiveBindingBytes, staging, archiveObserve
   }
   function data(bytes) {
     if (firstError && !archiveObserver) return;
-    try {
-      pending = Buffer.concat([pending, bytes]);
-      let at;
-      while ((at = pending.indexOf(10)) !== -1) {
-        need(at > 0 && at <= FRAME_MAX, 'FRAME_LIMIT');
-        const raw = pending.subarray(0, at); pending = pending.subarray(at+1);
-        frame(strict.parseStrictJSON(raw, {maxBytes: FRAME_MAX, maxDepth: 8, maxTokens: 1024}));
+    let offset = 0;
+    while (offset < bytes.length) {
+      const newline = bytes.indexOf(10, offset);
+      const end = newline === -1 ? bytes.length : newline;
+      if (discardingFrame) {
+        if (newline === -1) return;
+        discardingFrame = false;
+      } else if (pending.length + end - offset > FRAME_MAX) {
+        // An archive observer may still need READY for abort-only cleanup.
+        // Drop this frame and retain nothing until its delimiter arrives.
+        pending = Buffer.alloc(0);
+        discardingFrame = newline === -1;
+        fail('FRAME_LIMIT');
+      } else {
+        const part = bytes.subarray(offset, end);
+        if (newline === -1) {
+          pending = pending.length ? Buffer.concat([pending, part]) : Buffer.from(part);
+          return;
+        }
+        const raw = pending.length ? Buffer.concat([pending, part]) : part;
+        pending = Buffer.alloc(0);
+        try {
+          need(raw.length > 0, 'FRAME_LIMIT');
+          frame(strict.parseStrictJSON(raw, {maxBytes: FRAME_MAX, maxDepth: 8, maxTokens: 1024}));
+        } catch (e) {fail(/^OWNED_ZIP_WORKER_([A-Z_]+)$/.exec(e?.message || '')?.[1] || 'PROTOCOL_FAILED');}
       }
-      need(pending.length <= FRAME_MAX, 'FRAME_LIMIT');
-    } catch (e) {fail(/^OWNED_ZIP_WORKER_([A-Z_]+)$/.exec(e?.message || '')?.[1] || 'PROTOCOL_FAILED');}
+      if (newline === -1 || firstError && !archiveObserver) return;
+      offset = newline + 1;
+    }
   }
   function flush() {
     if (writing || outbound.length === 0 || childClosed) return;
@@ -570,24 +598,24 @@ function createWorker(requestBytes, archiveBindingBytes, staging, archiveObserve
       releaseAttempted=true;
       if(!child)return status();
       if(childClosed)return await wait('closed');
-      if(!ready) {
-        // A mismatched READY can retain only an abort-only lifetime. It never
-        // authorizes observation, START, destination preparation or a binding.
-        if(packetSHA256===null && Number.isSafeInteger(child.pid) && child.pid>0
-          && typeof inertLifetime==='string' && /^worker_[a-f0-9]{32}$/.test(inertLifetime) && inertLifetime.length===39) {
-          if(!observerReleaseSent){observerReleaseSent=true;write({schema:'owned-zip-worker-abort/1',workerLifetime:inertLifetime},4096);}
-          return await wait('closed');
+      if(packetSHA256===null) {
+        // After explicit release, only the startup cleanup waiter may ignore
+        // the primary error. A late READY supplies an abort-only lifetime.
+        if(!observerInertLifetime()) await wait('observer_startup_cleanup');
+        if(childClosed || terminal?.read().exitObserved) return await wait('closed');
+        if(!observerReleaseSent) {
+          const workerLifetime=observerInertLifetime();
+          need(workerLifetime!==null,'NO_INERT_BINDING');
+          observerReleaseSent=true;
+          write({schema:'owned-zip-worker-abort/1',workerLifetime},4096);
         }
-        await wait('ready', 30000);
+        return await wait('closed');
       }
-      if(packetSHA256!==null){
-        await wait('observer_cleanup');
-        if(childClosed || last?.phase!=='held')return await wait('closed');
-      }
+      await wait('observer_cleanup');
+      if(childClosed || last?.phase!=='held')return await wait('closed');
       if(!observerReleaseSent){
         observerReleaseSent=true;
-        if(packetSHA256===null)write({schema:'owned-zip-worker-abort/1',workerLifetime:ready.workerLifetime},4096);
-        else write({schema:'owned-zip-worker-control/1',workerLifetime:ready.workerLifetime,binding,command:'release'},4096,'release');
+        write({schema:'owned-zip-worker-control/1',workerLifetime:ready.workerLifetime,binding,command:'release'},4096,'release');
       }
       return await wait('closed');
     }});

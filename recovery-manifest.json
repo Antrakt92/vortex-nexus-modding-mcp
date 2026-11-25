@@ -2820,7 +2820,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/native-sdk-capsule-build.mjs",
-      "sha256_lf": "ead43f748fcb1dd869d5bbb46a2d51f389a19c7b394dbcaebf867c84fb913183"
+      "sha256_lf": "a824899193e3e321197ee2a2099252c3bb1bc830fb38ae8a714e73bfa80101d7"
     },
     {
       "path": "tools/modding/vortex-agent/native-sdk-capsule-build.test.mjs",
@@ -2984,7 +2984,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/owned-archive-observer-client.test.mjs",
-      "sha256_lf": "2b48f4e168c9ef58bfd938f719d0f3c966fc15aa3ebd94697773037cb21f5611"
+      "sha256_lf": "998fa2739cabfe2c0f99e10f5cfdc4c877cd713d60d68b2bac6b67369d2a3577"
     },
     {
       "path": "tools/modding/vortex-agent/owned-extractor-process.py",
@@ -3044,7 +3044,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/owned-zip-worker-client.mjs",
-      "sha256_lf": "6f2791141500d102c73303e43eb323b668f92263154d421dd3689a3d82e004b3"
+      "sha256_lf": "5be9b81d77d4b00fc12958365baf1ac49d30dceaecc91da280d92530eb2a2b13"
     },
     {
       "path": "tools/modding/vortex-agent/owned-zip-worker-client.test.mjs",
