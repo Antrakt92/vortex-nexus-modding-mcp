@@ -71,6 +71,10 @@ digest is reserved by the existing executor journal before START delivery.
 Python checks it against its retained token and parent handle. Handoff creates
 the new leaf relative to that handle without reopening the parent path. Existing
 targets, including case aliases, refuse without merging or overwriting files.
+The guardian checks that the remaining shared handle budget fits the full copy
+before creating the destination. This includes the new directory, file handles,
+and the staging proof or reopened scratch ancestry. Extracted source handles
+stay retained during this check.
 
 Staging acquisition computes SHA-256 and MD5 in one pass through the same held
 archive HANDLE, before creating `Extract` or starting the decoder. Both must

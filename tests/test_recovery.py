@@ -234,7 +234,13 @@ class RecoveryTests(unittest.TestCase):
                     self.assertEqual(list(target.parent.iterdir()), [], 'temporary checkout must be cleaned')
                 self.assertEqual(r.fetch_sources(workspace, archive, True)['sources'][0]['state'], 'restored')
                 self.assertEqual(r.fetch_sources(workspace, archive, True)['sources'][0]['state'], 'already_verified')
-                target = workspace / 'local-state/upstream-sources/fixture'
+                checkout_file = target / 'code.py'
+                info = checkout_file.stat()
+                os.utime(checkout_file, ns=(info.st_atime_ns, info.st_mtime_ns - 2_000_000_000))
+                index = target / '.git/index'
+                original_index = index.read_bytes()
+                self.assertEqual(r.fetch_sources(workspace, archive)['sources'][0]['state'], 'already_verified')
+                self.assertEqual(index.read_bytes(), original_index, 'planning must not refresh the checkout index')
                 self.assertEqual(r.run_git(['rev-parse', 'HEAD'], target), commit)
                 (target / 'code.py').write_text('keep my modification\n')
                 with self.assertRaisesRegex(ValueError, 'Existing upstream checkout differs'):

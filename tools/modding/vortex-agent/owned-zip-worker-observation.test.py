@@ -317,5 +317,45 @@ class ArchiveObservationWireTests(unittest.TestCase):
         self.assertEqual(self.events, [])
 
 
+class HandoffHandleBudgetTests(unittest.TestCase):
+    def setup_worker(self, destination_mode, available_handles):
+        calls = []
+        base = types.SimpleNamespace(_root=ntpath.normpath)
+        transport = types.SimpleNamespace(cancel_seen=types.SimpleNamespace(is_set=lambda: False), fault=None)
+        executor = worker.Worker(base, object(), transport)
+        executor.phase = 'extracted'
+        executor.destination_mode = destination_mode
+        executor.work_root = r'F:\Nexus\work\job'
+        executor.owner = types.SimpleNamespace(_outputs={
+            ('common', 'first.txt'): {'size': 1, 'sha': 'a'*64},
+            ('common', 'nested', 'second.txt'): {'size': 2, 'sha': 'b'*64},
+        })
+        borrower = types.SimpleNamespace(destination_observation=lambda: {'proof': 'modeled'})
+        executor.lease = types.SimpleNamespace(
+            _remaining_handles=lambda: available_handles,
+            begin_transfer=lambda *args: calls.append('scratch') or borrower,
+            begin_transfer_prepared=lambda *args: calls.append('staging') or borrower,
+        )
+        return executor, calls
+
+    def test_handoff_refuses_before_a_destination_is_created_when_shared_budget_cannot_fit(self):
+        # Destination root + 2 files + 2 unique parent directories, plus
+        # either the staging proof or the scratch parent's four reopened handles.
+        for mode, needed in ((True, 6), (False, 9)):
+            with self.subTest(staging=mode):
+                executor, calls = self.setup_worker(mode, needed - 1)
+                with self.assertRaisesRegex(RuntimeError, 'COPY_HANDLE_BUDGET'):
+                    executor.handoff()
+                self.assertEqual(calls, [])
+                self.assertIsNone(executor.borrower)
+                self.assertTrue(executor.handoff_attempted)
+
+                executor, calls = self.setup_worker(mode, needed)
+                executor.handoff()
+                self.assertEqual(calls, ['staging' if mode else 'scratch'])
+                self.assertEqual(executor.phase, 'copying')
+                self.assertEqual(len(executor.copy_scope), 2)
+
+
 if __name__ == '__main__':
     unittest.main()

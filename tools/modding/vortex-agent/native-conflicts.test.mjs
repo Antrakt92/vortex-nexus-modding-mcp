@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const { unresolvedConflicts, collectionHealth } = require('./inspection.cjs');
+const { unresolvedConflicts, collectionHealth, conflicts } = require('./inspection.cjs');
 const { safe } = require('./serialization.cjs');
 
 function fixture(count = 0) {
@@ -28,6 +28,14 @@ function fixture(count = 0) {
   return { state, base, addon, overlap, calls, util, api: { getState: () => state },
     selectors: { activeGameId: () => 'game', activeProfileId: () => 'p' } };
 }
+
+test('raw staging scan refuses a pending switch before walking the outgoing profile', async () => {
+  const f = fixture();
+  f.state.settings = { profiles: { nextProfileId: 'other' } };
+  const selectors = { ...f.selectors,
+    installPathForGame: () => assert.fail('Pending switch should refuse before inspecting staging') };
+  await assert.rejects(conflicts(f.api, selectors, {}), /STALE_SCAN_CONTEXT/);
+});
 
 test('tag/MD5 portable rule delegates to native predicate rather than ID-only lookup', () => {
   const f = fixture();

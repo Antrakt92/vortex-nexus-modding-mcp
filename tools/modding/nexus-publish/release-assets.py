@@ -26,12 +26,15 @@ def main():
                                  "--pattern", archive, "--pattern", manifest_name], capture_output=True, timeout=300)
         if result.returncode:
             raise ValueError()
-        manifest = json.loads((destination / manifest_name).read_text(encoding="utf-8"))
+        # This is user metadata. The runner rejects unsupported fields before use.
+        from publish import MANIFEST_LIMIT, load_manifest, preflight
+        manifest = load_manifest(destination / manifest_name)
         manifest["archive"] = str((destination / archive).resolve())
-        # This is user metadata, never credentials. The runner rejects unsupported fields before use.
-        from publish import preflight
         manifest = preflight(manifest)
-        (destination / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        encoded = json.dumps(manifest, indent=2).encode("utf-8")
+        if len(encoded) > MANIFEST_LIMIT:
+            raise ValueError()
+        (destination / "manifest.json").write_bytes(encoded)
         return 0
     except Exception:
         print("Release-asset preparation blocked; raw CLI/API output suppressed.", file=sys.stderr)

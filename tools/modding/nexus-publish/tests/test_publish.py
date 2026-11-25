@@ -1,4 +1,6 @@
+import contextlib
 import importlib.util
+import io
 import json
 import lzma
 import os
@@ -66,6 +68,33 @@ class RunnerTests(unittest.TestCase):
         self.assertFalse(result["uploaded"])
         self.assertFalse(result["target_relationship_verified"])
         self.assertFalse(p.receipt_path(self.m, self.root).exists())
+
+    def test_malformed_or_large_manifest_stops_before_execution_with_safe_diagnostic(self):
+        target = self.root / "manifest.json"
+        cases = [(b"{", "must be valid UTF-8 JSON"),
+                 (b"\xff", "must be valid UTF-8 JSON"),
+                 (b'{"version":"1","version":"2"}', "unique field names"),
+                 (b'{"version":NaN}', "must be valid UTF-8 JSON"),
+                 (b'{"version":Infinity}', "must be valid UTF-8 JSON"),
+                 (b'{"version":-Infinity}', "must be valid UTF-8 JSON"),
+                 (b" " * (p.MANIFEST_LIMIT + 1), "exceeds 1 MiB")]
+        for content, diagnostic in cases:
+            target.write_bytes(content)
+            stderr = io.StringIO()
+            with (self.subTest(diagnostic=diagnostic), patch.object(sys, "argv", ["publish.py", str(target)]),
+                  patch.object(p, "execute") as execute, contextlib.redirect_stderr(stderr)):
+                self.assertEqual(p.main(), 2)
+                self.assertIn(diagnostic, stderr.getvalue())
+                self.assertNotIn("inspect the receipt", stderr.getvalue())
+                execute.assert_not_called()
+
+    def test_local_manifest_read_is_bounded(self):
+        manifest = io.BytesIO(json.dumps(self.m).encode("utf-8"))
+        target = self.root / "manifest.json"
+        with patch.object(Path, "open", return_value=manifest), patch.object(
+                manifest, "read", wraps=manifest.read) as read:
+            self.assertEqual(p.load_manifest(target), self.m)
+        read.assert_called_once_with(p.MANIFEST_LIMIT + 1)
 
     def test_invalid_manifest_variants(self):
         for change in [{"file_id": "0"}, {"mod_id": "../../other"}, {"existing_file": False},
@@ -245,19 +274,40 @@ class RunnerTests(unittest.TestCase):
             self.assertIn("--pattern", command)
             destination = Path(command[command.index("--dir") + 1])
             (destination / "fixture.zip").write_bytes(self.archive.read_bytes())
-            (destination / "publication.json").write_text(json.dumps(self.m))
+            manifest = json.dumps(self.m).encode("utf-8")
+            manifest += b" " * (p.MANIFEST_LIMIT - len(manifest))
+            (destination / "publication.json").write_bytes(manifest)
             return subprocess.CompletedProcess(command, 0, b"", b"")
         with (patch.object(assets, "os", SimpleNamespace(environ=env)),
               patch.object(assets.subprocess, "run", side_effect=download),
               patch.dict(sys.modules, {"publish": p})):
             self.assertEqual(assets.main(), 0)
-        result = json.loads((self.root / "nexus-publish-assets/manifest.json").read_text())
+        result = p.load_manifest(self.root / "nexus-publish-assets/manifest.json")
         self.assertEqual(result["archive"], str((self.root / "nexus-publish-assets/fixture.zip").resolve()))
         self.assertEqual(result["sha256"], self.m["sha256"])
 
+    def test_release_assets_checks_normalized_manifest_before_writing_it(self):
+        env = {"RELEASE_TAG": "v1.2.3", "ARCHIVE_ASSET": "fixture.zip", "MANIFEST_ASSET": "publication.json",
+               "GH_REPO": "example/mod", "RUNNER_TEMP": str(self.root)}
+        manifest = json.dumps({**self.m, "archive": ""}, separators=(",", ":")).encode("utf-8")
+
+        def download(command, **kwargs):
+            destination = Path(command[command.index("--dir") + 1])
+            (destination / "fixture.zip").write_bytes(self.archive.read_bytes())
+            (destination / "publication.json").write_bytes(manifest)
+            return subprocess.CompletedProcess(command, 0, b"", b"")
+
+        with (patch.object(assets, "os", SimpleNamespace(environ=env)),
+              patch.object(assets.subprocess, "run", side_effect=download),
+              patch.dict(sys.modules, {"publish": p}),
+              patch.object(p, "MANIFEST_LIMIT", len(manifest)),
+              contextlib.redirect_stderr(io.StringIO())):
+            self.assertEqual(assets.main(), 2)
+        destination = self.root / "nexus-publish-assets"
+        self.assertFalse((destination / "manifest.json").exists())
+        self.assertEqual((destination / "publication.json").read_bytes(), manifest)
+
     def test_release_assets_rejects_argument_injection_and_suppresses_gh_errors(self):
-        import contextlib
-        import io
         env = {"RELEASE_TAG": "--delete", "ARCHIVE_ASSET": "fixture.zip", "MANIFEST_ASSET": "publication.json",
                "GH_REPO": "example/mod", "RUNNER_TEMP": str(self.root)}
         stderr = io.StringIO()

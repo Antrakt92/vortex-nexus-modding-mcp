@@ -112,6 +112,27 @@ class RepairTests(unittest.TestCase):
         self.assertEqual(p.load_receipt(lock, self.m), changed)
         self.assertEqual(p.load_receipt(path, self.m), original)
 
+    def test_receipt_fsync_failure_preserves_absent_or_existing_final_record(self):
+        target = self.root / "receipts" / "entry.json"
+        with patch.object(p.os, "fsync", side_effect=OSError("synthetic flush failure")):
+            with self.assertRaisesRegex(OSError, "synthetic flush failure"):
+                p.write_receipt(target, {"outcome": "attempt"}, exclusive=True)
+        self.assertEqual(list(target.parent.iterdir()), [])
+        p.write_receipt(target, {"outcome": "attempt"}, exclusive=True)
+        with patch.object(p.os, "fsync", side_effect=OSError("synthetic flush failure")):
+            with self.assertRaisesRegex(OSError, "synthetic flush failure"):
+                p.write_receipt(target, {"outcome": "done"})
+        self.assertEqual(list(target.parent.iterdir()), [target])
+        self.assertEqual(json.loads(target.read_text(encoding="utf-8")), {"outcome": "attempt"})
+
+    def test_exclusive_receipt_publication_preserves_existing_record(self):
+        target = self.root / "locks" / "entry.json"
+        p.write_receipt(target, {"owner": "first"}, exclusive=True)
+        with self.assertRaises(FileExistsError):
+            p.write_receipt(target, {"owner": "second"}, exclusive=True)
+        self.assertEqual(list(target.parent.iterdir()), [target])
+        self.assertEqual(json.loads(target.read_text(encoding="utf-8")), {"owner": "first"})
+
     def test_pre_invoke_write_failure_clears_owned_lock_if_receipt_absent(self):
         path = p.receipt_path(self.m, self.root)
         lock = p.target_lock_path(self.m, self.root)

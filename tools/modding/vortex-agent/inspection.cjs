@@ -110,9 +110,16 @@ function unresolvedConflicts(api, selectors, util) {
 }
 async function conflicts(api, selectors, args) {
   const state = api.getState(), profileId = selectors.activeProfileId(state);
+  const activeGameId = selectors.activeGameId(state);
+  const gameId = args.gameId ?? activeGameId;
   const profile = state.persistent?.profiles?.[profileId];
-  const gameId = args.gameId || selectors.activeGameId(state);
-  insist(profile?.gameId === gameId, 'CONFLICT_SCAN_REQUIRES_ACTIVE_GAME');
+  const settled = current => {
+    const next = current.settings?.profiles?.nextProfileId;
+    return next === undefined || next === profileId;
+  };
+  insist(profile && gameId === activeGameId && profile.gameId === gameId,
+    'CONFLICT_SCAN_REQUIRES_ACTIVE_GAME');
+  insist(settled(state), 'STALE_SCAN_CONTEXT');
   const scope = scanScope(state, gameId, profileId);
   const configured = selectors.installPathForGame(state, gameId);
   insist(typeof configured === 'string' && path.isAbsolute(configured), 'ABSOLUTE_STAGING_REQUIRED');
@@ -151,7 +158,7 @@ async function conflicts(api, selectors, args) {
   const live = api.getState();
   const liveConfigured = selectors.installPathForGame(live, gameId);
   insist(selectors.activeProfileId(live) === profileId && selectors.activeGameId(live) === gameId
-    && typeof liveConfigured === 'string' && path.isAbsolute(liveConfigured), 'STALE_SCAN_CONTEXT');
+    && settled(live) && typeof liveConfigured === 'string' && path.isAbsolute(liveConfigured), 'STALE_SCAN_CONTEXT');
   const liveRoot = disk.realpathSync(liveConfigured);
   insist(normalized(liveRoot) === normalized(root) && identity(liveRoot) === rootIdentity, 'STALE_SCAN_CONTEXT');
   insist(live.persistent?.profiles?.[profileId]?.gameId === gameId && scanScope(live, gameId, profileId) === scope, 'STALE_SCAN_SCOPE');

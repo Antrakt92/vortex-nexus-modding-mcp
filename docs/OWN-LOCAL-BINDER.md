@@ -65,7 +65,10 @@ unsafe Windows paths, aliases, file/directory collisions, links, FOMOD and Vorte
 override instructions. All ZIP extra fields are refused, including alternate
 names and timestamps. Limits are 64 MiB for the archive or one member, 256 MiB
 total unpacked bytes, 4,096 entries and 8 MiB per JSON evidence input.
-CRCs and per-file hashes are checked without extraction.
+CRCs and per-file hashes are checked without extraction. The binder verifies
+the stock package's payload. The separate [handle-owned ZIP worker](OWNED-ZIP-WORKER.md)
+adds its own archive checks before creating extraction outputs, including agreement
+of the local and central DOS timestamp fields and a 32-component path limit.
 This narrow scope is deliberate; refusal does not mean an archive is corrupt.
 
 ## Review the held result

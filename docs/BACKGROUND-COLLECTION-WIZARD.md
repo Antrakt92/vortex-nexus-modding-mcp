@@ -67,7 +67,10 @@ generations immediately before clicking. Waiting polls native session metadata;
 it does not repeatedly hash the host or scan staging/game files.
 
 Success confirms a new matching native session (`started`) or the same completed
-session moved to history with its finish modal closed (`finished`). A click,
+session moved to history with its finish modal closed (`finished`). An installation
+question can appear as soon as the matching session starts. In that case the
+start receipt confirms the session, and the question requires its own read and
+response. Finish still requires an empty native dialog queue. A click,
 disappearing button or timeout alone is never success. On transport loss/error,
 inspect `reconcile_operation` using the original request ID; do not invent a new
 ID or issue another click to bypass uncertainty. The session plan runner does

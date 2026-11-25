@@ -112,10 +112,11 @@ export async function inspectDownloadSession({call = createToolCaller(), gameId}
 async function inspectReads({call, concurrency, names, expectedGameId}) {
   const results = {}, errors = [];
   try {
-    results.health = await call('health', {});
-    insist(results.health?.protocol === PROTOCOL, 'WRONG_ADAPTER_PROTOCOL');
-    validateContext(Object.fromEntries(CONTEXT_KEYS.map(key => [key, results.health[key]])));
-    if (expectedGameId !== undefined) insist(results.health.gameId === expectedGameId, 'REQUESTED_GAME_NOT_ACTIVE');
+    const health = await call('health', {});
+    insist(health?.protocol === PROTOCOL, 'WRONG_ADAPTER_PROTOCOL');
+    validateContext(Object.fromEntries(CONTEXT_KEYS.map(key => [key, health[key]])));
+    if (expectedGameId !== undefined) insist(health.gameId === expectedGameId, 'REQUESTED_GAME_NOT_ACTIVE');
+    results.health = health;
   } catch (error) { return {status: 'partial', snapshotAtomic: false, results, errors: [{tool: 'health', code: errorCode(error)}]}; }
   const game = {gameId: results.health.gameId};
   const reads = await readPool(names.map(name => async () => {
@@ -189,10 +190,24 @@ function verifiedReceipt(value, operation, args, acknowledgement) {
     insist(same(installAuthority(acknowledgement), installAuthority(value.completion)), 'ACK_RECEIPT_MISMATCH');
   } else insist(same(acknowledgement, Object.fromEntries(Object.keys(acknowledgement).map(key => [key, value.completion[key]]))), 'ACK_RECEIPT_MISMATCH');
 }
-function receiptSummary(value) {
+function receiptSummary(value, operation, args) {
+  const receiptIssues = Array.isArray(value?.receiptIssues)
+    ? value.receiptIssues.filter(item => typeof item === 'string' && /^[A-Z0-9_]+$/.test(item))
+    : ['UNVERIFIABLE_RESPONSE'];
+  let terminalOperationVerified = false;
+  if (value?.terminalOperationVerified === true) {
+    try {
+      // A failed or lost acknowledgement leaves only the durable receipt
+      // available. Verify it against the attempted step, as plan status does.
+      verifiedReceipt(value, operation, args, value.completion);
+      terminalOperationVerified = true;
+    } catch (error) {
+      const issue = errorCode(error);
+      if (!receiptIssues.includes(issue)) receiptIssues.push(issue);
+    }
+  }
   return {attemptObserved: object(value?.attempt), completionObserved: object(value?.completion), failureObserved: object(value?.failure),
-    interlockObserved: object(value?.interlock), terminalOperationVerified: value?.terminalOperationVerified === true,
-    receiptIssues: Array.isArray(value?.receiptIssues) ? value.receiptIssues.filter(item => typeof item === 'string' && /^[A-Z0-9_]+$/.test(item)) : ['UNVERIFIABLE_RESPONSE']};
+    interlockObserved: object(value?.interlock), terminalOperationVerified, receiptIssues};
 }
 
 export async function runPlan(input, {apply = false, call = createToolCaller(), signal, journal} = {}) {
@@ -260,8 +275,10 @@ export async function runPlan(input, {apply = false, call = createToolCaller(), 
   } catch (error) {
     let reconciliation;
     if (current?.invoked) {
-      try { reconciliation = receiptSummary(await call('reconcile_operation', {requestId: current.args.requestId})); }
-      catch { reconciliation = {receiptIssues: ['RECONCILIATION_UNAVAILABLE']}; }
+      try {
+        const value = await call('reconcile_operation', {requestId: current.args.requestId});
+        reconciliation = receiptSummary(value, current.operation, current.args);
+      } catch { reconciliation = {receiptIssues: ['RECONCILIATION_UNAVAILABLE']}; }
     }
     let journalIssue;
     if (execution) {

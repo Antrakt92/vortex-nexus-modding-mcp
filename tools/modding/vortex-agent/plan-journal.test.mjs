@@ -39,6 +39,18 @@ test('semantic ID sorts object keys, preserves exact arrays/context, and rejects
     requestId: `journal_large_${n}`, modIds: Array.from({ length: 100 }, (_, m) => 'x'.repeat(195) + String(m).padStart(3, '0')), enabled: false }));
   assert.throws(() => canonicalPlanId(oversized), /PLAN_JOURNAL_LIMIT/);
 });
+test('a plan near the semantic size limit fits the journal envelope without changing its ID', t => {
+  const { root, store } = fixture(t), value = plan(), maxBytes = 1024 * 1024;
+  value.steps = Array.from({ length: 52 }, (_, n) => ({ operation: 'set_mods_enabled',
+    requestId: `journal_large_${n}`, modIds: Array.from({ length: 100 }, (_, m) => 'x'.repeat(195) + String(m).padStart(3, '0')), enabled: false }));
+  while (Buffer.byteLength(JSON.stringify(value)) + 1 > maxBytes) value.steps.at(-1).modIds.pop();
+  const planBytes = Buffer.byteLength(JSON.stringify(value)) + 1;
+  assert(planBytes > maxBytes - 203);
+  const id = canonicalPlanId(value), writer = store.begin(value);
+  assert.equal(writer.planId, id);
+  assert(fs.statSync(path.join(root, id, 'plan.json')).size > maxBytes);
+  assert.deepEqual(createPlanJournal({ root }).read(id).plan, value);
+});
 test('missing journal reads create no directory and invalid IDs never select arbitrary paths', t => {
   const { root, store } = fixture(t);
   assert.equal(store.read(canonicalPlanId(plan())), null); assert(!fs.existsSync(root));
@@ -146,6 +158,24 @@ test('duplicate keys, malformed JSON, changed queue and unknown/missing event fi
     assert.throws(() => createPlanJournal({ root }).read(writer.planId), /PLAN_JOURNAL_CORRUPT/);
   }
 });
+test('journal readers and writers stop enumerating at the first excess directory entry', t => {
+  const { root, store } = fixture(t), value = plan(), writer = store.begin(value), first = planQueue(value)[0];
+  const dir = path.join(root, writer.planId), open = fs.opendirSync;
+  let count = 0, closeCount = 0;
+  fs.opendirSync = (name, ...args) => {
+    if (name !== dir) return open(name, ...args);
+    return { readSync: () => ({name: String(++count)}), closeSync: () => {closeCount++;} };
+  };
+  try {
+    assert.throws(() => store.read(writer.planId), /PLAN_JOURNAL_CORRUPT/);
+    assert.equal(count, 207, 'read the maximal inventory and one excess name');
+    count = 0;
+    assert.throws(() => writer.intent(0, first.operation, first.args), /PLAN_JOURNAL_CHANGED/);
+    assert.equal(count, 2, 'detect a second entry when only plan.json is expected');
+    assert.equal(closeCount, 2);
+  } finally { fs.opendirSync = open; }
+  assert.deepEqual(fs.readdirSync(dir), ['plan.json']);
+});
 test('existing empty journals and missing plan files are corrupt rather than absent', t => {
   const { root, store } = fixture(t), value = plan(), id = canonicalPlanId(value);
   fs.mkdirSync(path.join(root, id), { recursive: true });
@@ -205,18 +235,22 @@ test('reading cannot adopt a replacement root even if the original child directo
 test('a root replaced during the final plan-name check cannot become a valid journal', t => {
   const {root, store} = fixture(t), writer = store.begin(plan()), dir = path.join(root, writer.planId);
   const file = path.join(dir, 'plan.json'), before = fs.readFileSync(file);
-  const original = fs.readdirSync; let checks = 0, swapped = false;
-  fs.readdirSync = (value, ...args) => {
-    const result = original(value, ...args);
+  const original = fs.opendirSync; let checks = 0, swapped = false;
+  fs.opendirSync = (value, ...args) => {
+    const handle = original(value, ...args);
     if (String(value) === dir && ++checks === 2) {
-      fs.renameSync(root, root + '-original'); fs.mkdirSync(root);
-      fs.renameSync(path.join(root + '-original', writer.planId), dir);
-      swapped = true;
+      const close = handle.closeSync.bind(handle);
+      handle.closeSync = () => {
+        close();
+        fs.renameSync(root, root + '-original'); fs.mkdirSync(root);
+        fs.renameSync(path.join(root + '-original', writer.planId), dir);
+        swapped = true;
+      };
     }
-    return result;
+    return handle;
   };
   try {assert.throws(() => store.read(writer.planId), /PLAN_JOURNAL_PATH_CHANGED/);}
-  finally {fs.readdirSync = original;}
+  finally {fs.opendirSync = original;}
   assert(swapped); assert.deepEqual(fs.readFileSync(file), before);
 });
 

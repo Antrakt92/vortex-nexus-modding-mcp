@@ -90,8 +90,9 @@ function inspectOwnZip(bytes) {
     const parts = name.split('/');
     for (let n = 1; n < parts.length; n++) need(names.get(parts.slice(0, n).join('/')) !== false, 'OWN_BINDER_DUPLICATE_ZIP_PATH');
   }
+  const payloadDirectories = [...prefixes.values()].filter(name => !Object.hasOwn(output, name));
   return { bytes: bytes.length, sha256: sha(bytes), md5: crypto.createHash('md5').update(bytes).digest('hex'),
-    expectedUncompressedBytes: total, payload: output, payloadSizes: sizes,
+    expectedUncompressedBytes: total, payload: output, payloadSizes: sizes, payloadDirectories,
     crcVerified: true, payloadFiles: Object.keys(output).length };
 }
 

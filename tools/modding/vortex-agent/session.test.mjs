@@ -173,6 +173,22 @@ test('missing or contradictory terminal receipts never become completed', async 
   }
 });
 
+test('failure reconciliation only verifies a terminal receipt for the exact attempted step', async () => {
+  const s = server({beforeCall: (name, args, {receipts}) => {
+    if (name !== 'reconcile_operation' || !receipts.has(args.requestId)) return;
+    const receipt = structuredClone(receipts.get(args.requestId));
+    receipt.attempt.parameters.stagingPath = 'F:/Different staging';
+    return receipt;
+  }});
+  const result = await runPlan(plan(), {apply: true, call: s.call});
+  assert.equal(result.status, 'stopped');
+  assert.equal(result.code, 'TERMINAL_RECEIPT_UNCERTAIN');
+  assert.equal(result.reconciliation.completionObserved, true);
+  assert.equal(result.reconciliation.terminalOperationVerified, false);
+  assert.deepEqual(result.reconciliation.receiptIssues, ['TERMINAL_RECEIPT_UNCERTAIN']);
+  assert.deepEqual(s.writes.map(write => write.args.requestId), [plan().steps[0].requestId]);
+});
+
 test('a pre-existing unknown receipt or global interlock prevents every write', async () => {
   for (const change of [value => {value.receiptIssues = ['INCOMPLETE_COMPLETION_COMMIT'];},
     value => {value.interlock = {requestId: 'another_request'};}, value => {delete value.attempt;},
@@ -208,6 +224,7 @@ test('inspection refuses missing or malformed initial context before reading inv
     }});
     assert.equal(result.status, 'partial');
     assert.deepEqual(result.errors, [{tool: 'health', code: 'INVALID_PLAN_CONTEXT'}]);
+    assert.deepEqual(result.results, {});
     assert.deepEqual(calls, ['health']);
   }
 });
