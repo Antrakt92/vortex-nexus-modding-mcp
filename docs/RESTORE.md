@@ -73,8 +73,11 @@ python scripts/bootstrap_pnpm.py --apply
 
 The bootstrap checks the size, SHA-512 and archive inventory recorded in
 `dependencies/vortex-mcp/PNPM-BOOTSTRAP.json`. It installs no global package and
-runs no package scripts. Use `--archive 'C:/RecoveryBundles/pnpm-10.34.9.tgz'`
-with `--apply` for an already obtained archive.
+runs no package scripts. The default plan checks the pins and output path
+offline. With `--archive 'C:/RecoveryBundles/pnpm-10.34.9.tgz'` it also reads and
+verifies that archive without writing files. Apply with the same argument to
+unpack or verify an existing local copy offline. Without `--archive`, apply
+retrieves the pinned tarball from the registry for verification.
 
 Prepare a new isolated build tree, install its frozen dependencies with scripts
 disabled, then compile and package:
