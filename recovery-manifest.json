@@ -1348,7 +1348,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/native-executor-inert-terminal.test.mjs",
-      "sha256_lf": "c506c6be5560724b013c175cd6e97fccb2f486e57d1d93eee23ebdc2ab3341b0"
+      "sha256_lf": "6691d763a8266fb0b9323d49d053fbb2845084157dfe1f00bcf5e616ca202298"
     },
     {
       "path": "tools/modding/vortex-agent/native-executor-journal.mjs",

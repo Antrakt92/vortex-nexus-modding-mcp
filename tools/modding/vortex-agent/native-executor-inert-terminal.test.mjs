@@ -4,7 +4,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {createNativeExecutorJournal, appendNativeExecutorTerminalAnchored} from './native-executor-journal.mjs';
+import fixtureDirectories from './test-fixture-directory.cjs';
+
+const scratch = fileURLToPath(new URL('../../../local-state/native-inert-terminal-tests', import.meta.url));
+function fixture(t) {
+  const workspace = fixtureDirectories.fixtureDirectory(t, scratch, 'run-');
+  const root = path.join(workspace, 'executor');
+  return {workspace, root, store: createNativeExecutorJournal({root})};
+}
 
 // Reuse the existing reviewed request/dual-index/transition fixtures without
 // importing that test module (which would register and run its test bodies).
@@ -16,13 +25,10 @@ function fixtureHelpers() {
   const marker = "\ntest('module helper preserves exact old six-method factory ABI";
   assert.equal(original.split(marker).length, 2);
   let source = original.slice(0, original.indexOf(marker));
-  const scratch = "../../../local-state/native-completion/recovery/journal-cases";
-  assert.equal(source.split(scratch).length, 2);
-  source = source.replace(scratch, '../../../local-state/native-inert-terminal-tests');
   source = source.replace(/(from\s*['"])(\.\/[^'"]+)(['"])/g,
     (_all, before, relative, after) => before + new URL(relative, url).href + after)
     .replaceAll('import.meta.url', JSON.stringify(url.href));
-  source += '\nexport {fixture,request,binding,begin,anchor,terminalPath,withFS,onTerminalDir,assertHeld,evidence,encode,sha,packet};\n';
+  source += '\nexport {request,binding,begin,anchor,terminalPath,withFS,onTerminalDir,assertHeld,evidence,encode,sha,packet};\n';
   helpers = import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
   return helpers;
 }
@@ -37,8 +43,8 @@ function close(h, f, b, seal = h.anchor(f.store), evidence = inertEvidence()) {
   return appendNativeExecutorTerminalAnchored(f.store, b, h.encode(evidence), seal);
 }
 
-test('v3 direct append stores no registration/adoption/release fiction and preserves six-method ABI', async () => {
-  const h = await fixtureHelpers(), f = h.fixture(), b = h.begin(f);
+test('v3 direct append stores no registration/adoption/release fiction and preserves six-method ABI', async t => {
+  const h = await fixtureHelpers(), f = fixture(t), b = h.begin(f);
   assert(Object.isFrozen(f.store));
   assert.deepEqual(Object.keys(f.store), ['begin', 'read', 'appendTerminal', 'inventory', 'reservePending', 'provision']);
   let getters = 0;
@@ -64,8 +70,8 @@ test('v3 direct append stores no registration/adoption/release fiction and prese
   assert.equal(census.historySealVerified, false); noAuthority(census);
 });
 
-test('v3 anchored B to C uses the unchanged ten-field transition and remains historical only', async () => {
-  const h = await fixtureHelpers(), f = h.fixture(), b = h.begin(f), before = h.anchor(f.store);
+test('v3 anchored B to C uses the unchanged ten-field transition and remains historical only', async t => {
+  const h = await fixtureHelpers(), f = fixture(t), b = h.begin(f), before = h.anchor(f.store);
   const result = close(h, f, b, before);
   assert.deepEqual(Object.keys(result), ['schema','rootId','previousInventorySHA256','inventorySHA256',
     'operationId','nativeJobId','requestSHA256','packetSHA256','workerLifetime','evidenceSHA256']);
@@ -82,8 +88,8 @@ test('v3 anchored B to C uses the unchanged ten-field transition and remains his
   assert.equal(closed.unresolvedCount, 0); assert.equal(closed.discoveryPermit, false); noAuthority(closed);
 });
 
-test('old v1 and v2 terminal bytes survive v3 publication in the same journal', async () => {
-  const h = await fixtureHelpers(), f = h.fixture(), old = [h.request(1), h.request(2)];
+test('old v1 and v2 terminal bytes survive v3 publication in the same journal', async t => {
+  const h = await fixtureHelpers(), f = fixture(t), old = [h.request(1), h.request(2)];
   const legacy = {...h.evidence(), schema: 'native-executor-terminal-evidence/1', outcome: 'committed_adopted_closed'};
   delete legacy.ownershipHoldObservationSHA256; legacy.releaseObservationSHA256 = '5'.repeat(64);
   f.store.appendTerminal(h.begin(f, old[0]), h.encode(legacy));
@@ -98,8 +104,8 @@ test('old v1 and v2 terminal bytes survive v3 publication in the same journal', 
   assert.equal(f.store.inventory().closedCount, 3);
 });
 
-test('cancelled operation and job IDs remain consumed after reopening while a distinct operation can close', async () => {
-  const h = await fixtureHelpers(), f = h.fixture(), first = h.request(), b = h.begin(f,first);
+test('cancelled operation and job IDs remain consumed after reopening while a distinct operation can close', async t => {
+  const h = await fixtureHelpers(), f = fixture(t), first = h.request(), b = h.begin(f,first);
   const transition = close(h,f,b), c = h.encode({schema:'native-executor-anchor/1',rootId:transition.rootId,inventorySHA256:transition.inventorySHA256});
   const original = fs.readFileSync(h.terminalPath(f,first));
   assert.throws(() => close(h,f,b,c), /TERMINAL_TRANSITION_CONSUMED/);
@@ -116,8 +122,8 @@ test('cancelled operation and job IDs remain consumed after reopening while a di
   assert.equal(fs.existsSync(path.join(f.root,'jobs',first.nativeJobId)),true);
 });
 
-test('v3 rejects mixed fields/versions/outcomes and noncanonical evidence before publication', async () => {
-  const h = await fixtureHelpers(), f = h.fixture(), b = h.begin(f), seal = h.anchor(f.store);
+test('v3 rejects mixed fields/versions/outcomes and noncanonical evidence before publication', async t => {
+  const h = await fixtureHelpers(), f = fixture(t), b = h.begin(f), seal = h.anchor(f.store);
   const bad = [
     {...inertEvidence(),schema:'native-executor-terminal-evidence/2'},
     {...inertEvidence(),schema:'native-executor-terminal-evidence/4'},
@@ -148,12 +154,12 @@ test('v3 rejects mixed fields/versions/outcomes and noncanonical evidence before
   assert.equal(close(h,f,b,seal).operationId,b.operationId);
 });
 
-test('cached v3 inventory rejects persisted version, binding and evidence substitutions', async () => {
+test('cached v3 inventory rejects persisted version, binding and evidence substitutions', async t => {
   const h = await fixtureHelpers();
   for (const mutate of [r=>{r.schema='native-executor-terminal/2';},r=>{r.outcome='committed_adopted_worker_closed';},
     r=>{r.fullRecordSHA256='f'.repeat(64);},r=>{r.inertCancelObservationSHA256='f'.repeat(64);},
     r=>{r.workerLifetime='worker_'+'f'.repeat(32);},r=>{r.rootId='9:9';}]) {
-    const f=h.fixture(),b=h.begin(f);f.store.appendTerminal(b,h.encode(inertEvidence()));
+    const f=fixture(t),b=h.begin(f);f.store.appendTerminal(b,h.encode(inertEvidence()));
     const file=h.terminalPath(f),record=JSON.parse(fs.readFileSync(file));mutate(record);fs.writeFileSync(file,JSON.stringify(record)+'\n');
     const fresh=createNativeExecutorJournal({root:f.root}),observation=fresh.inventory();
     assert.equal(observation.complete,false);assert.equal(observation.startupHoldRequired,true);noAuthority(observation);
@@ -161,10 +167,10 @@ test('cached v3 inventory rejects persisted version, binding and evidence substi
   }
 });
 
-test('wrong trusted root or old census cannot bless v3 and leaves the attempt sticky held', async () => {
+test('wrong trusted root or old census cannot bless v3 and leaves the attempt sticky held', async t => {
   const h=await fixtureHelpers();
   for(const field of ['rootId','inventorySHA256']){
-    const f=h.fixture(),b=h.begin(f),anchor=JSON.parse(h.anchor(f.store));
+    const f=fixture(t),b=h.begin(f),anchor=JSON.parse(h.anchor(f.store));
     anchor[field]=field==='rootId'?'9:9':'f'.repeat(64);
     assert.throws(()=>close(h,f,b,h.encode(anchor)),/PREDECESSOR_NOT_SEALED/);
     assert.equal(fs.existsSync(path.dirname(h.terminalPath(f))),false);h.assertHeld(f);
@@ -172,8 +178,8 @@ test('wrong trusted root or old census cannot bless v3 and leaves the attempt st
   }
 });
 
-test('v3 reentry through a filesystem callback holds the outer transition without another operation', async () => {
-  const h=await fixtureHelpers(),f=h.fixture(),b=h.begin(f),seal=h.anchor(f.store);let entered=false;
+test('v3 reentry through a filesystem callback holds the outer transition without another operation', async t => {
+  const h=await fixtureHelpers(),f=fixture(t),b=h.begin(f),seal=h.anchor(f.store);let entered=false;
   h.withFS('lstatSync',(original,...args)=>{
     if(!entered){entered=true;const r=h.request(99),other=h.binding(r);
       assert.throws(()=>f.store.begin(h.encode(r),other.workerLifetime,other.packetSHA256),/TERMINAL_TRANSITION_BUSY/);}
@@ -182,8 +188,8 @@ test('v3 reentry through a filesystem callback holds the outer transition withou
   assert(entered);assert.equal(fs.existsSync(path.join(f.root,'operations',h.request(99).operationId)),false);h.assertHeld(f);
 });
 
-test('unknown acknowledgement after immutable v3 publication cannot retry or bless the old seal', async () => {
-  const h=await fixtureHelpers(),f=h.fixture(),b=h.begin(f),seal=h.anchor(f.store),target=h.terminalPath(f);let published=false;
+test('unknown acknowledgement after immutable v3 publication cannot retry or bless the old seal', async t => {
+  const h=await fixtureHelpers(),f=fixture(t),b=h.begin(f),seal=h.anchor(f.store),target=h.terminalPath(f);let published=false;
   h.withFS('linkSync',(original,from,to,...args)=>{
     const value=original(from,to,...args);
     if(String(to)===target){published=true;throw Error('owned uncertain terminal publication');}
@@ -194,8 +200,8 @@ test('unknown acknowledgement after immutable v3 publication cannot retry or ble
   assert.equal(fresh.historySealVerified,false);assert.equal(fresh.startupHoldRequired,true);noAuthority(fresh);
 });
 
-test('a self-consistent old terminal byte rewrite cannot be hidden by the v3 successor census', async () => {
-  const h=await fixtureHelpers(),f=h.fixture(),r=h.request(),first=h.begin(f,r);
+test('a self-consistent old terminal byte rewrite cannot be hidden by the v3 successor census', async t => {
+  const h=await fixtureHelpers(),f=fixture(t),r=h.request(),first=h.begin(f,r);
   f.store.appendTerminal(first,h.encode(h.evidence()));
   const next=h.request(2),b=h.begin(f,next),seal=h.anchor(f.store),oldFile=h.terminalPath(f,r);let changed=false;
   h.onTerminalDir(f,next,()=>assert.throws(()=>close(h,f,b,seal),/TERMINAL_TRANSITION_CHANGED/),()=>{
