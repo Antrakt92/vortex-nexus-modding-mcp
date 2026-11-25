@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { observeNative, normalizeSession } = require('./collection-wizard-native.cjs');
+const { observeNative, normalizeSession, completedSessionProof } = require('./collection-wizard-native.cjs');
 function fixture() {
   return { sourceAdmitted: true, modId: 'owner',
     selectors: { activeGameId: () => 'cyberpunk2077', activeProfileId: () => 'profile' },
@@ -71,6 +71,18 @@ test('valid session counts member statuses and source optional stalled semantics
     statuses: { installed: 1, failed: 0, ignored: 0, pending: 0 }, totalMembers: 1, stalled: false });
   const f = fixture(); f.state.session.collections.activeSession = rawSession();
   assert.equal(observeNative(f).session.totalMembers, 1);
+});
+test('completion evidence is independent of rule map ordering and permits absent stock mod IDs', () => {
+  const raw = { ...rawSession(), sessionId: 'session', totalOptional: 1 };
+  const optional = { type: 'recommends', status: 'installed', modId: 'optional-member' };
+  raw.mods.optional = optional;
+  const reordered = { ...raw, mods: { optional, rule: raw.mods.rule } };
+  assert.equal(completedSessionProof(raw), completedSessionProof(reordered));
+  const proof = completedSessionProof(raw);
+  assert.notEqual(completedSessionProof({ ...raw, sessionId: 'other-session' }), proof);
+  assert.throws(() => completedSessionProof({ ...raw, mods: { ...raw.mods,
+    optional: { ...optional, modId: false } } }), /STRING_ID_UNAVAILABLE/);
+  assert.equal(Object.hasOwn(normalizeSession(raw), 'memberIdentity'), false);
 });
 test('failed ignored and nonterminal statuses are never reported installed', () => {
   for (const status of ['failed', 'ignored', 'pending', 'downloading', 'downloaded', 'installing', 'optional']) {

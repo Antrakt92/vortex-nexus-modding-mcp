@@ -852,7 +852,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/collection-wizard-controller.cjs",
-      "sha256_lf": "940ea5b2c71ef06b7c8a88d2a11a28f993864bcc020452cc515ec690f3e2cd43"
+      "sha256_lf": "872e364ecf78910ce646bcad9ede5a8fd3e199ed4c7c3f4b0f298051f4e9206f"
     },
     {
       "path": "tools/modding/vortex-agent/collection-wizard-controller.test.cjs",
@@ -868,7 +868,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/collection-wizard-guard.test.cjs",
-      "sha256_lf": "c139c4e4a995a88e145d42c7862ecb351575f7ecf59fc1b21f6e0fd861d714dc"
+      "sha256_lf": "ee3ab895856adec933e26324c7e7b7e66c132747af5045abecf8c6b29fa3f008"
     },
     {
       "path": "tools/modding/vortex-agent/collection-wizard-host.cjs",
@@ -880,11 +880,11 @@
     },
     {
       "path": "tools/modding/vortex-agent/collection-wizard-native.cjs",
-      "sha256_lf": "529bbb1faa11305680a8c30670bcee8f611dedaa8f08458bc32b050a00d52c29"
+      "sha256_lf": "b59a1bbeb83957ceda56b6e58b9e03c584c68bceb1e3a356667f9ebd8e837ae3"
     },
     {
       "path": "tools/modding/vortex-agent/collection-wizard-native.test.cjs",
-      "sha256_lf": "ffb8c58956a5efbb5eb5cc1dae5afd93b24bfda03e84002f4cf148ec2621ad2b"
+      "sha256_lf": "bf96211cf9e264b3c7b544fc03e6895345bc95397f6b039c0edb7e82ff0a7674"
     },
     {
       "path": "tools/modding/vortex-agent/collection-wizard-policy.cjs",
