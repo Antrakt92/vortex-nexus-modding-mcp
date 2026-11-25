@@ -447,9 +447,38 @@ function createOperations(api, actions, selectors, options = {}) {
     }),
     deploy_mods: args => mutate('deploy_mods', args, async (effect, beforeCompletion) => {
       const before = flags(args);
-      insist(typeof api.ext.awaitModsDeployment === 'function', 'DEPLOY_API_UNAVAILABLE');
-      await effect(() => api.ext.awaitModsDeployment(args.profileId));
-      beforeCompletion(() => unchangedFlags(args, before));
+      insist(typeof api.ext.awaitModsDeployment === 'function' &&
+        typeof api.events?.on === 'function' && typeof api.events?.removeListener === 'function', 'DEPLOY_API_UNAVAILABLE');
+      const pending = () => api.getState().persistent?.deployment?.needToDeploy;
+      let started = false, observed = 0, beforeSettlement;
+      const deployed = profileId => {
+        if (started && profileId === args.profileId) {
+          observed++;
+          beforeSettlement = pending();
+        }
+      };
+      await effect(async () => {
+        api.events.on('mods-did-deploy', deployed);
+        try {
+          await api.ext.awaitModsDeployment(args.profileId, () => { started = true; }, { failOnError: true });
+        } finally {
+          api.events.removeListener('mods-did-deploy', deployed);
+        }
+      });
+      // Stock Vortex publishes mods-did-deploy before baking settings, then replaces
+      // needToDeploy even when it was already false. 2.9.1 may resolve after errors
+      // during that interval, and all reviewed versions resolve some skipped runs.
+      const settled = pending();
+      insist(observed === 1 && settled !== beforeSettlement && settled?.[args.gameId] === false, 'DEPLOYMENT_UNVERIFIED');
+      if (beforeSettlement?.[args.gameId] === false) {
+        // An unrelated state change alone is not evidence that this game settled.
+        const keys = new Set([...Object.keys(beforeSettlement), ...Object.keys(settled)]);
+        insist([...keys].every(id => id === args.gameId || beforeSettlement[id] === settled[id]), 'DEPLOYMENT_UNVERIFIED');
+      }
+      beforeCompletion(() => {
+        unchangedFlags(args, before);
+        insist(pending()?.[args.gameId] === false, 'DEPLOYMENT_UNVERIFIED');
+      });
       return { deploymentPromiseResolved: true };
     }),
     download_nexus: args => mutate('download_nexus', args, async (effect, beforeCompletion) => {
