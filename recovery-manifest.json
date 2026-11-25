@@ -1412,15 +1412,15 @@
     },
     {
       "path": "tools/modding/vortex-agent/native-fixture-snapshot.mjs",
-      "sha256_lf": "f7bd5fa24783d358e5906dda93375e962dd21566e3e4088fd15c4be161ef298e"
+      "sha256_lf": "afde28b7d20a92cb8de50479ea174573b0f982d5655660bee7529766ebb6281e"
     },
     {
       "path": "tools/modding/vortex-agent/native-fixture-snapshot.test.mjs",
-      "sha256_lf": "3d5deba27baf6484de2fa8863d509065bc8656c8ef5f8a9bafd42cde3740ca26"
+      "sha256_lf": "b8105f674e4edb8a42020ea34c31b27a19b0d762f63abe0462396a3dc01c707e"
     },
     {
       "path": "tools/modding/vortex-agent/native-fixture-verify.mjs",
-      "sha256_lf": "68eb01b1b64be90a4abaf812308b0926ebbc71616ef42e0e98bacacb9404ab2c"
+      "sha256_lf": "dcd50f8d6d621e7e11d9f925d079b8912c04345efa7599474e5ccabeeab419d9"
     },
     {
       "path": "tools/modding/vortex-agent/native-fixture-worker.cjs",
@@ -1428,7 +1428,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/native-fixture.mjs",
-      "sha256_lf": "878e65a51f9789cdf24b397553679eb041619a96c32659738a1958ae184967b9"
+      "sha256_lf": "fdbaf1d3621c4643cf61670be5d7891c94d5fb8a33d3b6971e5aa0bf8c6dc921"
     },
     {
       "path": "tools/modding/vortex-agent/native-game-activation-readiness.test.mjs",

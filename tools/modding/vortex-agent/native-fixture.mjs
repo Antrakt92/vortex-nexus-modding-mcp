@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { remote } from './bridge.mjs';
 import paths from './paths.cjs';
 import credential from './credential.cjs';
-import { ORDINARY_MOD_LIMIT, assertOrdinaryModSnapshot, observeOrdinaryHold, ordinaryProcessesPreserved, pinOrdinaryFile, stoppedOrdinaryCohort } from './native-fixture-snapshot.mjs';
+import { ORDINARY_MOD_LIMIT, assertOrdinaryModSnapshot, hasGracefulFixtureClose, observeFixtureTerminal,
+  observeOrdinaryHold, ordinaryProcessesPreserved, pinOrdinaryFile, stoppedOrdinaryCohort } from './native-fixture-snapshot.mjs';
 const base = path.join(paths.workspace, 'local-state/vortex-agent-native-fixture');
 const here = path.dirname(fileURLToPath(import.meta.url));
 const must = (ok, code) => { if (!ok) throw Error(code); };
@@ -346,15 +347,15 @@ async function main() {
   const vortexExe = stopped ? before.executable.file : mains[0].exe;
   const log = fs.openSync(path.join(root, 'process-output.log'), 'wx');
   const child = spawn(vortexExe, args, { env, windowsHide: true, stdio: ['ignore', log, log] });
+  const readTerminal = observeFixtureTerminal(child);
   fs.closeSync(log);
   write(path.join(root, 'process.json'), { pid: child.pid, executable: vortexExe, args, ordinaryPids: before.processes.map(p => p.pid), started: new Date().toISOString() });
   console.log(JSON.stringify({ root, fixturePid: child.pid, ordinaryMainPids: before.processes.filter(p => !p.type).map(p => p.pid) }));
-  let exited = false; child.once('exit', () => { exited = true; }); child.once('error', () => { exited = true; });
   const deadline = Date.now() + 240000;
   let stoppedObservationFailure, fixtureObserved = false, fixtureGeneration;
-  while (!exited && Date.now() < deadline) {
+  while (readTerminal() === null && Date.now() < deadline) {
     await new Promise(r => setTimeout(r, stopped ? 1500 : 500));
-    if (stopped && !stoppedObservationFailure && !exited) {
+    if (stopped && !stoppedObservationFailure && readTerminal() === null) {
       try {
         const cohort = await observeFixtureCohort(child.pid);
         if (cohort.length) {
@@ -368,27 +369,44 @@ async function main() {
       } catch (error) { stoppedObservationFailure = error.message; }
     }
   }
-  if (!exited) child.unref();
+  const fixtureTerminal = readTerminal();
+  if (fixtureTerminal === null) child.unref();
+  const cleanExit = fixtureTerminal?.event === 'exit' && fixtureTerminal.code === 0 && fixtureTerminal.signal === null;
   const receiptPath = path.join(root, 'native-receipt.json');
-  const receipt = fs.existsSync(receiptPath) ? JSON.parse(fs.readFileSync(receiptPath)) : { status: 'missing' };
-  let after;
+  let receipt, nativeReceiptError;
+  try {
+    receipt = JSON.parse(fs.readFileSync(receiptPath));
+    if (!['running', 'failed', 'passed'].includes(receipt?.status)) throw Error('NATIVE_FIXTURE_WORKER_RECEIPT_INVALID');
+  } catch (error) {
+    const missing = error?.code === 'ENOENT';
+    receipt = { status: missing ? 'missing' : 'invalid' };
+    if (!missing) nativeReceiptError = 'NATIVE_FIXTURE_WORKER_RECEIPT_UNREADABLE';
+  }
+  let after, ordinaryAfterSnapshotError;
   try {
     after = await readOrdinary();
     write(path.join(root, 'ordinary-after.json'), after);
   } catch (error) {
-    if (!stopped) throw error;
-    stoppedObservationFailure ||= error.message;
+    ordinaryAfterSnapshotError = /^[A-Z][A-Z0-9_]{1,99}$/.test(error?.message ?? '')
+      ? error.message : 'ORDINARY_AFTER_SNAPSHOT_UNAVAILABLE';
+    if (stopped) stoppedObservationFailure ||= ordinaryAfterSnapshotError;
     after = null;
   }
-  const same = (key) => JSON.stringify(before[key]) === JSON.stringify(after?.[key]);
-  const ordinaryUnchanged = stopped ? fixtureObserved && !stoppedObservationFailure
+  const same = (key) => JSON.stringify(before[key]) === JSON.stringify(after[key]);
+  const ordinaryUnchanged = after !== null && (stopped ? fixtureObserved && !stoppedObservationFailure
     && JSON.stringify(before) === JSON.stringify(after)
     : ['health', 'profiles', 'mods', 'manifestSha256', 'executable', 'appAsar', 'manifest', 'hold'].every(same)
       && ordinaryProcessesPreserved(before.processes, after.processes)
-      && (!stockReview || before.processes.length === after.processes.length);
-  const result = { root, nativeStatus: receipt.status, fixtureExited: exited, ordinaryUnchanged, ordinaryManifestSha256: after?.manifestSha256, error: receipt.error, ...(stopped ? { ordinaryMode: 'stopped', fixtureObserved, stoppedObservationFailure } : {}), remainingFixturePids: after?.processes.filter(p => p.pid === child.pid || p.parent === child.pid).map(p => p.pid) ?? null };
+      && (!stockReview || before.processes.length === after.processes.length));
+  const result = { root, nativeStatus: receipt.status, fixtureExited: fixtureTerminal?.event === 'exit', fixtureTerminal,
+    ordinaryUnchanged, ordinaryManifestSha256: after?.manifestSha256, error: receipt.error,
+    ...(nativeReceiptError ? { nativeReceiptError } : {}),
+    ...(ordinaryAfterSnapshotError ? { ordinaryAfterSnapshotError } : {}),
+    ...(stopped ? { ordinaryMode: 'stopped', fixtureObserved, stoppedObservationFailure } : {}),
+    remainingFixturePids: after?.processes.filter(p => p.pid === child.pid || p.parent === child.pid).map(p => p.pid) ?? null };
   write(path.join(root, 'runner-result.json'), result); console.log(JSON.stringify(result));
   // No forced termination: preserve failed evidence and identify the exact fixture PID.
-  must(exited && receipt.status === 'passed' && ordinaryUnchanged, 'NATIVE_FIXTURE_INCOMPLETE_INSPECT_RECEIPTS');
+  must(cleanExit && receipt.status === 'passed' && hasGracefulFixtureClose(receipt) && ordinaryUnchanged
+    && result.remainingFixturePids?.length === 0, 'NATIVE_FIXTURE_INCOMPLETE_INSPECT_RECEIPTS');
 }
 main().catch(err => { console.error(err.message); process.exitCode = 1; });
