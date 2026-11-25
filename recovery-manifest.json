@@ -784,7 +784,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/bridge-maintenance-guidance.test.mjs",
-      "sha256_lf": "7b763c842428c83c8fdf1a24438a6b9c87a3f58f9558413ed301c8031433f9a9"
+      "sha256_lf": "a808d8e38b697771f4fb80392c49b1859b5fb155a0b4c26ea389de637c83971b"
     },
     {
       "path": "tools/modding/vortex-agent/bridge-sse.test.mjs",
@@ -792,7 +792,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/bridge.mjs",
-      "sha256_lf": "b5ca29dfb95737fc706f3bc9536fa6f6d7e6a40b9248faa86419d54644416b37"
+      "sha256_lf": "5cec5678ecc4ec2e3a1c2c1c9cac6eb1ddf197713f66dc4340f535be4acc6fd5"
     },
     {
       "path": "tools/modding/vortex-agent/build.mjs",
