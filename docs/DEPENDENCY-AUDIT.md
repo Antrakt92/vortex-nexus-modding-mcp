@@ -44,7 +44,9 @@ the existing `skipLibCheck` setting was not weakened or changed.
 
 ## Verification
 
-From `dependencies/vortex-mcp`, using Node 24.20.0 and the locally verified pnpm:
+The following commands record the 25 October baseline. Use the pinned bootstrap
+in [current setup instructions](RESTORE.md#3-prepare-the-adapter-build) for a new build.
+The baseline ran from `dependencies/vortex-mcp` using Node 24.20.0 and pnpm 9.15.0.
 
 ```powershell
 node .tooling/pnpm-9.15.0/bin/pnpm.cjs install --ignore-scripts --frozen-lockfile --store-dir .tooling/pnpm-store

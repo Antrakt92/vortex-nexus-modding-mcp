@@ -43,6 +43,10 @@ The source adapter now exposes `read_mod_lifecycle` for 1–20 exact installed m
 IDs. It uses one Vortex state snapshot and performs no filesystem scan, hash,
 download, dispatch, profile switch or helper activation.
 
+This inline JSON example uses PowerShell 7.3 or newer with standard native
+argument passing. Windows PowerShell 5.1 can use
+[an argument file](COLLECTION-DOWNLOADS.md#request).
+
 ```powershell
 node tools/modding/vortex-agent/bridge.mjs --call read_mod_lifecycle '{"gameId":"cyberpunk2077","modIds":["EXACT_INSTALLED_MOD_ID"]}'
 ```

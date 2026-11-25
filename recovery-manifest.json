@@ -224,7 +224,7 @@
     },
     {
       "path": "docs/COLLECTION-DOWNLOADS.md",
-      "sha256_lf": "d175a56898a414dc8c953d39b8abd326feab6b696b9610fa8f4a3725339fa9f2"
+      "sha256_lf": "1d6faaef430753330a3ac97b9032d310e6c3602b4380feeef838a2c5ebdd0b0b"
     },
     {
       "path": "docs/COLLECTION-RELEASES.md",
@@ -236,7 +236,7 @@
     },
     {
       "path": "docs/DEPENDENCY-AUDIT.md",
-      "sha256_lf": "893356082fa71bd82529fe62cd947dd86b70121ced65ee10c7720a16e6f79326"
+      "sha256_lf": "9aa2035adbd2a767e600dbecd99125fcf1c21491ff99d6215b2e8c6ebd590809"
     },
     {
       "path": "docs/FILE-PROOF-WORKER.md",
@@ -280,7 +280,7 @@
     },
     {
       "path": "docs/LIFECYCLE-PERFORMANCE.md",
-      "sha256_lf": "e1074adca15582de7b22f20e04bafc8f84cc58e6e0635543896e741c534564a7"
+      "sha256_lf": "d89b56003a768a0edb900467f7c6aa21bb73588652b27f522ef40b1f6272d83d"
     },
     {
       "path": "docs/LOCAL-CLEANUP.md",
@@ -436,7 +436,7 @@
     },
     {
       "path": "docs/NO-RESTART-WORKFLOW.md",
-      "sha256_lf": "da9366944c8dbac5ac0dd80317acbe60ff208ac6d6eda04ee40b3dafb2398f22"
+      "sha256_lf": "7b43c6f182da8298f8f0dd1b3c4c2f7e3cfba7a8333ccd363a0652a5a938b130"
     },
     {
       "path": "docs/OWN-LOCAL-BINDER.md",
@@ -484,7 +484,7 @@
     },
     {
       "path": "docs/RESTORE.md",
-      "sha256_lf": "c62fcb346730cc17c60df738c0f3e017883ce88cbf6fa3164595a59374f29987"
+      "sha256_lf": "a91c9def73a65c12109c5d6d709804ccaae9d2348eec18130280efe71e26cf8a"
     },
     {
       "path": "docs/STOCK-LOCAL-INSTALL.md",
@@ -775,6 +775,10 @@
       "sha256_lf": "fa250347b2908a7ea374ece1100039218034fc030b9faf5e9650d953e755f41c"
     },
     {
+      "path": "tools/modding/vortex-agent/bridge-cli.test.mjs",
+      "sha256_lf": "8a4b3388aa9314f481919e1ffc3382c0c39a6cfd88ddae008751bc71b8e4488a"
+    },
+    {
       "path": "tools/modding/vortex-agent/bridge-install-timeout.test.mjs",
       "sha256_lf": "fc3f2dc3f707ac2eda92376d9c33396f86e61be2405c37070a8255767c18f28e"
     },
@@ -788,7 +792,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/bridge.mjs",
-      "sha256_lf": "6244326f02c1e7b79d322a3f5c55023b88f941894ba21fc3465ae95e03780695"
+      "sha256_lf": "add91d201cba70b8febd37c2fb7107263656eaf88f777a091987fd556c1c900c"
     },
     {
       "path": "tools/modding/vortex-agent/build.mjs",
