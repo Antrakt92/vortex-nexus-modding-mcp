@@ -190,6 +190,61 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(result["version_id"], "987")
         self.assertFalse(p.target_lock_path(self.m, self.root).exists())
 
+    def test_reconcile_recovers_interruption_between_terminal_receipt_and_target_marker(self):
+        primary = p.receipt_path(self.m, self.root)
+        marker = p.target_lock_path(self.m, self.root)
+        real_update = p.update_owned
+
+        def interrupt_marker_update(path, data, manifest):
+            if path == marker and not data["action_running"]:
+                raise OSError("fixture interruption after primary receipt write")
+            real_update(path, data, manifest)
+
+        with patch.object(p, "update_owned", side_effect=interrupt_marker_update):
+            with self.assertRaisesRegex(OSError, "interruption after primary receipt"):
+                self.execute({"ok": False, "version_id": "987"})
+        returned = p.load_receipt(primary, self.m)
+        initial = p.load_receipt(marker, self.m)
+        self.assertEqual(returned["attempt_id"], initial["attempt_id"])
+        self.assertEqual((returned["outcome"], returned["action_running"], returned["version_id"]),
+                         ("unknown", False, "987"))
+        self.assertEqual((initial["outcome"], initial["action_running"], initial["version_id"]),
+                         ("attempt", True, None))
+
+        for receipt_changes, marker_changes in (
+            ({"action_running": True}, {}), ({"outcome": "attempt"}, {}), ({"version_id": None}, {}),
+            ({}, {"attempt_id": "f" * 32}), ({}, {"time_utc": "2020-01-01T00:00:00+00:00"}),
+            ({}, {"outcome": "unknown"}), ({}, {"action_complete": True}),
+            ({}, {"version_id": "987"}), ({}, {"expected_user_id": "999"}),
+        ):
+            with self.subTest(receipt=receipt_changes, marker=marker_changes):
+                p.write_receipt(primary, {**returned, **receipt_changes})
+                p.write_receipt(marker, {**initial, **marker_changes})
+                before = (primary.read_bytes(), marker.read_bytes())
+                with self.assertRaises(p.Blocked):
+                    p.reconcile(self.m, state=self.root, version_id="987",
+                                credential=lambda: self.fail("credential read with ambiguous evidence"),
+                                read=lambda *_: self.fail("GET with ambiguous evidence"))
+                self.assertEqual((primary.read_bytes(), marker.read_bytes()), before)
+
+        p.write_receipt(primary, returned)
+        p.write_receipt(marker, initial)
+        with patch.object(p, "update_owned", side_effect=interrupt_marker_update):
+            with self.assertRaisesRegex(p.Blocked, "Receipt unavailable"):
+                p.reconcile(self.m, state=self.root, key="mock-secret-never-log", read=self.read)
+        self.assertEqual(p.load_receipt(primary, self.m)["outcome"], "done")
+        self.assertEqual(p.load_receipt(marker, self.m), initial)
+
+        with patch.object(self, "read", wraps=self.read) as get:
+            result = p.reconcile(self.m, state=self.root, key="mock-secret-never-log", read=get)
+        get.assert_any_call("/mod-file-versions/987", "mock-secret-never-log")
+        self.assertEqual(result["outcome"], "done")
+        self.assertEqual(result["attempt_id"], initial["attempt_id"])
+        self.assertFalse(result["action_complete"])
+        self.assertFalse(result["artifact_verified"])
+        self.assertFalse(marker.exists())
+        self.assertEqual(p.load_receipt(primary, self.m), result)
+
     def test_reconcile_refuses_conflicting_durable_versions_before_credentials(self):
         self.execute({"ok": False, "version_id": "987"})
         lock = p.target_lock_path(self.m, self.root)

@@ -300,8 +300,8 @@ helper is not invoked by this action. No dependency or bundle changes were made.
   `action_complete: false` remains false after partial-action reconciliation.
 - If no version can be independently identified, or a lock exists without a valid
   matching receipt, stop for investigation. There is no force-retry/reset command.
-- A hard interruption leaving `action_running: true` remains conservatively blocked,
-  even after the OS lock releases: a child uploader could still exist. Establish
+- A hard interruption with no durable evidence that the uploader returned remains
+  blocked after the OS lock releases. A child uploader could still exist. Establish
   uploader termination and exact version/account/artifact evidence independently;
   deliberate recovery requires separately reviewed ledger migration. The runner
   provides no unsafe automatic stopped-process assumption or migration/reset mode.
@@ -309,6 +309,10 @@ helper is not invoked by this action. No dependency or bundle changes were made.
   `action_running: true`. Releasing the parent's OS lock does not establish that
   its child uploader stopped. An invocation that returned before a readback
   interruption remains separately reconcilable using its durable version ID.
+  If an interruption follows the first receipt update, a returned invocation
+  with a durable version ID remains reconcilable when the target marker exactly
+  matches its original running attempt. The runner checks the original recorded
+  identity and requires successful GET readback before clearing that marker.
 - Existing schema-1 receipts/markers remain effective retry blockers. Reconciliation
   refuses automatic migration or clearing because they lack account/attempt ownership
   evidence. Malformed, missing, mismatched or partially written records fail closed.

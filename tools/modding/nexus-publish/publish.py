@@ -567,7 +567,12 @@ def reconcile_locked(manifest, key, state, version_id, read, credential):
             if locked["attempt_id"] != data["attempt_id"]:
                 raise Blocked("Attempt ownership changed; reconciliation refused.")
             if locked["action_running"]:
-                raise Blocked("Interrupted running attempt: automatic lock clearing refused.")
+                # The primary receipt is updated first after invoke returns. A
+                # crash at that boundary can leave the exact initial marker.
+                initial = {**data, "outcome": "attempt", "uploaded": None, "version_id": None,
+                           "metadata_verified": False, "action_complete": False, "action_running": True}
+                if data["outcome"] not in {"unknown", "done"} or not valid_id(recorded_id) or locked != initial:
+                    raise Blocked("Interrupted running attempt: automatic lock clearing refused.")
             locked_id = locked["version_id"]
             if recorded_id is not None and locked_id is not None and recorded_id != locked_id:
                 raise Blocked("The version ID conflicts between the durable receipt and lock.")
