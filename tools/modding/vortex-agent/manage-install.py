@@ -383,7 +383,7 @@ def verify_runtime_workspace(provenance):
         raise RuntimeError('Package runtime workspace differs from active credential/receipt workspace')
 
 
-def prepared_receipt_generation(file, payload):
+def prepared_receipt_generation(file, payload, *, links=1):
     """Pin the exact private receipt across a rename, or return no proof."""
     def identity(value):
         return (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns,
@@ -392,7 +392,7 @@ def prepared_receipt_generation(file, payload):
     try:
         no_reparse(file)
         before = file.lstat()
-        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size != len(payload):
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != links or before.st_size != len(payload):
             return None
         pin = identity(before)
         with file.open('rb') as stream:
@@ -407,6 +407,13 @@ def prepared_receipt_generation(file, payload):
         return pin if identity(current) == pin and current.st_ctime_ns == before.st_ctime_ns else None
     except (OSError, RuntimeError):
         return None
+
+
+def publish_upgrade_receipt(pending, final):
+    if os.name == 'nt':
+        pending.rename(final)
+    else:
+        os.link(pending, final)
 
 
 def install(expected_sha, from_sha=None, package_root=None):
@@ -490,6 +497,11 @@ def install(expected_sha, from_sha=None, package_root=None):
                     and prepared_receipt_generation(receipt_final, receipt_bytes) == receipt_generation
                     and not os.path.lexists(receipt_pending))
 
+        def exact_linked_receipt():
+            linked_generation = (*receipt_generation[:-1], 2)
+            return (prepared_receipt_generation(receipt_final, receipt_bytes, links=2) == linked_generation
+                    and prepared_receipt_generation(receipt_pending, receipt_bytes, links=2) == linked_generation)
+
         stopped()
         publication_attempted = False
         try:
@@ -509,15 +521,25 @@ def install(expected_sha, from_sha=None, package_root=None):
             if prepared_receipt_generation(receipt_pending, receipt_bytes) != receipt_generation:
                 raise RuntimeError('Prepared upgrade receipt changed before publication')
             publication_attempted = True
-            os.replace(receipt_pending, receipt_final)
+            publish_upgrade_receipt(receipt_pending, receipt_final)
+            if os.name != 'nt':
+                if not exact_linked_receipt():
+                    raise RuntimeError('Linked upgrade receipt changed before staging cleanup')
+                receipt_pending.unlink()
         except BaseException as error:
             if publication_attempted:
                 # An interrupt can arrive after the OS already committed the
                 # rename. Once committed, never reverse the package swap.
                 if receipt_committed():
                     raise
-                if os.path.lexists(receipt_final) or \
-                        prepared_receipt_generation(receipt_pending, receipt_bytes) != receipt_generation:
+                if os.name != 'nt' and isinstance(error, KeyboardInterrupt) and exact_linked_receipt():
+                    try:
+                        receipt_pending.unlink()
+                    except OSError:
+                        error.add_note('Upgrade receipt staging cleanup failed; inspect retained receipt')
+                    raise
+                still_pending = prepared_receipt_generation(receipt_pending, receipt_bytes) == receipt_generation
+                if not still_pending or (os.path.lexists(receipt_final) and not isinstance(error, FileExistsError)):
                     raise RuntimeError('Upgrade receipt publication uncertain; plugin state retained') from error
             # Recover an interrupted swap, but never move a concurrent foreign
             # target just because it occupies the installation pathname.

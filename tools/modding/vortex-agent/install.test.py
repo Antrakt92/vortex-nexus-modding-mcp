@@ -93,7 +93,7 @@ class UpgradeTests(unittest.TestCase):
         target = self.plugins / 'vortex-agent'
         original = {file.name: file.read_bytes() for file in target.iterdir()}
         original_identity = upgrade.directory_identity(target)
-        publish = upgrade.os.replace
+        publish = upgrade.publish_upgrade_receipt
 
         def fail_receipt(source, destination):
             if Path(destination).name == 'upgrade.json':
@@ -101,7 +101,7 @@ class UpgradeTests(unittest.TestCase):
                 raise OSError('synthetic receipt publication failure')
             return publish(source, destination)
 
-        with patch.object(upgrade.os, 'replace', side_effect=fail_receipt):
+        with patch.object(upgrade, 'publish_upgrade_receipt', side_effect=fail_receipt):
             with self.assertRaisesRegex(OSError, 'synthetic receipt publication failure'):
                 upgrade.install(self.new, self.old)
         self.assertEqual({file.name: file.read_bytes() for file in target.iterdir()}, original)
@@ -130,17 +130,60 @@ class UpgradeTests(unittest.TestCase):
         self.assertEqual(list(upgrade.UPGRADES.glob('*/upgrade.json')), [])
         self.assertFalse((upgrade.UPGRADES / 'install.lock').exists())
 
+    def test_upgrade_receipt_collision_at_publication_preserves_file_and_restores_prior_plugin(self):
+        target = self.plugins / 'vortex-agent'
+        original = {file.name: file.read_bytes() for file in target.iterdir()}
+        original_identity = upgrade.directory_identity(target)
+        foreign = b'{"evidence":"independent fixture receipt"}'
+        stdout = io.StringIO()
+        publish = upgrade.publish_upgrade_receipt
+
+        def publish_with_collision(pending, final):
+            final.write_bytes(foreign)
+            return publish(pending, final)
+
+        with patch.object(upgrade, 'publish_upgrade_receipt', side_effect=publish_with_collision), \
+                contextlib.redirect_stdout(stdout):
+            with self.assertRaises(FileExistsError):
+                upgrade.install(self.new, self.old)
+        self.assertEqual(stdout.getvalue(), '')
+        receipt, = upgrade.UPGRADES.glob('*/upgrade.json')
+        self.assertEqual(receipt.read_bytes(), foreign)
+        self.assertTrue(receipt.with_name('upgrade.json.pending').is_file())
+        self.assertEqual(upgrade.directory_identity(target), original_identity)
+        self.assertEqual({file.name: file.read_bytes() for file in target.iterdir()}, original)
+
     def test_interrupt_after_receipt_publication_keeps_the_committed_upgrade(self):
         target = self.plugins / 'vortex-agent'
-        publish = upgrade.os.replace
+        publish = upgrade.publish_upgrade_receipt
 
         def interrupt_after_publish(source, destination):
             publish(source, destination)
             if Path(destination).name == 'upgrade.json':
                 raise KeyboardInterrupt('synthetic interruption after receipt publication')
 
-        with patch.object(upgrade.os, 'replace', side_effect=interrupt_after_publish):
+        with patch.object(upgrade, 'publish_upgrade_receipt', side_effect=interrupt_after_publish):
             with self.assertRaisesRegex(KeyboardInterrupt, 'synthetic interruption'):
+                upgrade.install(self.new, self.old)
+        receipt, = upgrade.UPGRADES.glob('*/upgrade.json')
+        self.assertEqual(json.loads(receipt.read_text(encoding='utf-8'))['sha256'], self.new)
+        self.assertEqual(upgrade.sha(target / 'index.js'), self.new)
+        self.assertEqual(list(upgrade.UPGRADES.glob('*/upgrade.json.pending')), [])
+
+    def test_interruption_after_posix_receipt_link_keeps_committed_upgrade(self):
+        filesystem = Mock(wraps=upgrade.os)
+        filesystem.name = 'posix'
+        link = upgrade.os.link
+        target = self.plugins / 'vortex-agent'
+
+        def interrupt_after_link(source, destination):
+            link(source, destination)
+            if destination.name == 'upgrade.json':
+                raise KeyboardInterrupt('synthetic interruption after receipt link')
+
+        filesystem.link.side_effect = interrupt_after_link
+        with patch.object(upgrade, 'os', filesystem):
+            with self.assertRaisesRegex(KeyboardInterrupt, 'after receipt link'):
                 upgrade.install(self.new, self.old)
         receipt, = upgrade.UPGRADES.glob('*/upgrade.json')
         self.assertEqual(json.loads(receipt.read_text(encoding='utf-8'))['sha256'], self.new)
@@ -149,7 +192,7 @@ class UpgradeTests(unittest.TestCase):
 
     def test_receipt_publication_with_identical_foreign_file_does_not_trigger_rollback(self):
         target = self.plugins / 'vortex-agent'
-        publish = upgrade.os.replace
+        publish = upgrade.publish_upgrade_receipt
         foreign = []
 
         def replace_with_foreign_copy(source, destination):
@@ -157,13 +200,13 @@ class UpgradeTests(unittest.TestCase):
             final = Path(destination)
             if final.name == 'upgrade.json':
                 published = final.with_name('original-published-receipt.json')
-                publish(final, published)
+                upgrade.os.replace(final, published)
                 final.write_bytes(published.read_bytes())
                 self.assertFalse(final.samefile(published))
                 foreign.append(final)
                 raise OSError('synthetic uncertain receipt publication')
 
-        with patch.object(upgrade.os, 'replace', side_effect=replace_with_foreign_copy):
+        with patch.object(upgrade, 'publish_upgrade_receipt', side_effect=replace_with_foreign_copy):
             with self.assertRaisesRegex(RuntimeError, 'Upgrade receipt publication uncertain'):
                 upgrade.install(self.new, self.old)
         self.assertEqual(upgrade.sha(target / 'index.js'), self.new)
@@ -173,7 +216,7 @@ class UpgradeTests(unittest.TestCase):
 
     def test_receipt_mismatch_after_successful_rename_keeps_both_and_refuses_success(self):
         target = self.plugins / 'vortex-agent'
-        publish = upgrade.os.replace
+        publish = upgrade.publish_upgrade_receipt
         stdout = io.StringIO()
 
         def change_receipt_after_rename(source, destination):
@@ -182,7 +225,7 @@ class UpgradeTests(unittest.TestCase):
             if final.name == 'upgrade.json':
                 final.write_bytes(b'{"synthetic":"changed receipt after rename"}')
 
-        with patch.object(upgrade.os, 'replace', side_effect=change_receipt_after_rename), contextlib.redirect_stdout(stdout):
+        with patch.object(upgrade, 'publish_upgrade_receipt', side_effect=change_receipt_after_rename), contextlib.redirect_stdout(stdout):
             with self.assertRaisesRegex(RuntimeError, 'Upgrade receipt publication uncertain'):
                 upgrade.install(self.new, self.old)
         receipt, = upgrade.UPGRADES.glob('*/upgrade.json')
