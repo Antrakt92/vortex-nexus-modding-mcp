@@ -760,7 +760,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/README.md",
-      "sha256_lf": "8df4895876bcfa43f769d9e472b02e4af2dc612e0dd262aeaf7d0f5004c1f26a"
+      "sha256_lf": "87d714289b7b0491d58b79b6079d643628ea09c72c929834a6e4645ccda80ab7"
     },
     {
       "path": "tools/modding/vortex-agent/archive-temp-lease.test.py",
@@ -988,7 +988,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/guard.cjs",
-      "sha256_lf": "12ac3da95c0612c2ff10e5a70e4109d7188d262afcd187af29a7234558bbf59e"
+      "sha256_lf": "75ef57034b681f6952046b18b1633e5df3be7cdf7fbbeb53e75ddb5ccd6162b4"
     },
     {
       "path": "tools/modding/vortex-agent/helper-source-proof.cjs",
@@ -3252,7 +3252,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/tests.mjs",
-      "sha256_lf": "3b953c1bb1e01abee5d80d514b3d98d42071941126d144f0f7ee606569059275"
+      "sha256_lf": "6f9912e93dc4d9efe91af3e130970e697fa257a2cab752a582e6376ba269b5d1"
     },
     {
       "path": "tools/modding/vortex-agent/tracked-nexus-policy.cjs",
