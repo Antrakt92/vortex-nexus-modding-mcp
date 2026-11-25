@@ -56,7 +56,7 @@ class RunnerTests(unittest.TestCase):
                 "/mod-file-versions/987": self.version}[route]
 
     def execute(self, report):
-        with patch.object(p, "verify_action", return_value="node"):
+        with patch.object(p, "verify_action", return_value=("node", b"synthetic action")):
             return p.execute(self.m, publish=True, state=self.root, credential=lambda: "mock-secret-never-log",
                              invoke=lambda *a: report, read=self.read)
 
@@ -387,27 +387,110 @@ class RunnerTests(unittest.TestCase):
             with self.assertRaises(PermissionError): self.archive.unlink()
         self.archive.write_bytes(b"released")
 
+    def test_execute_consumes_captured_action_when_source_checkout_changes(self):
+        action = self.root / "approved-action"
+        script = action / "dist/index.js"
+        script.parent.mkdir(parents=True)
+        approved = b"// Synthetic pinned action bytes, never executed\r\n"
+        changed = b"// New checkout bytes, never executed\n"
+        script.write_bytes(approved)
+        pin = p.bundle_sha256(approved)
+        invoked = []
+
+        def tool_probe(command, **_options):
+            version = {"HEAD": p.PIN, "--version": "v24.20.0", "process.versions.undici": "7.24.0"}
+            return SimpleNamespace(stdout=version[command[-1]])
+
+        def read(route, key):
+            value = self.read(route, key)
+            if route == "/mod-files/123/versions":
+                script.write_bytes(changed)
+            return value
+
+        def inspect_invocation(manifest, _key, staged_action, _node):
+            invoked.append(staged_action)
+            self.assertEqual(manifest["archive"], str(self.archive))
+            entry = staged_action / "dist/index.js"
+            metadata = staged_action / "package.json"
+            self.assertEqual(entry.read_bytes(), approved)
+            self.assertEqual(json.loads(metadata.read_text())["type"], "module")
+            if os.name == "nt":
+                for path in (entry, metadata):
+                    with self.assertRaises(PermissionError):
+                        path.open("r+b").close()
+            return {"ok": True, "version_id": "987"}
+
+        with (patch.object(p, "BUNDLE_SHA256", pin),
+              patch.object(p.shutil, "which", return_value="node"),
+              patch.object(p.subprocess, "run", side_effect=tool_probe)):
+            result = p.execute(self.m, publish=True, state=self.root, action=action,
+                               credential=lambda: "mock-secret-never-log", invoke=inspect_invocation, read=read)
+        self.assertEqual(result["outcome"], "done")
+        self.assertEqual(len(invoked), 1)
+        self.assertNotEqual(invoked[0], action)
+        self.assertFalse(invoked[0].exists())
+        self.assertEqual(script.read_bytes(), changed)
+
+    def test_staged_action_cleanup_failure_does_not_replace_publication_outcome(self):
+        cleanup = p.tempfile.TemporaryDirectory.cleanup
+        retained = []
+
+        def cleanup_retained():
+            for directory in retained:
+                cleanup(directory)
+
+        self.addCleanup(cleanup_retained)
+
+        def late_cleanup_failure(directory):
+            if Path(directory.name).name.startswith("nexus-reviewed-action-"):
+                retained.append(directory)
+                raise PermissionError("private diagnostic output")
+            return cleanup(directory)
+
+        mkdir = Path.mkdir
+
+        def stage_acquisition_failure(path, *args, **kwargs):
+            if path.name == "dist" and path.parent.name.startswith("nexus-reviewed-action-"):
+                raise OSError("Primary staging failure")
+            return mkdir(path, *args, **kwargs)
+
+        with (patch.object(p.tempfile.TemporaryDirectory, "cleanup", late_cleanup_failure),
+              contextlib.redirect_stderr(io.StringIO()) as warning):
+            result = self.execute({"ok": True, "version_id": "987"})
+            with (patch.object(Path, "mkdir", stage_acquisition_failure),
+                  self.assertRaisesRegex(OSError, "Primary staging failure")):
+                with p.stage_action(b"synthetic action"):
+                    self.fail("staging acquired")
+
+        self.assertEqual(result["outcome"], "done")
+        self.assertEqual(p.load_receipt(p.receipt_path(self.m, self.root), self.m), result)
+        self.assertFalse(p.target_lock_path(self.m, self.root).exists())
+        self.assertEqual(len(retained), 2)
+        self.assertEqual(warning.getvalue().count("staging cleanup incomplete"), 2)
+        self.assertNotIn("private diagnostic output", warning.getvalue())
+
     def test_bundle_pin_accepts_only_git_eol_conversion_and_rejects_tampering(self):
         original = p.DEFAULT_ACTION / "dist/index.js"
         copied = self.root / "bundle.js"
         content = original.read_bytes().replace(b"\r\n", b"\n")
         copied.write_bytes(content.replace(b"\n", b"\r\n"))
-        self.assertEqual(p.bundle_sha256(copied), p.BUNDLE_SHA256)
+        self.assertEqual(p.bundle_sha256(copied.read_bytes()), p.BUNDLE_SHA256)
         copied.write_bytes(content + b"//tampered")
-        self.assertNotEqual(p.bundle_sha256(copied), p.BUNDLE_SHA256)
+        self.assertNotEqual(p.bundle_sha256(copied.read_bytes()), p.BUNDLE_SHA256)
         with patch.object(p, "bundle_sha256", return_value="0" * 64):
             with self.assertRaisesRegex(p.Blocked, "pin or bundle hash"): p.verify_action(p.DEFAULT_ACTION)
 
     def test_official_bundle_end_to_end_mock_network(self):
-        node = p.verify_action(p.DEFAULT_ACTION)
+        node, bundle = p.verify_action(p.DEFAULT_ACTION)
         for case, expected in [("success", True), ("upload-failure", False), ("changelog-failure", False)]:
             with self.subTest(case=case):
                 manifest = {**self.m, "changelog": "Modeled changelog"}
                 env = p.child_environment(manifest, "mock-secret-never-log")
                 env["MOCK_CASE"] = case
-                result = subprocess.run([node, "--import", (HERE / "tests/mock-network.mjs").as_uri(),
-                                         str(HERE / "safe-action.mjs"), str(p.DEFAULT_ACTION / "dist/index.js")],
-                                        env=env, capture_output=True, timeout=30)
+                with p.stage_action(bundle) as staged:
+                    result = subprocess.run([node, "--import", (HERE / "tests/mock-network.mjs").as_uri(),
+                                             str(HERE / "safe-action.mjs"), str(staged / "dist/index.js")],
+                                            env=env, capture_output=True, timeout=30)
                 combined = result.stdout + result.stderr
                 self.assertNotIn(b"mock-secret", combined)
                 self.assertNotIn(b"signature", combined)
@@ -421,9 +504,11 @@ class RunnerTests(unittest.TestCase):
     def mocked_bundle(self, manifest, case="success", **options):
         env = p.child_environment(manifest, "mock-secret-never-log")
         env.update(MOCK_CASE=case, **options)
-        result = subprocess.run([p.verify_action(p.DEFAULT_ACTION), "--import", (HERE / "tests/mock-network.mjs").as_uri(),
-                                 str(HERE / "safe-action.mjs"), str(p.DEFAULT_ACTION / "dist/index.js")],
-                                env=env, capture_output=True, timeout=30)
+        node, bundle = p.verify_action(p.DEFAULT_ACTION)
+        with p.stage_action(bundle) as staged:
+            result = subprocess.run([node, "--import", (HERE / "tests/mock-network.mjs").as_uri(),
+                                     str(HERE / "safe-action.mjs"), str(staged / "dist/index.js")],
+                                    env=env, capture_output=True, timeout=30)
         self.assertEqual(result.stderr, b"")
         for forbidden in [b"mock-secret", b"signature", b"https://"]:
             self.assertNotIn(forbidden, result.stdout + result.stderr)

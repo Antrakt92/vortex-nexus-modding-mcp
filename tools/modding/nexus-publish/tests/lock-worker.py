@@ -29,7 +29,7 @@ def invoke(*args):
 
 
 manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-with patch.object(p, "verify_action", return_value="modeled-node"):
+with patch.object(p, "verify_action", return_value=("modeled-node", b"synthetic action")):
     lock = contextlib.nullcontext() if os.name == "nt" else patch.object(p, "frozen_archive", lambda _: contextlib.nullcontext())
     with lock:
         if sys.argv[2] == "execute":
