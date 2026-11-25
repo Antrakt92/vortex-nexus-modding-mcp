@@ -1016,7 +1016,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/immutable-records.mjs",
-      "sha256_lf": "3b85a94172380f3bc533f17a46a487ca9f05a5d82d8bd2076828a35ffe06ab40"
+      "sha256_lf": "2ded0c033a09469a0eaf3a589e6f0b6c73899a9f3ffce3e030d61004eee15cbc"
     },
     {
       "path": "tools/modding/vortex-agent/immutable-records.test.mjs",
@@ -3088,11 +3088,11 @@
     },
     {
       "path": "tools/modding/vortex-agent/plan-journal.mjs",
-      "sha256_lf": "1c2fb87e9ffa2b2691cab7636d86e2b95a21498cc4d5c8fe3a3fde7a3e074faf"
+      "sha256_lf": "7ceddcf9e1780a7e5c97c205ad0a5518dbaf8b5c2c90c4612f670c3e05d8d6af"
     },
     {
       "path": "tools/modding/vortex-agent/plan-journal.test.mjs",
-      "sha256_lf": "d627ac20c507c7775d721773787aa31c8abdc99482d302f41b46d0bbc7850307"
+      "sha256_lf": "e6b6dc84bfc9f0a7872d2bfa3efa1e6bc7d3c7bc7b9ed402cb2279e25a18977b"
     },
     {
       "path": "tools/modding/vortex-agent/plan-status.test.mjs",

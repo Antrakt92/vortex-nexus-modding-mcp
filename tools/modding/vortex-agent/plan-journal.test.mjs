@@ -49,7 +49,11 @@ test('a plan near the semantic size limit fits the journal envelope without chan
   const id = canonicalPlanId(value), writer = store.begin(value);
   assert.equal(writer.planId, id);
   assert(fs.statSync(path.join(root, id, 'plan.json')).size > maxBytes);
-  assert.deepEqual(createPlanJournal({ root }).read(id).plan, value);
+  const first = planQueue(value)[0];
+  writer.intent(0, first.operation, first.args);
+  const read = createPlanJournal({ root }).read(id);
+  assert.deepEqual(read.plan, value);
+  assert.deepEqual(read.events[0].args, first.args);
 });
 test('missing journal reads create no directory and invalid IDs never select arbitrary paths', t => {
   const { root, store } = fixture(t);
@@ -158,6 +162,64 @@ test('duplicate keys, malformed JSON, changed queue and unknown/missing event fi
     assert.throws(() => createPlanJournal({ root }).read(writer.planId), /PLAN_JOURNAL_CORRUPT/);
   }
 });
+test('an impossible early transition is rejected without reading the tail', t => {
+  const { root, store } = fixture(t), value = plan(), writer = store.begin(value);
+  allObserved(writer, value); writer.finish('completed');
+  changedJSON(eventPath(root, writer.planId), event => { event.args.enabled = false; });
+  const open = fs.openSync;
+  let tailReads = 0;
+  fs.openSync = (file, ...args) => {
+    if (file === eventPath(root, writer.planId, 2)) tailReads++;
+    return open(file, ...args);
+  };
+  try { assert.throws(() => createPlanJournal({ root }).read(writer.planId), /PLAN_JOURNAL_CORRUPT/); }
+  finally { fs.openSync = open; }
+  assert.equal(tailReads, 0);
+});
+
+test('an event bigger than its queue envelope is refused before opening its file', t => {
+  const { root, store } = fixture(t), value = plan(), writer = store.begin(value);
+  const first = planQueue(value)[0], event = eventPath(root, writer.planId);
+  writer.intent(0, first.operation, first.args);
+  fs.appendFileSync(event, ' '.repeat(32 * 1024));
+  const open = fs.openSync;
+  let eventReads = 0;
+  fs.openSync = (file, ...args) => {
+    if (file === event) eventReads++;
+    return open(file, ...args);
+  };
+  try { assert.throws(() => createPlanJournal({ root }).read(writer.planId), /PLAN_JOURNAL_CORRUPT/); }
+  finally { fs.openSync = open; }
+  assert.equal(eventReads, 0);
+});
+
+test('historical event reading allows formatting and property-order differences', t => {
+  const { root, store } = fixture(t), value = plan(), writer = store.begin(value);
+  allObserved(writer, value); writer.finish('completed');
+  for (let n = 1; n <= 5; n++) {
+    const file = eventPath(root, writer.planId, n), original = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const formatted = JSON.stringify(Object.fromEntries(Object.entries(original).reverse()), null, 4);
+    fs.writeFileSync(file, formatted.replaceAll('\n', '\r\n') + '\r\n');
+  }
+  const read = createPlanJournal({ root }).read(writer.planId);
+  assert.equal(read.state, 'completed');
+  assert.equal(read.observed, 2);
+});
+
+test('journal header and event timestamps require real canonical UTC dates', t => {
+  for (const record of ['header', 'event']) {
+    const { root, store } = fixture(t), value = plan(), writer = store.begin(value);
+    const first = planQueue(value)[0]; writer.intent(0, first.operation, first.args);
+    const file = record === 'header' ? path.join(root, writer.planId, 'plan.json') : eventPath(root, writer.planId);
+    changedJSON(file, row => { row.at = '2024-02-29T23:59:59.999Z'; });
+    assert.equal(createPlanJournal({ root }).read(writer.planId).state, 'inflight');
+    for (const impossible of ['2026-02-31T00:00:00.000Z', '2024-02-29T24:00:00.000Z']) {
+      changedJSON(file, row => { row.at = impossible; });
+      assert.throws(() => createPlanJournal({ root }).read(writer.planId), /PLAN_JOURNAL_CORRUPT/);
+    }
+  }
+});
+
 test('journal readers and writers stop enumerating at the first excess directory entry', t => {
   const { root, store } = fixture(t), value = plan(), writer = store.begin(value), first = planQueue(value)[0];
   const dir = path.join(root, writer.planId), open = fs.opendirSync;
