@@ -335,6 +335,50 @@ class RecoveryTests(unittest.TestCase):
                     r.fetch_sources(workspace, archive, True)
                 self.assertEqual((target / 'code.py').read_text(), 'keep my modification\n')
 
+    @unittest.skipUnless(os.name == 'nt', 'Git for Windows long-path behavior')
+    def test_source_bundle_restores_long_windows_paths_without_changing_git_configs(self):
+        with tempfile.TemporaryDirectory(prefix='recovery-longpaths-') as tmp:
+            root = Path(tmp)
+            global_config = root / 'empty.gitconfig'
+            global_config.write_bytes(b'')
+            env = {key: value for key, value in os.environ.items() if not key.upper().startswith('GIT_')}
+            env.update(GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=str(global_config), GIT_ALLOW_PROTOCOL='file',
+                       GIT_CONFIG_COUNT='2', GIT_CONFIG_KEY_0='core.longpaths', GIT_CONFIG_VALUE_0='false',
+                       GIT_CONFIG_KEY_1='fetch.unpackLimit', GIT_CONFIG_VALUE_1='1')
+            source, archive = root / 'source', root / 'archives'
+            source.mkdir()
+            archive.mkdir()
+            hooks = root / 'empty-hooks'
+            hooks.mkdir()
+            member = 'source-' + 'a' * 120 + '.txt'
+            workspace = root / 'workspace with spaces' / ('deep-' + 'x' * max(1, 130 - len(str(root))))
+            target = workspace / 'local-state/upstream-sources/fixture'
+            self.assertGreater(len(str(target / member)), 260)
+            check_output = r.subprocess.check_output
+
+            def isolated_git(*args, **kwargs):
+                return check_output(*args, **kwargs, env=env)
+
+            with mock.patch.object(r.subprocess, 'check_output', new=isolated_git), mock.patch.object(r, 'ROOT', root):
+                r.run_git(['init', '--quiet'], source)
+                (source / member).write_bytes(b'known fixture bytes\n')
+                r.run_git(['add', member], source)
+                r.run_git(['-c', 'user.name=Recovery Test', '-c', 'user.email=recovery@example.invalid',
+                           '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=' + str(hooks),
+                           'commit', '--quiet', '-m', 'Fixture source'], source)
+                commit = r.run_git(['rev-parse', 'HEAD'], source)
+                bundle = archive / 'source.bundle'
+                r.run_git(['bundle', 'create', bundle, 'HEAD'], source)
+                data = bundle.read_bytes()
+                (root / 'source-lock.json').write_text(json.dumps({'upstreams': [{
+                    'name': 'fixture', 'bundle': bundle.name, 'commit': commit,
+                    'bytes': len(data), 'sha256': r.digest(data)}]}))
+                self.assertEqual(r.fetch_sources(workspace, archive, True)['sources'][0]['state'], 'restored')
+                self.assertEqual((target / member).read_bytes(), b'known fixture bytes\n')
+                self.assertEqual(r.fetch_sources(workspace, archive, True)['sources'][0]['state'], 'already_verified')
+                self.assertNotIn('core.longpaths', r.run_git(['config', '--local', '--list'], target))
+                self.assertEqual(global_config.read_bytes(), b'')
+
     def test_skill_conflict_preflight_preserves_everything(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); snapshot = root / 'snapshot'; dest = root / 'skills'
