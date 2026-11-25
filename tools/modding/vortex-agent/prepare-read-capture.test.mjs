@@ -35,7 +35,10 @@ function generatedCapture(model, {legacy = false} = {}) {
       if (name === 'original-fs') return model.fs;
       if (name === 'path') return path.win32;
       if (name === 'crypto') return crypto;
-      if (name === './extractor-admission.cjs') return {admission: () => ({status: 'source-admitted', allLoadedDynamicPathsKnown: true})};
+      if (name === './extractor-admission.cjs') return {admission: (_api, _cfg, proof) => {
+        model.observeAdmission?.(proof);
+        return {status: 'source-admitted', allLoadedDynamicPathsKnown: true};
+      }};
       if (name === './scope.cjs') return {validate: packages => assert.equal(packages.length, 0)};
       if (name === 'own-guard') return {stopped() {}};
       if (name.includes('tool-timestamps.cjs')) return {comparable: () => 'own-settings-digest'};
@@ -52,7 +55,16 @@ function captureModel() {
   const node = (ino, file = false) => ({dev: 1n, ino: BigInt(ino), size: 0n, mtimeNs: 1n,
     ctimeNs: 1n, nlink: 1n, reparse: false, isSymbolicLink() {return this.reparse;},
     isFile() {return file;}, isDirectory() {return !file;}});
-  function stat(p) {return {...(nodes.get(key(p)) ?? node(1))};}
+  function stat(p) {
+    const k = key(p);
+    if (nodes.has(k)) return {...nodes.get(k)};
+    if (texts.has(k)) {
+      const entry = node(100 + [...texts.keys()].indexOf(k), true);
+      entry.size = BigInt(Buffer.byteLength(texts.get(k)()));
+      return entry;
+    }
+    return node(1);
+  }
   for (const [p, id] of [['F:/game',10],['F:/stage',20],['F:/downloads',30],['F:/temp',40]]) nodes.set(key(p),node(id));
   const roots = ['F:/game/bin/x64/plugins/cyber_engine_tweaks/mods','F:/game/red4ext/plugins'].map(p => path.win32.resolve(p));
   for (const root of roots) directories.set(key(root), []);
@@ -90,7 +102,12 @@ function captureModel() {
         return options?.withFileTypes ? names.map(name=>({name,isSymbolicLink:()=>stat(path.win32.join(p,name)).isSymbolicLink(),
           isDirectory:()=>stat(path.win32.join(p,name)).isDirectory(),isFile:()=>stat(path.win32.join(p,name)).isFile()})) : names;
       },
-      openSync(p) {opens++;const fd=nextFD++;descriptors.set(fd,{node:nodes.get(key(p)),position:0});return fd;},
+      openSync(p) {
+        opens++;
+        const k=key(p), value=nodes.get(k) ?? stat(p), fd=nextFD++;
+        const opened=texts.has(k) ? {...value,data:Buffer.from(texts.get(k)())} : value;
+        descriptors.set(fd,{node:opened,position:0});return fd;
+      },
       fstatSync(fd) {const value={...descriptors.get(fd).node};if(model.descriptorSwap)value.ino=999n;return value;},
       readSync(fd, buffer, offset, length) {
         const value=descriptors.get(fd);model.beforeRead?.(value.node,length);
@@ -101,6 +118,42 @@ function captureModel() {
   };
   return model;
 }
+
+integration('generated capture verifies preferences and admission from the exact pinned bytes', async () => {
+  const model = captureModel();
+  const preferencePath = 'F:/game/fixture-preferences.json', content = 'fixture preferences';
+  const file = model.file(preferencePath, content);
+  model.baseline.settings = [{path:preferencePath,nodeId:'1:70',bytes:Number(file.size),links:1,sha256:hash(content)}];
+  model.cfg.diskBaseline.sha256 = hash(JSON.stringify(model.baseline));
+  const unpinned = {...model.baseline,settings:[]}, read = model.fs.readFileSync, admissions = [];
+  model.fs.readFileSync = (file, encoding) =>
+    path.win32.normalize(file) === path.win32.normalize(model.cfg.diskBaseline.path) && encoding === 'utf8'
+      ? JSON.stringify(unpinned) : read(file, encoding);
+  model.observeAdmission = proof => admissions.push(proof?.newChangedSourceReviewComplete);
+  const result = await model.run(generatedCapture(model));
+  assert.equal(result.installBaseline.settingsPins.length, 1);
+  assert.equal(result.installBaseline.settingsPins[0].sha256, hash(content));
+  assert.deepEqual(admissions, [true, true]);
+});
+
+integration('generated extractor uses the reviewed admission object without opening its path again', () => {
+  const f = fixture();
+  prepareReadCapture({...f.options(f.output), apply: true});
+  const code = fs.readFileSync(path.join(f.output, 'extractor-admission.cjs'), 'utf8');
+  const module = {exports:{}};
+  vm.runInNewContext(code, {module, require(name) {
+    if (name === 'original-fs') return {readFileSync() {assert.fail('Admission proof path reopened');}};
+    if (name === 'path') return path.win32;
+    if (name === 'crypto') return crypto;
+    assert.fail('Unexpected dependency: ' + name);
+  }}, {timeout:1000});
+  const api = {getLoadedExtensions: () =>
+    ['mod_management','download_management','nexus_integration'].map(name => ({name}))};
+  const proof = {allDiskExtensions:[{folder:'F:/fixture-extension',sources:[]}]};
+  const result = module.exports.admission(api,{admissionFile:'F:/fixture-admission.json'},proof);
+  assert.equal(result.status,'source-admitted');
+  assert.equal(result.knownDiskExtensions,1);
+});
 
 integration('actual generated reader rejects an opened foreign FD that the historical path-only reader accepted', () => {
   for (const legacy of [true,false]) {

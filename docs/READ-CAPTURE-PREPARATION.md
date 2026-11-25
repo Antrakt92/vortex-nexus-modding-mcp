@@ -60,6 +60,13 @@ roots. It scans them at the beginning and end, checks directory/file generations
 and rejects additions, removals or reparses. Discovery is limited to 50,000 entries,
 20,000 directories, 10,000 matching preference files and depth 32 across the two
 roots. Directory entries are consumed with bounded `opendirSync` iteration.
+
+Each checkpoint checks the baseline hash and parses the same bounded file
+snapshot. Preference discovery and protected-file verification use that same
+snapshot. Source admission likewise checks its completion flag and extension
+evidence from the same checked bytes. The baseline limit is 64 MiB and the
+admission limit is 1 MiB. The kit retains the original admission module so
+offline verification can reconstruct the adapter that consumes this snapshot.
 The baseline's separate settings pins must also retain explicitly reviewed paths
 outside those roots. Old preference paths can be reviewed inputs; old preference
 values, hashes or approvals cannot become current evidence by copying them.

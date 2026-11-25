@@ -476,7 +476,7 @@
     },
     {
       "path": "docs/READ-CAPTURE-PREPARATION.md",
-      "sha256_lf": "19ce73760270d856e20d48c8e9bb60ca7a07540eb7e5e014bb6e7601f2bbf455"
+      "sha256_lf": "9e3c0b5457652849b6fb37bd20a3230826b784665697770d116097278dfc338f"
     },
     {
       "path": "docs/README.md",
@@ -3124,11 +3124,11 @@
     },
     {
       "path": "tools/modding/vortex-agent/prepare-read-capture.mjs",
-      "sha256_lf": "61bb9c37c4ba4d10afdc4fd3ed7cc8dcf03cce036250e101540c0c9d637681a3"
+      "sha256_lf": "39aca3fac65db7f24c14b121006281fe84f3da862d9166d2080ad32e568429f7"
     },
     {
       "path": "tools/modding/vortex-agent/prepare-read-capture.test.mjs",
-      "sha256_lf": "2b36baada289c2e630541f043a417e6a2e7b0b92916b9ac6f2637c53136d67a2"
+      "sha256_lf": "f67196c96027a3db2b31b5e376b1a732fcbc5f4f431205e2fca66f0021b9b353"
     },
     {
       "path": "tools/modding/vortex-agent/prepare-source-guard.mjs",
