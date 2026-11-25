@@ -25,26 +25,36 @@ function entries(value) {
 }
 function label(value) { if (typeof value !== 'string' || !value.trim()) fail('DISPLAY_UNAVAILABLE'); return value.replace(/\s+/g, ' ').trim(); }
 
-function normalizeSession(raw) {
+function normalizeSession(raw, forCompletion = false) {
   if (!record(raw)) fail('SESSION_UNAVAILABLE');
   const statuses = { installed: 0, failed: 0, ignored: 0, pending: 0 };
   const members = entries(get(raw, 'mods'));
+  const memberIdentity = [];
   const nonterminal = ['pending', 'downloading', 'downloaded', 'installing', 'optional'];
   let required = 0, optional = 0;
-  for (const [, member] of members) {
+  for (const [ruleId, member] of members) {
     const status = get(member, 'status'), type = get(member, 'type');
     if (type === 'requires') required++; else if (type === 'recommends') optional++; else fail('SESSION_MEMBER_TYPE_UNKNOWN');
     if (['installed', 'failed', 'ignored'].includes(status)) statuses[status]++;
     else if (nonterminal.includes(status)) statuses.pending++;
     else fail('SESSION_STATUS_UNKNOWN');
+    if (forCompletion) {
+      const modId = get(member, 'modId');
+      memberIdentity.push([string(ruleId), type, status, modId === undefined ? null : string(modId)]);
+    }
   }
   if (count(get(raw, 'totalRequired')) !== required || count(get(raw, 'totalOptional')) !== optional) fail('SESSION_TOTAL_MISMATCH');
   const stalled = get(raw, 'stalled');
   // Source968:52 defines an absent optional stalled field as false.
   if (stalled !== undefined && typeof stalled !== 'boolean') fail('SESSION_STALLED_UNKNOWN');
   return { collectionId: string(get(raw, 'collectionId')), profileId: string(get(raw, 'profileId')),
-    gameId: string(get(raw, 'gameId')), statuses, totalMembers: members.length, stalled: stalled === true };
+    gameId: string(get(raw, 'gameId')), statuses, totalMembers: members.length, stalled: stalled === true,
+    ...(forCompletion ? { sessionId: string(get(raw, 'sessionId')),
+      memberIdentity: memberIdentity.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0) } : {}) };
 }
+// The native reducer moves the active session into history. Bind its exact
+// members as well as the counts, keeping their identities internal.
+function completedSessionProof(raw) { return JSON.stringify(normalizeSession(raw, true)); }
 function display(mod, util, t) {
   const attrs = get(mod, 'attributes');
   const version = get(attrs, 'version');
@@ -106,4 +116,4 @@ function observeNative({ state, selectors, util, t, modId, sourceAdmitted }) {
     pendingDialogCount: Array.isArray(dialogs) ? dialogs.length : null };
 }
 
-module.exports = { observeNative, normalizeSession };
+module.exports = { observeNative, normalizeSession, completedSessionProof };

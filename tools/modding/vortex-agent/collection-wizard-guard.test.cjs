@@ -22,7 +22,7 @@ async function fixture(t) {
     translate: (key, opts) => key.replace(/\{\{(\w+)\}\}/g, (_, name) => opts.replace[name]) };
   const element = { click() { clicks++; clickBehavior(); } }, modal = {};
   const session = () => ({ sessionId: 'owner_profile', collectionId: 'owner', profileId, gameId,
-    totalRequired: 1, totalOptional: 0, mods: { member: { type: 'requires', status: 'installed' } } });
+    totalRequired: 1, totalOptional: 0, mods: { member: { type: 'requires', status: 'installed', modId: 'installed-member' } } });
   clickBehavior = () => {
     if (mode === 'start') { state.session.collections.activeSession = session(); mode = 'working'; }
     else if (mode === 'finish') {
@@ -119,6 +119,47 @@ test('late pre-click validation failure records no effects and releases the arme
   assert.equal(failure.inspectBeforeRetry, false); assert.equal(f.clicks, 0);
   await assert.rejects(fs.access(path.join(f.dir, 'receipts/unresolved.json')));
   await assert.rejects(fs.access(path.join(f.dir, 'receipts/mutation.lock')));
+});
+
+test('Done rejects a changed installed association before clicking even when totals match', async t => {
+  const f = await fixture(t);
+  await f.ops.advance_collection_wizard(f.args);
+  f.mode = 'finish';
+  const args = { ...f.args, requestId: 'wizard_done_association_changed', action: 'done' };
+  const validate = f.wizard.validate;
+  f.wizard.validate = next => {
+    f.state.session.collections.activeSession.mods.member.modId = 'updated-member';
+    return validate(next);
+  };
+  await assert.rejects(f.ops.advance_collection_wizard(args), /SESSION_MEMBERS_CHANGED/);
+  assert.equal(f.clicks, 1);
+  assert.equal((await f.read(args.requestId + '.failed.json')).effectsMayHaveOccurred, false);
+  assert.equal((await f.ops.reconcile_operation({ requestId: args.requestId })).terminalOperationVerified, false);
+  await assert.rejects(fs.access(path.join(f.dir, 'receipts/unresolved.json')), { code: 'ENOENT' });
+});
+
+test('Done keeps a changed same-count history held if native close already occurred', async t => {
+  const f = await fixture(t);
+  await f.ops.advance_collection_wizard(f.args);
+  f.mode = 'finish';
+  const args = { ...f.args, requestId: 'wizard_done_history_changed', action: 'done' };
+  const verify = f.wizard.verifyTransition;
+  let reads = 0;
+  f.wizard.verifyTransition = (...parameters) => {
+    const collections = f.state.session.collections;
+    if (++reads === 2) {
+      const history = collections.sessionHistory[collections.lastActiveSessionId];
+      history.mods = { newRule: history.mods.member };
+    }
+    return verify(...parameters);
+  };
+  await assert.rejects(f.ops.advance_collection_wizard(args), /FINISH_HISTORY_UNVERIFIED/);
+  assert.equal(f.clicks, 2);
+  assert.equal(reads, 2);
+  assert.equal((await f.read(args.requestId + '.failed.json')).effectsMayHaveOccurred, true);
+  await assert.rejects(fs.access(path.join(f.dir, 'receipts', args.requestId + '.completion.json')), { code: 'ENOENT' });
+  assert.equal((await f.read('unresolved.json')).requestId, args.requestId);
+  assert.equal((await f.ops.reconcile_operation({ requestId: args.requestId })).terminalOperationVerified, false);
 });
 
 test('click without native transition never writes a successful completion', async t => {

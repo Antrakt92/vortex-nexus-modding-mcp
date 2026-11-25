@@ -1,6 +1,6 @@
 'use strict';
 const {inspect}=require('./collection-wizard-dom.cjs');
-const {observeNative,normalizeSession}=require('./collection-wizard-native.cjs');
+const {observeNative,completedSessionProof}=require('./collection-wizard-native.cjs');
 const {validateCollectionWizard}=require('./collection-wizard-policy.cjs');
 const {createWizardHostAdmission}=require('./collection-wizard-host.cjs');
 const controllers=new WeakMap();
@@ -96,7 +96,10 @@ function createCollectionWizardController(api,options){
   admit.revalidate(proof);
   const {n,d}=observe();
   validateCollectionWizard({expected:args,native:n,dom:d,binding});
-  if(args.action==='done')requireObservedSession();
+  if(args.action==='done'){
+   requireObservedSession();
+   need(completedSessionProof(state().session.collections.activeSession)===prepared.completedSession,'SESSION_MEMBERS_CHANGED');
+  }
   need(stable(rawOwner(args.modId).rules??[])===prepared.rules,'RULES_CHANGED');
   need(stable(state().persistent.downloads.files[args.archiveId].modInfo)===prepared.downloadInfo,'DOWNLOAD_METADATA_CHANGED');
   need(d.candidate&&d.candidate.element===prepared.element&&d.candidate.modal===prepared.modal,'DOM_REPLACED');
@@ -154,9 +157,13 @@ function createCollectionWizardController(api,options){
    return true;
   }
   need(n.pendingDialogCount===0,'NATIVE_DIALOG_PENDING');
-  if(raw!==undefined){need(raw.sessionId===prepared.sessionId,'SESSION_IDENTITY_CHANGED');return false;}
+  if(raw!==undefined){
+   need(raw.sessionId===prepared.sessionId,'SESSION_IDENTITY_CHANGED');
+   need(completedSessionProof(raw)===prepared.completedSession,'SESSION_MEMBERS_CHANGED');
+   return false;
+  }
   const c=state().session.collections,h=c.sessionHistory?.[prepared.sessionId];
-  need(c.lastActiveSessionId===prepared.sessionId&&h&&stable(normalizeSession(h))===prepared.completedSession,'FINISH_HISTORY_UNVERIFIED');
+  need(c.lastActiveSessionId===prepared.sessionId&&h&&completedSessionProof(h)===prepared.completedSession,'FINISH_HISTORY_UNVERIFIED');
   need(dom(n).status==='idle','FINISH_MODAL_PRESENT');
   return true;
  }
@@ -219,7 +226,7 @@ function createCollectionWizardController(api,options){
    prepared={requestId:args.requestId,action:args.action,consumed:false,completed:false,element:d.candidate.element,modal:d.candidate.modal,
     rules:ruleKey,downloadInfo,augmentedRules:revision?stable(rulesAfterStart(rules,revision)):ruleKey,
     oldSessions:new Set(Object.keys(state().session.collections.sessionHistory??{})),sessionId:raw?.sessionId,
-    completedSession:n.session?stable(n.session):null};
+    completedSession:args.action==='done'?completedSessionProof(raw):null};
    validate(args);
    if(args.action==='install_now')binding.augmentedRules=prepared.augmentedRules;
   },
