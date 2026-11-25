@@ -57,11 +57,16 @@ candidate IDs together. The result includes:
 - enabled/reference flags in every profile for that game, including profiles
   pending removal; malformed flags remain `null` with an unknown counter;
 - incoming `requires` matches through Vortex's native matcher, including
-  repository/file references and ignored rules;
+  repository/file references and ignored rules. `recordedFileId` is the file ID
+  stored on the rule. `exactFileId` is populated when the native version policy
+  requires that file and the rule has no tag shortcut. A fuzzy version or an
+  unavailable policy classifier leaves `exactFileId` unset (`null`). Native
+  collection rules can carry a tag even when the author specifies an exact
+  policy. A null value alone cannot establish whether an update is allowed;
 - references to each archive ID from mod records across all games.
 
 This avoids starting a helper just to discover a known old provider, an enabled
-copy in another profile or a collection's exact-file requirement. The older
+copy in another profile or a collection's recorded file and version policy. The older
 `find_mod_dependents` matches only explicit ID references and is not equivalent.
 The new read does not decide whether the new download satisfies each dependency.
 

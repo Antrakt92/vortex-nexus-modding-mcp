@@ -6,7 +6,7 @@ function fixture() {
   const value = {protocol: 'vortex-agent/1', gameId: 'cyberpunk2077', profileId: 'profile-owner', mods: [{
     id: 'owner', archiveId: 'archive-owner', label: 'owner',
     profiles: [{id: 'profile-owner', gameId: 'cyberpunk2077'}],
-    incomingRequires: [{ownerId: 'requires-owner'}],
+    incomingRequires: [{ownerId: 'requires-owner', recordedFileId: 42, exactFileId: null}],
     archiveReferences: [{gameId: 'cyberpunk2077', modId: 'archive-consumer-owner'}],
   }]};
   const api = {getState: () => ({confidential: {token: 'private-test-secret'},
