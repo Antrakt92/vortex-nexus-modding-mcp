@@ -223,13 +223,29 @@ async function exclusive(dir, fn) {
       await sleep(Math.min(50, remaining));
     }
   }
+  let owner, failed = false;
   try {
+    const opened = await handle.stat({ bigint: true });
+    insist(opened.isFile() && opened.ino > 0n, 'MUTATION_LOCK_IDENTITY_UNAVAILABLE');
+    owner = opened;
     insist(performance.now() < deadline, 'MUTATION_BUSY_INSPECT_RECEIPTS');
     await handle.writeFile(JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
     return await fn();
+  } catch (error) {
+    failed = true;
+    throw error;
   } finally {
-    await handle.close();
-    await fs.unlink(lock);
+    let cleanupError;
+    try {
+      if (owner) {
+        const current = await fs.lstat(lock, { bigint: true });
+        insist(current.isFile() && current.dev === owner.dev && current.ino === owner.ino, 'MUTATION_LOCK_CHANGED');
+        await fs.unlink(lock);
+      }
+    } catch (error) { cleanupError = error; }
+    try { await handle.close(); }
+    catch (error) { cleanupError ??= error; }
+    if (!failed && cleanupError) throw new Error('MUTATION_LOCK_CLEANUP_PENDING_RECONCILE', { cause: cleanupError });
   }
 }
 function createOperations(api, actions, selectors, options = {}) {

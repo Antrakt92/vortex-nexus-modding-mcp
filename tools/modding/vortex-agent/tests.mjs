@@ -133,7 +133,8 @@ test('a request stops attempting to acquire the shared mutation lock after its d
   for (const delayedOpen of [false, true]) {
     let now = 0, opens = 0, actions = 0, closes = 0, unlinks = 0, writes = 0;
     const module = {exports: {}};
-    const handle = {async writeFile() {writes++;}, async close() {closes++;}};
+    const info = {dev: 1n, ino: 2n, isFile: () => true};
+    const handle = {async stat() {return info;}, async writeFile() {writes++;}, async close() {closes++;}};
     const model = {
       async mkdir() {},
       async open() {
@@ -142,6 +143,7 @@ test('a request stops attempting to acquire the shared mutation lock after its d
         now = 30000;
         return handle;
       },
+      async lstat() {return info;},
       async unlink() {unlinks++;},
     };
     const mockRequire = name => name === 'node:fs/promises' ? model
@@ -154,6 +156,35 @@ test('a request stops attempting to acquire the shared mutation lock after its d
     assert.equal(opens, 1);
     assert.deepEqual({actions, writes, closes, unlinks}, {actions: 0, writes: 0,
       closes: Number(delayedOpen), unlinks: Number(delayedOpen)});
+  }
+});
+
+test('mutation cleanup preserves a different lock generation and the original operation error', async () => {
+  const source = await fs.readFile(new URL('./guard.cjs', import.meta.url), 'utf8');
+  for (const outcome of ['completed', 'operation_failed']) {
+    const module = {exports: {}};
+    const primary = new Error('PRIMARY_OPERATION_HELD');
+    const original = {dev: 1n, ino: 2n, isFile: () => true};
+    let closed = false, unlinked = false;
+    const model = {
+      async mkdir() {},
+      async open() {
+        return {async stat() {return original;}, async writeFile() {}, async close() {closed = true;}};
+      },
+      async lstat() {return {...original, ino: 3n};},
+      async unlink() {
+        unlinked = true;
+        throw Object.assign(new Error('Secondary cleanup error'), {code: 'EPERM'});
+      },
+    };
+    const mockRequire = name => name === 'node:fs/promises' ? model : require(name);
+    vm.runInNewContext('(function(require,module,exports){' + source + '\n})', {process, Buffer})(mockRequire, module, module.exports);
+    const expected = outcome === 'completed' ? /MUTATION_LOCK_CLEANUP_PENDING_RECONCILE/ : error => error === primary;
+    await assert.rejects(module.exports.exclusive(ROOT, () => {
+      if (outcome === 'operation_failed') throw primary;
+    }), expected);
+    assert.equal(closed, true);
+    assert.equal(unlinked, false);
   }
 });
 

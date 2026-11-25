@@ -218,7 +218,9 @@ another client does not clear it.
 `reconcile_operation` is read-only. It compares exact receipt identity/schema and
 current bounded observations, but never clears an interlock or retries an effect.
 Inspect an uncertain operation before any manual recovery; do not remove a lock
-merely because a callback timed out.
+merely because a callback timed out. When release reports
+`MUTATION_LOCK_CLEANUP_PENDING_RECONCILE`, inspect the original request receipt.
+The operation may have completed before the lock release failed.
 
 Own-local installs also expose optional live/final `installDiagnostics` through
 reconciliation and the final tool response: phase, waiting reason, a shared work
