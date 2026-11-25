@@ -1068,11 +1068,11 @@
     },
     {
       "path": "tools/modding/vortex-agent/installed-candidate-assessment.cjs",
-      "sha256_lf": "7d8b8580c6656868618a6be4ecc39a1b26c9760db4e9144b60644a2092479de9"
+      "sha256_lf": "9a72337487734c094a9d166569e6ce7925bb2f6fae20dff1c5bcd300e7c2b216"
     },
     {
       "path": "tools/modding/vortex-agent/installed-candidate-assessment.test.mjs",
-      "sha256_lf": "f9e069958c5cbd6dd110c459e0241cdc9ffc781d368dd5b0044031b529c2114a"
+      "sha256_lf": "6404cd212df931e8d4612054a35a89388c30a8a565f6892ffb905fa70402c1c1"
     },
     {
       "path": "tools/modding/vortex-agent/keeper.mjs",
