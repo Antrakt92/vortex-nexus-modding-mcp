@@ -56,7 +56,6 @@ jobs:
           python tools/modding/nexus-publish/release-assets.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Validate / explicitly publish through guarded exact official bundle
-        id: publication
         shell: pwsh
         env:
           MODE: ${{ inputs.mode }}
@@ -73,20 +72,9 @@ jobs:
               throw 'NEXUS_STATE_DIR must be outside RUNNER_TEMP and GITHUB_WORKSPACE.'
             }
           }
-          [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "state_dir=$stateDir`n")
           $args = @('tools/modding/nexus-publish/publish.py', "$env:RUNNER_TEMP/nexus-publish-assets/manifest.json", '--action-dir', "$env:GITHUB_WORKSPACE/official-nexus-upload-action")
           # Stable persistent directory is essential: never use RUNNER_TEMP for the attempt ledger.
           $args += @('--state-dir', $stateDir)
           if ($env:MODE -eq 'publish') { $args += @('--publish', '--credential', 'github-secret') }
           python @args
           exit $LASTEXITCODE
-      - name: Retain only sanitized receipts (local ledger remains authoritative)
-        if: always() && steps.publication.outputs.state_dir != ''
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: nexus-publication-receipts-${{ github.run_id }}
-          path: |
-            ${{ steps.publication.outputs.state_dir }}/receipts/*.json
-            ${{ steps.publication.outputs.state_dir }}/locks/*.json
-            ${{ steps.publication.outputs.state_dir }}/dry-runs/*.json
-          if-no-files-found: ignore

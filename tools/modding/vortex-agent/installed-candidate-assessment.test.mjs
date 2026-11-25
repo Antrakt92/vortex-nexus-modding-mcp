@@ -59,6 +59,23 @@ test('simple installed candidate checks all incoming metadata without migration 
   assert(STATUSES.includes(row.status)); assert(row.reasons.every(r => REASONS.includes(r)));
 });
 
+test('explicit pending profile switches hold assessment before and during matching', () => {
+  const pending = fixture();
+  pending.state.settings = {profiles: {nextProfileId: 'second'}};
+  assert.throws(() => pending.run(), /ASSESSMENT_CONTEXT_MISMATCH/);
+  assert.equal(pending.calls.length, 0);
+
+  const switching = fixture();
+  switching.state.settings = {profiles: {nextProfileId: 'active'}};
+  assert.equal(switching.row().status, 'compatible_installed_variant');
+  const match = switching.util.testModReference;
+  switching.util.testModReference = (...args) => {
+    switching.state.settings.profiles.nextProfileId = 'second';
+    return match(...args);
+  };
+  assert.throws(() => switching.run(), /ASSESSMENT_CONTEXT_MISMATCH/);
+});
+
 test('local collections without Nexus coordinates retain native checks and cannot satisfy a revision pin', () => {
   const f = fixture();
   f.mods.collection.attributes = {};

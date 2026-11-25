@@ -59,6 +59,9 @@ consumed by stock InstallDriver, Nexus authentication and a matching installed
 game version. Missing embedded metadata holds; a new network response would not
 prove what the driver's private cache consumes. Rules with equivalent references
 hold because stock replacement semantics would make augmentation ambiguous.
+Install Now holds when a recommendation has no recorded include or skip decision.
+Done requires the exact session observed after Install Now and a fully installed
+member set. An optional selection or failure footer still needs separate handling.
 The controller rechecks native context, DOM element identity and source/file
 generations immediately before clicking. Waiting polls native session metadata;
 it does not repeatedly hash the host or scan staging/game files.

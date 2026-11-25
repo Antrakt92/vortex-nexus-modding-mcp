@@ -26,5 +26,7 @@ assert.ok(run.run.includes("if ($env:MODE -eq 'publish')"));
 assert.equal(run.env.NEXUS_STATE_DIR, '${{ vars.NEXUS_STATE_DIR }}');
 assert.ok(run.run.includes('IsPathFullyQualified'));
 assert.ok(run.run.includes('--state-dir'));
+assert.equal(job.steps.some(step => step.uses?.startsWith('actions/upload-artifact@')), false);
+assert.doesNotMatch(run.run, /GITHUB_OUTPUT/);
 assert.doesNotMatch(run.run, /['"][A-Za-z]:[\\/]/);
 console.log('Manual workflow YAML parses; dispatch-only, dry-run default, immutable pins and durable ledger checked.');
