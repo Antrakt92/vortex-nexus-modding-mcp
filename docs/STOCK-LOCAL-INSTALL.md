@@ -154,6 +154,10 @@ node tools/modding/vortex-agent/native-fixture.mjs --run --stopped-ordinary `
 node tools/modding/vortex-agent/native-fixture-verify.mjs $fixtureRoot
 ```
 
+To recheck a retained run, pass its root followed by `--check-only`. The
+verifier runs the same checks and prints the result without replacing the saved
+independent verification.
+
 Supply the absolute ordinary deployment-manifest path and the workspace holding
 the unresolved operation. Keep the fixture and ordinary workspaces disjoint.
 The runner checks the admitted app.asar and support source, confirmed stopped

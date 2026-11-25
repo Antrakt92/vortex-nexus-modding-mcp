@@ -348,9 +348,13 @@ async function main() {
   const log = fs.openSync(path.join(root, 'process-output.log'), 'wx');
   const child = spawn(vortexExe, args, { env, windowsHide: true, stdio: ['ignore', log, log] });
   const readTerminal = observeFixtureTerminal(child);
-  fs.closeSync(log);
-  write(path.join(root, 'process.json'), { pid: child.pid, executable: vortexExe, args, ordinaryPids: before.processes.map(p => p.pid), started: new Date().toISOString() });
   console.log(JSON.stringify({ root, fixturePid: child.pid, ordinaryMainPids: before.processes.filter(p => !p.type).map(p => p.pid) }));
+  let fixtureProcessRecordError;
+  try { fs.closeSync(log); }
+  catch { fixtureProcessRecordError = 'FIXTURE_LOG_CLOSE_FAILED'; }
+  try {
+    write(path.join(root, 'process.json'), { pid: child.pid, executable: vortexExe, args, ordinaryPids: before.processes.map(p => p.pid), started: new Date().toISOString() });
+  } catch { fixtureProcessRecordError ??= 'FIXTURE_PROCESS_RECORD_UNAVAILABLE'; }
   const deadline = Date.now() + 240000;
   let stoppedObservationFailure, fixtureObserved = false, fixtureGeneration;
   while (readTerminal() === null && Date.now() < deadline) {
@@ -398,15 +402,16 @@ async function main() {
     : ['health', 'profiles', 'mods', 'manifestSha256', 'executable', 'appAsar', 'manifest', 'hold'].every(same)
       && ordinaryProcessesPreserved(before.processes, after.processes)
       && (!stockReview || before.processes.length === after.processes.length));
-  const result = { root, nativeStatus: receipt.status, fixtureExited: fixtureTerminal?.event === 'exit', fixtureTerminal,
+  const result = { root, fixturePid: child.pid, nativeStatus: receipt.status, fixtureExited: fixtureTerminal?.event === 'exit', fixtureTerminal,
     ordinaryUnchanged, ordinaryManifestSha256: after?.manifestSha256, error: receipt.error,
+    ...(fixtureProcessRecordError ? { fixtureProcessRecordError } : {}),
     ...(nativeReceiptError ? { nativeReceiptError } : {}),
     ...(ordinaryAfterSnapshotError ? { ordinaryAfterSnapshotError } : {}),
     ...(stopped ? { ordinaryMode: 'stopped', fixtureObserved, stoppedObservationFailure } : {}),
     remainingFixturePids: after?.processes.filter(p => p.pid === child.pid || p.parent === child.pid).map(p => p.pid) ?? null };
   write(path.join(root, 'runner-result.json'), result); console.log(JSON.stringify(result));
   // No forced termination: preserve failed evidence and identify the exact fixture PID.
-  must(cleanExit && receipt.status === 'passed' && hasGracefulFixtureClose(receipt) && ordinaryUnchanged
+  must(!fixtureProcessRecordError && cleanExit && receipt.status === 'passed' && hasGracefulFixtureClose(receipt) && ordinaryUnchanged
     && result.remainingFixturePids?.length === 0, 'NATIVE_FIXTURE_INCOMPLETE_INSPECT_RECEIPTS');
 }
 main().catch(err => { console.error(err.message); process.exitCode = 1; });
