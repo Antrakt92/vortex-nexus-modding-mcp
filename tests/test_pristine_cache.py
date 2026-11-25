@@ -67,6 +67,31 @@ class PristineCacheTests(unittest.TestCase):
             m.generate_cache(self.work, self.game, None, _run=self.runner)
         self.assertEqual(self.calls, 0)
 
+    def test_non_directory_cache_parents_are_held_before_generation(self):
+        local_state = self.work / 'local-state'
+        for folder in (local_state, local_state / 'vanilla-api'):
+            with self.subTest(folder=folder.name):
+                folder.parent.mkdir(parents=True, exist_ok=True)
+                folder.write_bytes(b'Unrelated retained fixture')
+                before = self.tree()
+                try:
+                    value = m.inspect_cache(self.work, self.game, self.digest)
+                    self.assertEqual((value['state'], value['code']), ('held', 'CACHE_UNSAFE_PATH'))
+                    self.assertFalse(value['generationAllowed'])
+                    self.assertFalse(value['cacheReusable'])
+                    self.assertEqual(self.tree(), before)
+                finally:
+                    folder.unlink()
+        self.assertEqual(self.calls, 0)
+
+    def test_metadata_json_requires_utf8_without_encoding_redetection(self):
+        value = {'scope': 'synthetic cache metadata'}
+        for encoding in ('utf-8', 'utf-8-sig'):
+            self.assertEqual(m.strict_json_bytes(json.dumps(value).encode(encoding)), value)
+        for encoding in ('utf-16-le', 'utf-16-be', 'utf-32-le', 'utf-32-be'):
+            with self.subTest(encoding=encoding), self.assertRaisesRegex(m.CacheError, 'CACHE_INVALID_JSON'):
+                m.strict_json_bytes(json.dumps(value).encode(encoding))
+
     def test_success_receipt_reuse_and_unknown_baseline_never_returns_reference(self):
         first = m.generate_cache(self.work, self.game, self.digest, _run=self.runner)
         self.assertFalse(first['reused']); self.assertEqual(self.calls, 1)

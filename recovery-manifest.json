@@ -592,7 +592,7 @@
     },
     {
       "path": "tests/test_pristine_cache.py",
-      "sha256_lf": "45dc7f75515ef253d0d1dcfc3f5e18e1d71643818f13377597dcdb57fe8b92e2"
+      "sha256_lf": "93aba308acc9408c8ff7378377272c04faa358963e39356c3c15502f28fff4f7"
     },
     {
       "path": "tests/test_recovery.py",
@@ -604,7 +604,7 @@
     },
     {
       "path": "tests/test_retire_rusty_hooks.py",
-      "sha256_lf": "0bc42dd0e36e5ce311d54fdbffc48cfe7fbf3225cb37a0fd645c260a86fb30c6"
+      "sha256_lf": "3cc463795f6f62490fc6389e48899da2dee45d32875c11f9a07bec5ee3838143"
     },
     {
       "path": "tests/test_update_manifest.py",
@@ -616,7 +616,7 @@
     },
     {
       "path": "tools/modding/decompile_pristine.py",
-      "sha256_lf": "047a97cae9b9b7db5dcade6c2130f305db0b2544a790cb184d22eaf9f6774bdd"
+      "sha256_lf": "8c8c9dd3f16d1d6c0ecc6628e7a176d960f4fe41de7c6c2e072dedd26b42ed55"
     },
     {
       "path": "tools/modding/native-process-probe/Cargo.lock",
@@ -752,7 +752,7 @@
     },
     {
       "path": "tools/modding/retire-rusty-hooks.py",
-      "sha256_lf": "3f885ddacdc6c53dab9a054cc82db75bd4055ad03a452dc55dd898ecd7f6e772"
+      "sha256_lf": "c72739dbe4da92a7324e85bd24a370423ab7c486f1a1a487c4afdd7645d6ae77"
     },
     {
       "path": "tools/modding/vortex-agent/LOCAL-PACKAGE-INSTALL-DESIGN.md",
