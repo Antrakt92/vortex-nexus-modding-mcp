@@ -129,10 +129,93 @@ export function assertCompileReceipt(receipt, current, bundleSha256) {
 async function checkPackageOutput(plugin) {
   let entries;
   try { entries = await fs.readdir(plugin, { withFileTypes: true }); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; return; }
+  catch (error) { if (error.code !== 'ENOENT') throw error; return null; }
   for (const entry of entries) {
     if (!entry.isFile() || !packageNames.has(entry.name))
       throw Error('Unexpected package output: ' + entry.name);
+  }
+  return entries.map(entry => entry.name).sort();
+}
+
+const samePackage = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+
+async function packageGeneration(directory) {
+  await noReparsePaths(directory);
+  const names = await checkPackageOutput(directory);
+  if (names === null) return null;
+  const identity = await directoryIdentity(directory);
+  const files = {};
+  for (const name of names) {
+    const file = path.join(directory, name);
+    await noReparsePaths(file);
+    files[name] = await sha(file);
+  }
+  if (await directoryIdentity(directory) !== identity || !samePackage(await checkPackageOutput(directory), names))
+    throw Error('Package changed while being verified');
+  return { identity, files };
+}
+
+async function publishPackage(plugin, packageFiles, hash) {
+  const expected = Object.fromEntries(Object.keys(packageFiles).sort().map(name => [name, hash(packageFiles[name])]));
+  const prior = await packageGeneration(plugin);
+  if (samePackage(prior?.files, expected)) return;
+  const parent = path.dirname(plugin);
+  await fs.mkdir(parent, { recursive: true });
+  const parentIdentity = await directoryIdentity(parent);
+  const pending = await fs.mkdtemp(path.join(parent, 'vortex-agent-package-pending-'));
+  const pendingIdentity = await directoryIdentity(pending);
+  const next = path.join(pending, 'next'), previous = path.join(pending, 'previous');
+  await fs.mkdir(next);
+  for (const [name, data] of Object.entries(packageFiles))
+    await fs.writeFile(path.join(next, name), data, { flag: 'wx', flush: true });
+  const staged = await packageGeneration(next);
+  if (!samePackage(staged?.files, expected)) throw Error('Staged package differs from the verified build');
+  await preservePreviousBuild(plugin);
+  const parentUnchanged = async () => {
+    await noReparsePaths(parent, pending);
+    if (await directoryIdentity(parent) !== parentIdentity || await directoryIdentity(pending) !== pendingIdentity)
+      throw Error('Package publication directory changed');
+  };
+  const windows = process.platform === 'win32';
+  try {
+    await parentUnchanged();
+    if (!samePackage(await packageGeneration(plugin), prior) || !samePackage(await packageGeneration(next), staged))
+      throw Error('Package changed before publication');
+    await requireNewTree(previous);
+    if (prior) {
+      await fs.rename(plugin, previous);
+      if (!samePackage(await packageGeneration(previous), prior)) throw Error('Previous package changed during publication');
+    }
+    await parentUnchanged();
+    await requireNewTree(plugin);
+    if (windows) {
+      await fs.rename(next, plugin);
+    } else {
+      // POSIX directory rename can replace an empty destination. Use exclusive
+      // creation and copies instead of overwriting a competing directory.
+      await fs.mkdir(plugin);
+      for (const name of Object.keys(expected))
+        await fs.copyFile(path.join(next, name), path.join(plugin, name), fs.constants.COPYFILE_EXCL);
+    }
+    const installed = await packageGeneration(plugin);
+    if (!samePackage(installed?.files, expected) || windows && installed.identity !== staged.identity)
+      throw Error('Published package differs from the verified build');
+  } catch (error) {
+    let preserved = false;
+    try {
+      await parentUnchanged();
+      const current = await packageGeneration(plugin);
+      const saved = await packageGeneration(previous);
+      preserved = samePackage(current, prior) && saved === null;
+      if (windows && prior && current === null && samePackage(saved, prior)
+        && samePackage(await packageGeneration(next), staged)) {
+        await requireNewTree(plugin);
+        await fs.rename(previous, plugin);
+        preserved = samePackage(await packageGeneration(plugin), prior);
+      }
+    } catch { /* Unknown or competing destination: retain the available packages. */ }
+    if (preserved) throw error;
+    throw Error('Package publication uncertain; inspect retained inputs at ' + pending, { cause: error });
   }
 }
 
@@ -256,6 +339,23 @@ export async function main(argv = process.argv.slice(2)) {
   const [phase] = argv;
   if (argv.length !== 1 || !phases.includes(phase))
     throw Error('Usage: build.mjs ' + phases.join(' | '));
+  await noReparsePaths(BUILD);
+  await fs.mkdir(BUILD, { recursive: true });
+  const lock = path.join(BUILD, 'build-phase.lock');
+  try { await fs.mkdir(lock); }
+  catch (error) {
+    if (error.code === 'EEXIST') throw Error('Build phase already active or interrupted; inspect ' + lock);
+    throw error;
+  }
+  const lockIdentity = await directoryIdentity(lock);
+  try { await runBuildPhase(phase); }
+  finally {
+    if (await directoryIdentity(lock) !== lockIdentity) throw Error('Build phase lock changed; preserve and inspect');
+    await fs.rmdir(lock);
+  }
+}
+
+async function runBuildPhase(phase) {
   // COPYFILE_EXCL protects new files only. Existing adapted inputs and outputs
   // also need ancestry checks before any write can follow a planted link.
   const buildTree = path.join(BUILD, 'upstream');
@@ -315,16 +415,8 @@ if (phase === '--prepare') {
     authentication: 'Windows-DPAPI-CurrentUser-bearer', vortexSourceCommit: '41be6d4556568a605d6131b8c5ca90ff26dec6ac',
     pluginSha256: bundleSha256, lockfileSha256: current.inputs['pnpm-lock.yaml'],
     upstreamControlSha256: current.inputs['src/vortexControl.ts'], sources }, null, 2);
-  // A validation failure must leave any existing candidate package intact.
   const plugin = path.join(BUILD, 'plugin', 'vortex-agent');
-  await checkPackageOutput(plugin);
-  await preservePreviousBuild(plugin);
-  await fs.mkdir(plugin, { recursive: true });
-  for (const [name, data] of Object.entries(packageFiles)) {
-    const destination = path.join(plugin, name);
-    await noReparsePaths(destination);
-    await fs.writeFile(destination, data);
-  }
+  await publishPackage(plugin, packageFiles, hash);
   console.log(plugin);
 }
 }

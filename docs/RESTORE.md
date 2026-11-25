@@ -87,13 +87,27 @@ node tools/modding/vortex-agent/build.mjs --package
 ```
 
 On Windows, `--prepare` verifies the source in an `upstream-pending-*` directory
-before publishing it as `upstream`. If preparation is interrupted, retry the same
-command. It uses a fresh pending directory and preserves the unfinished one for
-inspection. On other platforms, preparation writes into a new exclusive
-`upstream` directory and interrupted work can remain there. An existing
+before publishing it as `upstream`. If preparation fails and releases its lock,
+retry the same command. It uses a fresh pending directory and preserves the
+unfinished one for inspection. On other platforms, preparation writes into a new
+exclusive `upstream` directory and interrupted work can remain there. An existing
 `upstream` directory is refused and preserved on either path. Compilation and
 packaging recheck source, dependency and workspace pins. The package is under
 `<workspace>/local-state/vortex-agent-build/plugin/vortex-agent`.
+
+The build phases share an exclusive `build-phase.lock` in the build directory.
+An interrupted process can leave this lock. Inspect the old attempt before
+clearing it or running another phase. Packaging writes and verifies all files
+in a fresh sibling `vortex-agent-package-pending-*` directory before moving the
+current package. On Windows, the verified directory is then renamed into place.
+When the current package matches every expected file hash, packaging reuses the
+existing directory and creates no pending copy.
+A failed publication restores the verified previous directory only when the
+destination is absent and the next package remains intact. If publication is
+uncertain, the error gives the pending directory for inspection.
+Other platforms use an exclusively created output directory and exclusive
+file copies. A late failure can leave a partial output alongside the retained
+previous package. Treat that partial output as unverified.
 
 ## 4. Initialize local credentials and review installation
 

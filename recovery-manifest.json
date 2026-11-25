@@ -484,7 +484,7 @@
     },
     {
       "path": "docs/RESTORE.md",
-      "sha256_lf": "a53fb526b0351c8fb28dfb9d87d81a3930190ae808928fdcd8e0022411690d12"
+      "sha256_lf": "c62fcb346730cc17c60df738c0f3e017883ce88cbf6fa3164595a59374f29987"
     },
     {
       "path": "docs/STOCK-LOCAL-INSTALL.md",
@@ -792,7 +792,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/build.mjs",
-      "sha256_lf": "7dd233ea7a08707ad0cda5d411ca6f384338efd7372d72ddbb23e8bee01e5112"
+      "sha256_lf": "5a3e939203bae529d318ba2d3fa5e0a3657029635af6ee846169df546ae73c5b"
     },
     {
       "path": "tools/modding/vortex-agent/candidate-assessment-serialization.test.mjs",
@@ -3052,7 +3052,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/package.test.mjs",
-      "sha256_lf": "3c10407c943e8f5f66438e54fa4329a08ab9bfd0838331f53a839aeebc3ab044"
+      "sha256_lf": "29ef3490bcad883139b898c6a824531da6e2c2ff5db735ac2eb53f3fdc7d9d7c"
     },
     {
       "path": "tools/modding/vortex-agent/paths-core.cjs",

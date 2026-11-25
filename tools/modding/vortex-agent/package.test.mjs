@@ -207,6 +207,165 @@ test('package preflight preserves the prior package when frozen compile sources 
   assert.equal(await fs.readFile(path.join(previous, 'index.js'), 'utf8'), 'prior usable bundle');
 });
 
+async function packageFixture(t) {
+  const fixture = await buildFixture(t);
+  const {root, build, run} = fixture;
+  for (const flag of ['--prepare', '--patch']) {
+    const phase = run(flag);
+    assert.equal(phase.status, 0, phase.stderr);
+  }
+  const tree = path.join(build, 'upstream');
+  const output = path.join(build, 'plugin/vortex-agent');
+  const bundle = path.join(tree, 'adapted-dist/index.js');
+  await fs.mkdir(path.dirname(bundle));
+  await fs.writeFile(bundle, 'new fixture bundle');
+  await fs.writeFile(path.join(build, 'adapted-compile.json'),
+    JSON.stringify({inputs: await compileInputs(tree, root), bundleSha256: await sha(bundle)}));
+  await fs.mkdir(output, {recursive: true});
+  const previous = {'index.js': 'old fixture bundle', 'LICENSE.md': 'old fixture license',
+    'provenance.json': '{"version":"1.1.0","evidence":"old fixture provenance"}'};
+  for (const [name, value] of Object.entries(previous)) await fs.writeFile(path.join(output, name), value);
+  return {...fixture, output, previous};
+}
+
+async function assertPackageFiles(directory, files) {
+  assert.deepEqual((await fs.readdir(directory)).sort(), Object.keys(files).sort());
+  for (const [name, contents] of Object.entries(files)) assert.equal(await fs.readFile(path.join(directory, name), 'utf8'), contents);
+}
+
+test('byte-identical packaging preserves the directory generation without retaining another copy', async t => {
+  const {output, run} = await packageFixture(t);
+  const first = run('--package');
+  assert.equal(first.status, 0, first.stderr);
+  const original = await fs.lstat(output, {bigint: true});
+  const packageParent = path.dirname(output);
+  const inventory = (await fs.readdir(packageParent)).sort();
+  const files = Object.fromEntries(await Promise.all((await fs.readdir(output)).sort()
+    .map(async name => [name, await fs.readFile(path.join(output, name), 'utf8')])));
+
+  const repeat = run('--package');
+  assert.equal(repeat.status, 0, repeat.stderr);
+  const current = await fs.lstat(output, {bigint: true});
+  assert.deepEqual([current.dev, current.ino], [original.dev, original.ino]);
+  assert.deepEqual((await fs.readdir(packageParent)).sort(), inventory);
+  await assertPackageFiles(output, files);
+});
+
+test('a package write failure keeps the prior bundle and provenance together and permits retry', async t => {
+  const {output, previous, run, runIntercepted} = await packageFixture(t);
+  const failed = await runIntercepted(`
+    import fs from 'node:fs/promises';
+    import path from 'node:path';
+    const write = fs.writeFile;
+    fs.writeFile = (file, ...args) => {
+      if (path.basename(file) === 'LICENSE.md') throw Object.assign(Error('Synthetic package write failure'), {code: 'ENOSPC'});
+      return write(file, ...args);
+    };
+  `, '--package');
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.stderr, /Synthetic package write failure/);
+  await assertPackageFiles(output, previous);
+  const retry = run('--package');
+  assert.equal(retry.status, 0, retry.stderr);
+  const provenance = JSON.parse(await fs.readFile(path.join(output, 'provenance.json')));
+  assert.equal(provenance.pluginSha256, await sha(path.join(output, 'index.js')));
+  assert.equal(await fs.readFile(path.join(output, 'index.js'), 'utf8'), 'new fixture bundle');
+  const holder = path.dirname(output);
+  const retained = [];
+  for (const name of await fs.readdir(holder)) {
+    if (!name.startsWith('vortex-agent-package-pending-')) continue;
+    const attempt = path.join(holder, name);
+    if ((await fs.readdir(attempt)).includes('previous')) retained.push(path.join(attempt, 'previous'));
+  }
+  assert.equal(retained.length, 1);
+  await assertPackageFiles(retained[0], previous);
+});
+
+test('known Windows package publication failure restores the exact old directory', {skip: process.platform !== 'win32'}, async t => {
+  const {output, previous, runIntercepted} = await packageFixture(t);
+  const original = await fs.lstat(output, {bigint: true});
+  const failed = await runIntercepted(`
+    import fs from 'node:fs/promises';
+    import path from 'node:path';
+    const rename = fs.rename;
+    fs.rename = async (source, destination) => {
+      if (path.basename(source) === 'next' && path.basename(destination) === 'vortex-agent')
+        throw Object.assign(Error('Synthetic package rename refusal'), {code: 'EACCES'});
+      return rename(source, destination);
+    };
+  `, '--package');
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.stderr, /Synthetic package rename refusal/);
+  const restored = await fs.lstat(output, {bigint: true});
+  assert.deepEqual([restored.dev, restored.ino], [original.dev, original.ino]);
+  await assertPackageFiles(output, previous);
+});
+
+test('Windows package publication never replaces a competing destination and keeps the old package', {skip: process.platform !== 'win32'}, async t => {
+  const {output, previous, runIntercepted} = await packageFixture(t);
+  const original = await fs.lstat(output, {bigint: true});
+  const failed = await runIntercepted(`
+    import fs from 'node:fs/promises';
+    import path from 'node:path';
+    const rename = fs.rename;
+    fs.rename = async (source, destination) => {
+      if (path.basename(source) === 'next' && path.basename(destination) === 'vortex-agent')
+        await fs.mkdir(destination);
+      return rename(source, destination);
+    };
+  `, '--package');
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.stderr, /Package publication uncertain/);
+  assert.deepEqual(await fs.readdir(output), []);
+  const holder = path.dirname(output);
+  const [name] = (await fs.readdir(holder)).filter(name => name.startsWith('vortex-agent-package-pending-'));
+  const retained = path.join(holder, name, 'previous');
+  await assertPackageFiles(retained, previous);
+  const saved = await fs.lstat(retained, {bigint: true});
+  assert.deepEqual([saved.dev, saved.ino], [original.dev, original.ino]);
+  assert.equal(await fs.readFile(path.join(holder, name, 'next/index.js'), 'utf8'), 'new fixture bundle');
+});
+
+test('portable package publication uses exclusive creation and never renames onto a competing destination', async t => {
+  const {output, previous, runIntercepted} = await packageFixture(t);
+  const failed = await runIntercepted(`
+    import fs from 'node:fs/promises';
+    import path from 'node:path';
+    Object.defineProperty(process, 'platform', {value: 'linux'});
+    const mkdir = fs.mkdir, rename = fs.rename;
+    fs.mkdir = async (target, options) => {
+      if (path.basename(target) === 'vortex-agent') await mkdir(target);
+      return mkdir(target, options);
+    };
+    fs.rename = async (source, destination) => {
+      if (path.basename(destination) === 'vortex-agent') throw Error('Unexpected directory rename');
+      return rename(source, destination);
+    };
+  `, '--package');
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.stderr, /Package publication uncertain/);
+  assert.deepEqual(await fs.readdir(output), []);
+  const parent = path.dirname(output);
+  const [name] = (await fs.readdir(parent)).filter(name => name.startsWith('vortex-agent-package-pending-'));
+  await assertPackageFiles(path.join(parent, name, 'previous'), previous);
+  assert.equal(await fs.readFile(path.join(parent, name, 'next/index.js'), 'utf8'), 'new fixture bundle');
+});
+
+test('all build phases hold for an existing cooperative lock without changing its owner', async t => {
+  const {build, run} = await buildFixture(t);
+  const lock = path.join(build, 'build-phase.lock');
+  await fs.mkdir(lock, {recursive: true});
+  const owner = path.join(lock, 'fixture-owner');
+  await fs.writeFile(owner, 'original builder');
+  for (const phase of ['--prepare', '--regression', '--patch', '--compile', '--package']) {
+    const held = run(phase);
+    assert.notEqual(held.status, 0);
+    assert.match(held.stderr, /Build phase already active or interrupted/);
+    assert.equal(await fs.readFile(owner, 'utf8'), 'original builder');
+  }
+  assert.deepEqual(await fs.readdir(build), ['build-phase.lock']);
+});
+
 test('packaging refuses an existing output with unrelated contents before writing files', async t => {
   const {root, build, run} = await buildFixture(t);
   for (const flag of ['--prepare', '--patch']) {
