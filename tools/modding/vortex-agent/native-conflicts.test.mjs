@@ -102,6 +102,38 @@ test('native pair endpoints must still be installed and enabled before zero or p
   }
 });
 
+test('filename reference budget includes mirrored rows before cloning the complete successful pair', () => {
+  const f = fixture(1); f.addon.rules = [];
+  const files = Array.from({length: 25_000}, (_, i) => `r6/scripts/mod-${i}.reds`);
+  f.overlap.files = files;
+  f.state.session.dependencies.conflicts.base = [{ ...f.overlap, otherMod: { id: 'addon' } }];
+  const [result] = unresolvedConflicts(f.api, f.selectors, f.util);
+  assert.notEqual(result.files, files);
+  assert.deepEqual(result.files, files);
+  files.push('r6/scripts/extra.reds');
+  assert.throws(() => unresolvedConflicts(f.api, f.selectors, f.util), /NATIVE_CONFLICT_READ_LIMIT/);
+});
+
+test('aggregated UTF-8 filename bytes stay bounded even for native zero', () => {
+  const f = fixture(0);
+  const file = 'é'.repeat(128);
+  const files = Array(16_384).fill(file);
+  f.overlap.files = files;
+  assert.deepEqual(unresolvedConflicts(f.api, f.selectors, f.util), []);
+  files.push('a');
+  assert.throws(() => unresolvedConflicts(f.api, f.selectors, f.util), /NATIVE_CONFLICT_READ_LIMIT/);
+});
+
+test('raw conflict map groups and row counts remain bounded even without new pairs', () => {
+  const f = fixture(0);
+  f.state.session.dependencies.conflicts = Object.fromEntries(Array.from({length: 20_000}, (_, i) => [`mod-${i}`, []]));
+  assert.deepEqual(unresolvedConflicts(f.api, f.selectors, f.util), []);
+  f.state.session.dependencies.conflicts.extra = [];
+  assert.throws(() => unresolvedConflicts(f.api, f.selectors, f.util), /NATIVE_CONFLICT_READ_LIMIT/);
+  f.state.session.dependencies.conflicts = { addon: Array(20_001).fill(f.overlap) };
+  assert.throws(() => unresolvedConflicts(f.api, f.selectors, f.util), /NATIVE_CONFLICT_READ_LIMIT/);
+});
+
 for (const count of [undefined, null, '0', -1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
   test(`invalid native count ${String(count)} is unavailable, never healthy zero`, () => {
     const f = fixture(); f.state.session.dependencies.unsolvedConflictsCount = count;
