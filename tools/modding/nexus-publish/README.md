@@ -366,7 +366,8 @@ configure a trusted dedicated self-hosted Windows runner with Node 24, Python,
 Git and `gh`, label it `nexus-publication`, configure the named environment and
 secret, and set the repository variable `NEXUS_STATE_DIR` to a persistent absolute
 directory outside both `RUNNER_TEMP` and `GITHUB_WORKSPACE`. Preserve that ledger
-across jobs and upgrades. The inactive template rejects an absent or ephemeral
+across jobs and upgrades. Receipt files stay on the runner and are accessed through
+the local ledger. The inactive template rejects an absent or ephemeral
 ledger rather than substituting a personal drive or temporary directory. This self-hosted design
 is intentional: ephemeral runners/artifact-only receipts cannot reliably preserve
 an attempt if the upload job is interrupted before artifact retention. Every action

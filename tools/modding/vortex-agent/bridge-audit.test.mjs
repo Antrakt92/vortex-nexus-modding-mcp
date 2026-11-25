@@ -151,6 +151,39 @@ test('a cancellation at pending capacity stops later plan steps after settling i
   assert.equal(result.completed[0].adapterReceiptVerified, true);
 });
 
+test('a queued parse error does not delay cancellation behind backpressured stdout', async () => {
+  const entered = deferred(), settle = deferred(), blocked = deferred();
+  const input = new PassThrough(), replies = [];
+  let cancelled = false, finishWrite;
+  const output = new Writable({write(bytes, _, callback) {
+    const response = JSON.parse(bytes);
+    replies.push(response);
+    if (response.error?.code === -32700) {
+      finishWrite = callback;
+      blocked.resolve();
+    } else callback();
+  }});
+  const work = runStdio(input, output, async request => {
+    if (request.method === 'notifications/cancelled') {cancelled = true; return;}
+    entered.resolve();
+    await settle.promise;
+    return {jsonrpc: '2.0', id: request.id, result: {cancelled}};
+  }, 2);
+  input.write('{"jsonrpc":"2.0","id":"plan","method":"tools/call"}\n');
+  await entered.promise;
+  input.write('{\n{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"plan"}}\n');
+  await blocked.promise;
+  await new Promise(resolve => setImmediate(resolve));
+  const cancelledBeforeDrain = cancelled;
+  finishWrite();
+  settle.resolve();
+  input.end();
+  await work;
+  assert.equal(cancelledBeforeDrain, true);
+  assert.deepEqual(replies.map(reply => [reply.id, reply.error?.code, reply.result?.cancelled]),
+    [[null, -32700, undefined], ['plan', undefined, true]]);
+});
+
 test('ordinary overload is bounded, cancels pending plans and never dispatches the excess request', async () => {
   const entered = deferred(), release = deferred();
   let calls = 0, cancelled = false;

@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import stat
 import sys
+import tempfile
 import urllib.request
 import zipfile
 
@@ -35,6 +36,27 @@ def verify_existing_file(target, expected):
             raise RuntimeError('Existing installation differs; refusing overwrite')
 
 
+def publish_new_file(target, data):
+    no_reparse(target)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(prefix='.nexus-cli-install-', dir=target.parent, delete=False) as output:
+            temporary = Path(output.name)
+            output.write(data)
+            output.flush()
+            os.fsync(output.fileno())
+        no_reparse(target)
+        # Publish only complete bytes and refuse a concurrently created target.
+        if os.name == 'nt':
+            temporary.rename(target)
+            temporary = None
+        else:
+            os.link(temporary, target)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def install():
     # Examine the configured path before normalization can remove a junction.
     no_reparse(ROOT)
@@ -52,8 +74,7 @@ def install():
             data = response.read(SIZE + 1)
         if len(data) != SIZE or hashlib.sha256(data).hexdigest() != SHA256:
             raise RuntimeError('Release size/SHA256 mismatch')
-        with archive.open('xb') as output:
-            output.write(data)
+        publish_new_file(archive, data)
     with archive.open('rb') as source:
         data = source.read(SIZE + 1)
     if len(data) != SIZE or hashlib.sha256(data).hexdigest() != SHA256:
@@ -96,15 +117,13 @@ def install():
         if target.exists():
             verify_existing_file(target, expected)
         else:
-            with target.open('xb') as output:
-                output.write(expected)
+            publish_new_file(target, expected)
     no_reparse(receipt_path)
     if receipt_path.exists():
         if json.loads(receipt_path.read_text(encoding='utf-8')) != receipt:
             raise RuntimeError('Existing installation receipt differs; refusing overwrite')
     else:
-        with receipt_path.open('x', encoding='utf-8') as output:
-            output.write(json.dumps(receipt, indent=2) + '\n')
+        publish_new_file(receipt_path, (json.dumps(receipt, indent=2) + '\n').encode('utf-8'))
     print(json.dumps(receipt))
 
 if __name__ == '__main__':

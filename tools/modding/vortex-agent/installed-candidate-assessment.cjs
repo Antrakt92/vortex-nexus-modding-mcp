@@ -120,8 +120,10 @@ function validateModMetadata(record) {
 
 function capture(api, selectors, args) {
   const state = api.getState();
+  const nextProfileId = state?.settings?.profiles?.nextProfileId;
   need(state && selectors.activeGameId(state) === args.gameId && selectors.activeProfileId(state) === args.profileId,
     'CONTEXT_MISMATCH');
+  need(nextProfileId === undefined || nextProfileId === args.profileId, 'CONTEXT_MISMATCH');
   const mods = state.persistent?.mods, profiles = state.persistent?.profiles;
   need(object(mods) && object(profiles) && object(data(mods, args.gameId))
     && object(data(profiles, args.profileId)) && data(profiles[args.profileId], 'gameId') === args.gameId, 'CONTEXT_MISMATCH');

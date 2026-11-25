@@ -5,8 +5,24 @@ const id=v=>typeof v==='string'&&v.length>0&&v.length<=512&&!/[\x00-\x1f\x7f]/.t
 // Exact tagged encoding domain of our collection raw-state.cjs (R3): numbers
 // are strings, object keys and array index keys are sorted lexicographically.
 // Additional bounded-input refusals do not alter the encoded accepted values.
-function encode(input,nativeRecord=false){let nodes=0;const ancestors=new Set();function copy(v,depth,at){
- need(++nodes<=1000000&&depth<=40,'RAW_LIMIT');if(v===undefined)return['undefined'];if(v===null)return['null'];
+// The 8 MiB transport still has space for escaped tool text and its envelope.
+const RESPONSE_BUDGET = 6 * 1024 * 1024;
+const ENCODED_WORK_BUDGET = 64 * 1024 * 1024;
+const exampleDigest = '0'.repeat(64);
+const FIELD_ROW_BYTES = JSON.stringify({keyDigest:exampleDigest,valueDigest:exampleDigest}).length + 1;
+const RULE_ROW_BYTES = JSON.stringify(exampleDigest).length + 1;
+
+function reserve(budget, kind, amount, limit, code) {
+ budget[kind] += amount;
+ need(budget[kind] <= limit, code);
+}
+
+function encode(input,nativeRecord=false,budget){let nodes=0;const ancestors=new Set();function copy(v,depth,at){
+ need(++nodes<=1000000&&depth<=40,'RAW_LIMIT');
+ // Bound work across the whole batch before allocating the tagged tree.
+ // Six characters per code unit covers JSON escaping, including lone surrogates.
+ if(budget)reserve(budget,'encodedWork',48+(typeof v==='string'?v.length*6:0),ENCODED_WORK_BUDGET,'RAW_LIMIT');
+ if(v===undefined)return['undefined'];if(v===null)return['null'];
  if(typeof v==='boolean'||typeof v==='string'){if(typeof v==='string')need(v.length<=1048576,'RAW_LIMIT');return[typeof v,v];}
  if(typeof v==='number'){need(Number.isFinite(v),'RAW_NUMBER');return['number',Object.is(v,-0)?'-0':String(v)];}
  need(typeof v==='object'&&!isProxy(v)&&!ancestors.has(v),'RAW_INVALID');
@@ -16,17 +32,28 @@ function encode(input,nativeRecord=false){let nodes=0;const ancestors=new Set();
  const array=Array.isArray(v),proto=Object.getPrototypeOf(v),keys=Reflect.ownKeys(v);
  need(array?proto===Array.prototype:proto===Object.prototype||proto===null,'RAW_PROTO');need(keys.length<=100001,'RAW_LIMIT');need(keys.every(k=>typeof k==='string'),'RAW_SYMBOL');
  if(array)need(keys.length===v.length+1&&keys.every(k=>k==='length'||/^(0|[1-9][0-9]*)$/.test(k)&&Number(k)<v.length),'RAW_ARRAY');
+ if(budget){
+  if(!array&&(depth===0||depth===1&&at[0]==='attributes'))
+   reserve(budget,'response',keys.length*FIELD_ROW_BYTES,RESPONSE_BUDGET,'RESPONSE_LIMIT');
+  if(array&&depth===1&&at[0]==='rules'){
+   need(v.length<=4096,'RULE_LIMIT');
+   reserve(budget,'response',v.length*RULE_ROW_BYTES,RESPONSE_BUDGET,'RESPONSE_LIMIT');
+  }
+  reserve(budget,'encodedWork',keys.reduce((sum,key)=>sum+key.length*6,0),ENCODED_WORK_BUDGET,'RAW_LIMIT');
+ }
  ancestors.add(v);const rows=[];for(const key of keys.filter(k=>!array||k!=='length').sort()){const d=Object.getOwnPropertyDescriptor(v,key);need(d&&Object.hasOwn(d,'value')&&d.enumerable,'RAW_DESCRIPTOR');rows.push([key,copy(d.value,depth+1,at.concat(key))]);}ancestors.delete(v);return[array?'array':'object',rows];
  }return copy(input,0,[]);}
 const hashEncoded=v=>crypto.createHash('sha256').update(JSON.stringify(v)).digest('hex'),digest=v=>hashEncoded(encode(v));
 function field(o,k){need(o&&typeof o==='object'&&!Array.isArray(o)&&!isProxy(o)&&[Object.prototype,null].includes(Object.getPrototypeOf(o)),'RECORD_INVALID');const d=Object.getOwnPropertyDescriptor(o,k);need(!d||d.enumerable&&Object.hasOwn(d,'value'),'ACCESSOR_REFUSED');return d?.value;}
 function encodedField(encoded,key){return encoded[1].find(row=>row[0]===key)?.[1];}
 const fields=encoded=>encoded?.[0]==='object'?encoded[1].map(([key,value])=>({keyDigest:digest(key),valueDigest:hashEncoded(value)})):[];
-function project(modId,record,baselineOrder){
- const encoded=encode(record,true),recordDigest=hashEncoded(encoded),rulesValue=encodedField(encoded,'rules'),attributes=encodedField(encoded,'attributes');
+function project(modId,record,baselineOrder,budget){
+ // Reserve fixed record metadata plus the worst escaped identifier length.
+ reserve(budget,'response',1024+modId.length*6,RESPONSE_BUDGET,'RESPONSE_LIMIT');
+ const encoded=encode(record,true,budget),recordDigest=hashEncoded(encoded),rulesValue=encodedField(encoded,'rules'),attributes=encodedField(encoded,'attributes');
  const rules={present:rulesValue!==undefined,type:rulesValue===undefined?'absent':rulesValue[0]};let baselineRuleOrder=baselineOrder?{matched:false}:undefined;
  if(rulesValue?.[0]==='array'){
-  const count=rulesValue[1].length;need(count<=4096,'RULE_LIMIT');const byIndex=new Map(rulesValue[1]);
+  const count=rulesValue[1].length,byIndex=new Map(rulesValue[1]);
   const ordered=Array.from({length:count},(_,i)=>byIndex.get(String(i))),orderedElementDigests=ordered.map(hashEncoded),sorted=ordered.map((value,i)=>({value,sha:orderedElementDigests[i]})).sort((a,b)=>a.sha<b.sha?-1:a.sha>b.sha?1:0);
   const sortedArray=['array',sorted.map((row,i)=>[String(i),row.value]).sort((a,b)=>a[0]<b[0]?-1:a[0]>b[0]?1:0)];
   const invariant=['object',encoded[1].map(([key,value])=>[key,key==='rules'?sortedArray:value])];
@@ -49,7 +76,8 @@ function readModRecordFingerprints(api,selectors,args){
  function capture(){need(api.getState===getState&&selectors.activeGameId===gameSelector&&selectors.activeProfileId===profileSelector,'API_CHANGED');const state=getState.call(api);
   const persistent=field(state,'persistent'),profiles=field(persistent,'profiles'),profile=field(profiles,profileId),settings=field(state,'settings'),next=field(field(settings,'profiles'),'nextProfileId');
   need(gameSelector(state)===gameId&&profileSelector(state)===profileId&&field(profile,'gameId')===gameId&&next===profileId,'CONTEXT_CHANGED');
-  const mods=field(field(persistent,'mods'),gameId),records=targets.map(modId=>{const record=field(mods,modId);need(field(record,'state')==='installed','TARGET_NOT_INSTALLED');return project(modId,record,orders.get(modId));});
+  const budget={encodedWork:0,response:1024+(gameId.length+profileId.length)*6};
+  const mods=field(field(persistent,'mods'),gameId),records=targets.map(modId=>{const record=field(mods,modId);need(field(record,'state')==='installed','TARGET_NOT_INSTALLED');return project(modId,record,orders.get(modId),budget);});
   need(api.getState===getState&&selectors.activeGameId===gameSelector&&selectors.activeProfileId===profileSelector,'API_CHANGED');return{gameId,profileId,nextProfileId:next,records};
  }
  const first=capture(),second=capture();need(JSON.stringify(first)===JSON.stringify(second),'SNAPSHOT_CHANGED');

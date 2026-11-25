@@ -62,3 +62,19 @@ test('pinned own native-origin oracle matches fresh Date and persisted-string re
  const file=process.env.VORTEX_NATIVE_DATE_ORACLE;assert.equal(crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'),'3631755b1d41f49c41aab5b4ff1405fc14e2b2af3460a015b39f02f0ce757cf9');const Native=require(file);
  for(const installTime of [new Date(1762304645006),'2025-11-05T00:00:00.000Z']){const record={state:'installed',attributes:{installTime,own:undefined,zero:-0},rules:[{type:'requires',own:undefined}]};assert.equal(fixture(record).run().records[0].recordDigest,Native.digest(record));}
 });
+
+test('large field projections have a shared response budget and can be split', () => {
+ const attributes = Object.fromEntries(Array.from({length: 20000}, (_, i) => ['field-' + i, i]));
+ const f = fixture({state:'installed',attributes});
+ f.state.persistent.mods.game.second = {state:'installed',attributes};
+ assert.throws(() => f.run({...args,modIds:['mod','second']}), /^Error: MOD_RECORD_FINGERPRINTS_RESPONSE_LIMIT$/);
+ const result = f.run({...args,modIds:['second']});
+ assert.equal(result.records[0].attributeFields.length, 20000);
+});
+
+test('aggregate encoded work is bounded even when digest output stays small', () => {
+ const nested = Array(6).fill('x'.repeat(1024 * 1024));
+ const f = fixture({state:'installed',nested});
+ f.state.persistent.mods.game.second = {state:'installed',nested};
+ assert.throws(() => f.run({...args,modIds:['mod','second']}), /^Error: MOD_RECORD_FINGERPRINTS_RAW_LIMIT$/);
+});

@@ -386,9 +386,15 @@ export async function runStdio(input, output, handle, maxPending = 100) {
       if (outputError) throw outputError;
       if (output.destroyed) throw new Error('MCP output closed');
       if (line !== null && !line.trim()) continue;
-      let request;
+      let request, parseError;
       try { if (line === null) throw new Error(); request = parse(line, MAX_REQUEST_BYTES); }
-      catch { await write({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }); continue; }
+      catch {
+        parseError = { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } };
+        if (activeDispatches === 0) {
+          await write(parseError);
+          continue;
+        }
+      }
       const notification = request?.jsonrpc === '2.0' && typeof request.method === 'string'
         && !Object.hasOwn(request, 'id');
       // A full active queue must still receive cancellation. Do not grow a
@@ -396,10 +402,16 @@ export async function runStdio(input, output, handle, maxPending = 100) {
       // later plan steps while finally waits for already invoked settlement.
       if (!notification && pending.size >= maxPending && activeDispatches > 0)
         throw new Error('MCP request capacity exceeded');
-      activeDispatches++;
-      const dispatch = Promise.resolve(handle(request)).then(
-        response => {activeDispatches--; return response;},
-        error => {activeDispatches--; throw error;});
+      // Parse replies share the bounded output queue. Waiting here for stdout
+      // would prevent cancellation from reaching an in-flight plan.
+      let dispatch;
+      if (parseError) dispatch = Promise.resolve(parseError);
+      else {
+        activeDispatches++;
+        dispatch = Promise.resolve(handle(request)).then(
+          response => {activeDispatches--; return response;},
+          error => {activeDispatches--; throw error;});
+      }
       const work = dispatch.then(response => response ? write(response) : undefined);
       pending.add(work);
       work.then(() => pending.delete(work), () => {});

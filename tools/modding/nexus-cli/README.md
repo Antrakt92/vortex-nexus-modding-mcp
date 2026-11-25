@@ -18,6 +18,8 @@ changed installed files, and writes the executable pin to
 The installer rejects reparse points in output paths, including dangling links.
 It checks all existing files and the receipt before extraction and unpacks the
 same in-memory archive bytes whose size/hash passed verification.
+New files are published only after their contents are flushed to disk. An
+interruption during a write leaves the final path available for a retry.
 Before launch, the wrapper checks the executable, shipped DLLs and runtime
 configuration against pins from that archive and refuses reparse paths.
 

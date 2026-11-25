@@ -136,6 +136,44 @@ class PortablePathsTests(unittest.TestCase):
             self.assertEqual(receipt.read_text(), '{"other":"installation"}')
             self.assertFalse((installer.ROOT / installer.VERSION).exists())
 
+    def test_interrupted_file_write_leaves_retryable_installation(self):
+        for interrupted_file in ('archive', 'runtime', 'receipt'):
+            with self.subTest(file=interrupted_file), tempfile.TemporaryDirectory(prefix='cli interrupted write ') as root:
+                installer = self.fixture_installer(root)
+                archive = installer.ROOT / f'nexusmods-{installer.VERSION}-win-x64.zip'
+                archive_bytes = archive.read_bytes()
+                executable = installer.ROOT / installer.VERSION / 'nexusmods.exe'
+                receipt = installer.ROOT / 'installation.json'
+                interrupted_target = {'archive': archive, 'runtime': executable, 'receipt': receipt}[interrupted_file]
+                if interrupted_file == 'archive':
+                    archive.unlink()
+                flush = os.fsync
+                writes_before_interruption = 2 if interrupted_file == 'receipt' else 0
+
+                with (
+                    patch.object(installer.urllib.request, 'urlopen', side_effect=lambda request, timeout: io.BytesIO(archive_bytes)),
+                    contextlib.redirect_stdout(io.StringIO()),
+                ):
+                    flush_steps = [None] * writes_before_interruption + [OSError('interrupted before publication')]
+
+                    def fail_selected_flush(descriptor):
+                        error = flush_steps.pop(0)
+                        if error is not None:
+                            raise error
+                        flush(descriptor)
+
+                    with patch.object(installer.os, 'fsync', side_effect=fail_selected_flush):
+                        with self.assertRaisesRegex(OSError, 'interrupted before publication'):
+                            installer.install()
+                    self.assertFalse(interrupted_target.exists())
+                    self.assertEqual(list(installer.ROOT.rglob('.nexus-cli-install-*')), [])
+                    installer.install()
+                    installer.install()
+
+                self.assertEqual(archive.read_bytes(), archive_bytes)
+                self.assertEqual(executable.read_bytes(), b'Synthetic fixture; never executed')
+                self.assertEqual(json.loads(receipt.read_text(encoding='utf-8'))['executable'], str(executable))
+
     def test_oversized_cached_archive_is_read_only_up_to_the_pinned_limit(self):
         with tempfile.TemporaryDirectory(prefix='cli oversized cache audit ') as root:
             installer = self.fixture_installer(root)

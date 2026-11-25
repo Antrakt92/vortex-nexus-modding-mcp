@@ -16,6 +16,13 @@ returns the hash of the current record with only its rules reordered to that
 vector. Duplicate rules retain their counts. If the multisets differ, it returns
 `matched:false` without a reconstructed record hash.
 
+Each vector supports up to 4,096 digests. The MCP request, including its
+envelope, must fit in 1 MiB. Split large vectors across calls for smaller groups
+of mod IDs. The fingerprint read also bounds estimated encoded work and digest
+output across the selected records. On `MOD_RECORD_FINGERPRINTS_RESPONSE_LIMIT`
+or `MOD_RECORD_FINGERPRINTS_RAW_LIMIT`, select fewer records per call. If a
+single record still exceeds the limit, this tool cannot fingerprint it.
+
 Compare the reconstructed hash with the independently retained original record
 hash. Equality proves that the selected record differs only by rule order under
 the hashing contract. This does not establish whether order affects a particular

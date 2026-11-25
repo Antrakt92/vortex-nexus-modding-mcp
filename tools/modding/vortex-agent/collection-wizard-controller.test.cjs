@@ -30,7 +30,7 @@ test('observed new owner starts and finishes via exact native session, one click
  const f=fixture();await f.c.initialized;assert.equal((await f.c.readiness()).status,'idle');f.install();
  const observed=await f.c.readiness();assert.equal(observed.status,'ready');assert.equal(observed.modId,'owner');assert.equal(observed.sourceAdmitted,true);await f.c.prepare(f.args);f.c.validate(f.args);f.c.click(f.args);
  const result=await f.c.waitForTransition(f.args);assert.equal(result.transition,'started');f.c.verifyTransition(f.args,result);assert.equal(f.clicks,1);
- const done={...f.args,requestId:'wizard_request_2',action:'done'};f.mode='finish';await f.c.prepare(done);f.c.click(done);
+ const done={...f.args,requestId:'wizard_request_2',action:'done'};f.mode='finish';assert.equal((await f.c.readiness()).status,'ready');await f.c.prepare(done);f.c.click(done);
  const finished=await f.c.waitForTransition(done);assert.equal(finished.transition,'finished');f.c.verifyTransition(done,finished);assert.equal(f.clicks,2);
 });
 for(const [label,change,pattern] of [
@@ -51,6 +51,12 @@ test('preexisting owner is not a new installation even after same ID event',asyn
 test('consumed click cannot repeat after native callback throws',async()=>{const f=fixture();await f.c.initialized;f.install();await f.c.prepare(f.args);f.element.click=()=>{throw Error('native-failure');};assert.throws(()=>f.c.click(f.args),/native-failure/);assert.throws(()=>f.c.click(f.args),/PREPARATION_REQUIRED/);await assert.rejects(f.c.prepare({...f.args,requestId:'other_request'}),/ACTION_ALREADY_CONSUMED/);});
 test('no native transition is not success and cannot be retried',async()=>{const f=fixture();await f.c.initialized;f.install();await f.c.prepare(f.args);f.element.click=()=>{};f.c.click(f.args);await assert.rejects(f.c.waitForTransition(f.args),/TRANSITION_TIMEOUT/);await assert.rejects(f.c.prepare(f.args),/ACTION_ALREADY_CONSUMED/);});
 test('another native session is not completion',async()=>{const f=fixture();await f.c.initialized;f.install();await f.c.prepare(f.args);f.c.click(f.args);f.s.session.collections.activeSession.collectionId='other';await assert.rejects(f.c.waitForTransition(f.args),/SESSION_IDENTITY_CHANGED/);});
+test('Install Now retains the first matching native session through transition verification',async()=>{
+ const f=fixture();await f.c.initialized;f.install();await f.c.prepare(f.args);f.c.click(f.args);
+ const result=await f.c.waitForTransition(f.args);
+ f.s.session.collections.activeSession.sessionId='replacement-session';
+ assert.throws(()=>f.c.verifyTransition(f.args,result),/SESSION_IDENTITY_CHANGED/);
+});
 test('source generation change between prepare and click refuses',async()=>{const f=fixture();await f.c.initialized;f.install();await f.c.prepare(f.args);f.source=false;assert.throws(()=>f.c.click(f.args));assert.equal(f.clicks,0);});
 test('controller registration is per API, not per HTTP request',async()=>{const f=fixture();const a=getCollectionWizardController(f.api,f.options),b=getCollectionWizardController(f.api,f.options);assert.equal(a,b);await a.initialized;});
 test('dialog binding observes the consumed new session before the transition poll',async()=>{
@@ -68,11 +74,46 @@ test('dialog binding cannot adopt a session before its Install Now effect',async
 test('Done does not rebase changed rules after started acceptance',async()=>{
  const f=fixture();await f.c.initialized;f.install();await f.c.prepare(f.args);f.c.click(f.args);const r=await f.c.waitForTransition(f.args);f.c.verifyTransition(f.args,r);
  f.owner.rules=[{type:'requires',reference:{id:'foreign'}}];f.mode='finish';
+ const readiness=await f.c.readiness();
+ assert.equal(readiness.status,'held');assert.equal(readiness.reason,'COLLECTION_WIZARD_RULES_CHANGED');
  await assert.rejects(f.c.prepare({...f.args,requestId:'done_request',action:'done'}),/RULES_CHANGED/);assert.equal(f.clicks,1);
 });
 test('equivalent duplicate references refuse before SDK could replace the wrong rule',async()=>{
  const f=fixture();f.owner.rules=[{type:'requires',reference:{repo:{modId:1,fileId:2}}},{type:'recommends',reference:{repo:{modId:1,fileId:2},idHint:'other'}}];
- await f.c.initialized;f.install();await assert.rejects(f.c.prepare(f.args),/DUPLICATE_RULE_REFERENCE/);assert.equal(f.clicks,0);
+ await f.c.initialized;f.install();
+ const readiness=await f.c.readiness();
+ assert.equal(readiness.status,'held');assert.equal(readiness.reason,'COLLECTION_WIZARD_DUPLICATE_RULE_REFERENCE');
+ await assert.rejects(f.c.prepare(f.args),/DUPLICATE_RULE_REFERENCE/);assert.equal(f.clicks,0);
+});
+test('Done requires an observed session in readiness and preparation',async()=>{
+ for(const sessionId of [undefined,'unobserved-session']){
+  const f=fixture();await f.c.initialized;f.install();f.mode='finish';
+  f.s.session.collections.activeSession={...f.session(),sessionId};
+  const readiness=await f.c.readiness();
+  assert.equal(readiness.status,'held');assert.equal(readiness.reason,'COLLECTION_WIZARD_SESSION_NOT_OBSERVED');
+  const done={...f.args,requestId:'done_request',action:'done'};
+  await assert.rejects(f.c.prepare(done),/SESSION_NOT_OBSERVED/);assert.equal(f.clicks,0);
+ }
+});
+test('Done refuses a replacement session between preparation and click',async()=>{
+ const f=fixture();await f.c.initialized;f.install();await f.c.prepare(f.args);f.c.click(f.args);
+ const started=await f.c.waitForTransition(f.args);f.c.verifyTransition(f.args,started);
+ const done={...f.args,requestId:'done_request',action:'done'};f.mode='finish';await f.c.prepare(done);
+ f.s.session.collections.activeSession.sessionId='replacement-session';
+ assert.throws(()=>f.c.click(done),/SESSION_NOT_OBSERVED/);assert.equal(f.clicks,1);
+});
+test('pending stock optional decisions hold before Install Now can rewrite collection rules',async()=>{
+ const f=fixture();f.owner.rules=[{type:'recommends',reference:{id:'optional'}}];
+ await f.c.initialized;f.install();
+ const readiness=await f.c.readiness();
+ assert.equal(readiness.status,'held');assert.equal(readiness.reason,'COLLECTION_WIZARD_OPTIONAL_DECISIONS_UNREVIEWED');
+ await assert.rejects(f.c.prepare(f.args),/OPTIONAL_DECISIONS_UNREVIEWED/);assert.equal(f.clicks,0);
+});
+test('an existing optional decision does not block Install Now',async()=>{
+ const f=fixture();f.owner.rules=[{type:'recommends',reference:{id:'optional'},ignored:true}];
+ await f.c.initialized;f.install();
+ assert.equal((await f.c.readiness()).status,'ready');
+ await f.c.prepare(f.args);f.c.click(f.args);assert.equal(f.clicks,1);
 });
 test('a committed Done arms the next new collection without restarting Vortex',async()=>{
  const f=fixture();await f.c.initialized;f.install();await f.c.prepare(f.args);f.c.click(f.args);let r=await f.c.waitForTransition(f.args);f.c.verifyTransition(f.args,r);

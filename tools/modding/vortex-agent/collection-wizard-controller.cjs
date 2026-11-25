@@ -8,6 +8,11 @@ const need=(v,code)=>{if(!v)throw Error('COLLECTION_WIZARD_'+code);};
 const stable=value=>JSON.stringify(value,(_,v)=>v&&typeof v==='object'&&!Array.isArray(v)
  ? Object.fromEntries(Object.keys(v).sort().map(k=>[k,v[k]])):v);
 const positive=v=>typeof v==='number'&&Number.isSafeInteger(v)&&v>0;
+function checkStartRules(rules){
+ // Stock Vortex can persist ignored:true while starting a collection. A
+ // pending optional choice is outside the reviewed rule-change projection.
+ need(!rules.some(rule=>rule.type==='recommends'&&rule.ignored===undefined),'OPTIONAL_DECISIONS_UNREVIEWED');
+}
 function uniqueReferences(rules){
  need(Array.isArray(rules)&&rules.length<=10000,'RULES_UNAVAILABLE');
  const rows=rules.map(rule=>{
@@ -72,11 +77,26 @@ function createCollectionWizardController(api,options){
   const n=native(sourceAdmitted);need(stable(n.owner)===binding.ownerIdentity,'OWNER_CHANGED');
   return {n,d:dom(n)};
  }
+ function requireObservedSession(){
+  const sessionId=binding.sessionId;
+  need(typeof sessionId==='string'&&sessionId.length>0
+   &&sessionId===state().session.collections.activeSession?.sessionId,'SESSION_NOT_OBSERVED');
+ }
+ function validateActionRules(args){
+  if(args.action==='done')requireObservedSession();
+  const rules=rawOwner(args.modId).rules??[];
+  uniqueReferences(rules);
+  if(args.action==='install_now')checkStartRules(rules);
+  const ruleKey=stable(rules);
+  need(ruleKey===binding.rules||(args.action==='done'&&ruleKey===binding.augmentedRules),'RULES_CHANGED');
+  return {rules,ruleKey};
+ }
  function validate(args){
   need(prepared&&prepared.requestId===args.requestId&&!prepared.consumed,'PREPARATION_REQUIRED');
   admit.revalidate(proof);
   const {n,d}=observe();
   validateCollectionWizard({expected:args,native:n,dom:d,binding});
+  if(args.action==='done')requireObservedSession();
   need(stable(rawOwner(args.modId).rules??[])===prepared.rules,'RULES_CHANGED');
   need(stable(state().persistent.downloads.files[args.archiveId].modInfo)===prepared.downloadInfo,'DOWNLOAD_METADATA_CHANGED');
   need(d.candidate&&d.candidate.element===prepared.element&&d.candidate.modal===prepared.modal,'DOM_REPLACED');
@@ -124,6 +144,7 @@ function createCollectionWizardController(api,options){
    if(raw===undefined)return false;
    need(n.session.collectionId===args.modId&&n.session.profileId===args.profileId&&n.session.gameId===args.gameId,'SESSION_IDENTITY_CHANGED');
    need(typeof raw.sessionId==='string'&&raw.sessionId.length>0&&!prepared.oldSessions.has(raw.sessionId),'SESSION_PREEXISTED');
+   need(binding.sessionId===undefined||binding.sessionId===raw.sessionId,'SESSION_IDENTITY_CHANGED');
    binding.sessionId=raw.sessionId;
    return true;
   }
@@ -149,6 +170,7 @@ function createCollectionWizardController(api,options){
    need(typeof sessionId==='string'&&sessionId.length>0&&raw.sessionId===sessionId,'SESSION_NOT_OBSERVED');
    const rules=stable(rawOwner(binding.modId).rules??[]);
    need(rules===binding.rules||rules===binding.augmentedRules,'RULES_CHANGED');
+   binding.sessionId=sessionId;
    return {...Object.fromEntries(['gameId','profileId','modId','archiveId'].map(k=>[k,binding[k]])),
     ...Object.fromEntries(['collectionId','revisionId','revisionNumber'].map(k=>[k,n.owner[k]])),
     sessionId,epochReady:true,invalidated:false};
@@ -164,11 +186,13 @@ function createCollectionWizardController(api,options){
     // proof held across asynchronous preparation or native session observation.
     const readProof=await admitRead();admitRead.revalidate(readProof);out.sourceAdmitted=true;
     if(!binding){const d=dom();if(ready&&!invalidated&&d.status==='idle'){out.status='idle';out.reason='COLLECTION_WIZARD_IDLE';}return out;}
+    need(!prepared?.consumed||prepared.completed,'ACTION_ALREADY_CONSUMED');
     const {n,d}=observe(true);
     Object.assign(out,{gameId:n.gameId,profileId:n.profileId,modId:n.owner.id,archiveId:n.owner.archiveId,
      collectionId:n.owner.collectionId,revisionId:n.owner.revisionId,revisionNumber:n.owner.revisionNumber,
      phase:d.phase??null,action:d.phase==='start'?'install_now':d.phase==='finish'?'done':null,sourceAdmitted:true,bindingReady:true});
     validateCollectionWizard({expected:out,native:n,dom:d,binding});
+    validateActionRules(out);
     out.status='ready';out.reason='COLLECTION_WIZARD_PREFLIGHT_REQUIRED';
     // Readiness never substitutes for asynchronous metadata/source preparation.
    }catch(e){out.reason=/^COLLECTION_WIZARD_[A-Z0-9_]+$/.test(e.message)?e.message:
@@ -182,11 +206,7 @@ function createCollectionWizardController(api,options){
    need(positive(args.collectionId)&&positive(args.revisionId)&&positive(args.revisionNumber),'REMOTE_IDENTITY_INVALID');
    proof=await admit();const {n,d}=observe();validateCollectionWizard({expected:args,native:n,dom:d,binding});
    need(d.candidate,'DOM_ACTION_UNAVAILABLE');
-   need(args.action!=='done'||binding.sessionId===state().session.collections.activeSession?.sessionId,'SESSION_NOT_OBSERVED');
-   const rules=rawOwner(args.modId).rules??[];
-   uniqueReferences(rules);
-   const ruleKey=stable(rules);
-   need(ruleKey===binding.rules||(args.action==='done'&&ruleKey===binding.augmentedRules),'RULES_CHANGED');
+   const {rules,ruleKey}=validateActionRules(args);
    const downloadInfo=stable(state().persistent.downloads.files[args.archiveId].modInfo);
    const revision=args.action==='install_now'?await versionPreflight(args):null;
    const raw=state().session.collections.activeSession;
