@@ -8,7 +8,11 @@ const object = value => value !== null && typeof value === 'object' && !Array.is
 const id = value => typeof value === 'string' && value.length > 0 && value.length <= 200 && !/[\r\n\0]/.test(value);
 const dialogIdentity = value => typeof value === 'string' && value.length > 0 && value.length <= 512 && !/[\x00-\x1f\x7f]/.test(value);
 const requestId = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{8,80}$/.test(value);
-const at = value => typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value) && Number.isFinite(Date.parse(value));
+function at(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value)) return false;
+  const date = new Date(value);
+  return Number.isFinite(date.valueOf()) && date.toISOString() === value;
+}
 const keys = (value, allowed) => object(value) && Object.keys(value).every(k => allowed.includes(k));
 const common = ['protocol', 'receiptVersion', 'requestId', 'operation', 'gameId', 'profileId', 'at'];
 function validParameters(a, operation) {

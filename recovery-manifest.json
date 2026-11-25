@@ -896,7 +896,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/collection-wizard-receipts.test.cjs",
-      "sha256_lf": "bc836959537c3c4d0fec129395682864cc9946e06e2647574413b7a8aa805189"
+      "sha256_lf": "3421fa7787731a57c6006abd38f4d40ca8e4bbbc0f9a65fd9b568a250a3b2078"
     },
     {
       "path": "tools/modding/vortex-agent/collection-wizard-serialization.test.cjs",
@@ -3176,7 +3176,7 @@
     },
     {
       "path": "tools/modding/vortex-agent/receipts.cjs",
-      "sha256_lf": "7a7e9a608f399d077609d2166325ec49c80d39e26ffab24c91f3a48df5847168"
+      "sha256_lf": "f8b1bcf07c2595b3517afc5f346fa600cd24a3fc2606491d25efaee91e29970d"
     },
     {
       "path": "tools/modding/vortex-agent/regression.test.ts",
