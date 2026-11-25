@@ -844,11 +844,11 @@
     },
     {
       "path": "tools/modding/vortex-agent/collection-update-prompt.cjs",
-      "sha256_lf": "183db0afff7493bf41969418fe60cb75d2cf04e86b131596b0b3bdc5c4c4a1ba"
+      "sha256_lf": "bbb3fd1268c05d0e527ded7b39220cd5bbc6d266e33cba953d2a5a1e9746b749"
     },
     {
       "path": "tools/modding/vortex-agent/collection-update-prompt.test.cjs",
-      "sha256_lf": "48ffaf51bc83657680ef4fdd141ead4b9b7470d8f1725be8f68e0b519280672c"
+      "sha256_lf": "6df5101fdefb454c197903a30224547c44183c8019c6b86b4568e31f7cce5f9a"
     },
     {
       "path": "tools/modding/vortex-agent/collection-wizard-controller.cjs",
