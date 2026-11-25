@@ -1,6 +1,7 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),crypto=require('node:crypto');
 const {EventEmitter}=require('node:events');
+const vm=require('node:vm');
 const {_createChildForTests:create,_hashExecutableForTests:hashFile,_admitExecutableForTests:admitExecutable}=require('./file-proof-child-client.cjs');
 const core=require('./file-proof-worker.cjs');
 const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
@@ -59,6 +60,27 @@ test('late initialization after close cannot release a queued request',async t=>
 test('disconnect or child error is sanitized and does not respawn',async t=>{
  const f=fixture(t),h=fake(f);h.adapter.postMessage(f.request);await turn();h.child().emit('error',Error('private path'));h.child().emit('disconnect');
  assert.deepEqual(h.errors,['FILE_PROOF_CHILD_FAILED']);assert.equal(h.spawned(),1);await h.adapter.terminate();
+});
+test('child exits cleanly on ordinary disconnect and retains a failed reply exit status',async t=>{
+ const {config}=fixture(t),source=fs.readFileSync(path.join(__dirname,'file-proof-child.cjs'),'utf8');
+ for(const failReply of [false,true]){
+  const child=new EventEmitter(),ownModule={exports:{}},replies=[];
+  child.env={ELECTRON_RUN_AS_NODE:'1'};
+  child.versions={electron:'44.2.0',node:'24.20.0'};
+  child.send=reply=>{
+   if(failReply)throw Error('IPC reply channel closed');
+   replies.push(reply.kind);
+  };
+  child.disconnect=()=>process.nextTick(()=>child.emit('disconnect'));
+  const load=id=>id==='./file-proof-worker.cjs'?core:{getBackend:()=>({name:'original-fs'})};
+  load.main=ownModule;
+  vm.runInNewContext(source,{process:child,module:ownModule,require:load},{timeout:1000});
+  child.emit('message',{kind:'initialize',config});
+  if(!failReply)child.disconnect();
+  await turn();
+  assert.deepEqual(replies,failReply?[]:['initialized']);
+  assert.equal(child.exitCode,failReply?2:0);
+ }
 });
 test('shutdown only kills its owned child after grace and reports unconfirmed exit by five seconds',async t=>{
  t.mock.timers.enable({apis:['setTimeout']});const f=fixture(t),h=fake(f,{exit:false});await turn();

@@ -944,11 +944,11 @@
     },
     {
       "path": "tools/modding/vortex-agent/file-proof-child-client.test.cjs",
-      "sha256_lf": "f13441bba5cdd0ee9078c9a94b4a8605dbb7e204d41060441144a2b63cccd21a"
+      "sha256_lf": "14a7bf11449fdf95cb593ffa6b35d9eaeee2c9efcd250069752d3b98786ac42f"
     },
     {
       "path": "tools/modding/vortex-agent/file-proof-child.cjs",
-      "sha256_lf": "e9de384c4fa6f61751d1befb2bc313a6b4cb00a84e6bab43af9eac43ec7d844c"
+      "sha256_lf": "46acfcdc810eb00e995933d3a6701de0694f2459c1db729bb575fa7a377a669e"
     },
     {
       "path": "tools/modding/vortex-agent/file-proof-client-parity.test.mjs",

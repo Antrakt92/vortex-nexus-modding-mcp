@@ -3,10 +3,10 @@
 const core = require('./file-proof-worker.cjs');
 const backend = require('./file-proof-backend.cjs');
 let run, config;
-function fatal() { try { process.disconnect(); } catch {} process.exitCode = 2; }
+function fatal() { process.exitCode = 2; try { process.disconnect(); } catch {} }
 if (require.main === module) {
   if (backend.getBackend().name !== 'original-fs' || process.type !== undefined || process.env.ELECTRON_RUN_AS_NODE !== '1' || typeof process.send !== 'function') throw Error('FILE_PROOF_CHILD_RUNTIME_CHANGED');
-  process.on('disconnect', () => { process.exitCode = 0; });
+  process.on('disconnect', () => { process.exitCode ??= 0; });
   process.on('message', message => {
     try {
       core.budget(message);
