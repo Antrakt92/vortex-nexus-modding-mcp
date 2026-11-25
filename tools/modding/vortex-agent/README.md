@@ -96,6 +96,10 @@ and dependents, bounded file conflicts, native unresolved conflicts, collection
 health observations, dialogs and external changes. They do not expose raw
 Vortex state or account/config exports. Collection health returns observed
 numbers/booleans; it does not infer installation completion or force recalculation.
+`list_unsolved_conflicts` checks each recorded pair against the settled active
+profile and refuses pairs with missing, non-installed or disabled endpoints.
+Vortex retains a shared conflict snapshot, so a successful list does not prove
+that Vortex ran a fresh conflict calculation for this profile.
 
 The bridge also exposes `inspect_session` with optional `{ "diagnostics": true }`.
 It composes existing curated reads with at most four in flight, checks context
