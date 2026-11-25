@@ -119,6 +119,7 @@ test('independent verifier requires zero exit and the matching graceful close re
   const valid = { fixtureExited: true, ordinaryUnchanged: true, remainingFixturePids: [],
     fixtureTerminal: { event: 'exit', code: 0, signal: null } };
   assert.doesNotThrow(() => check(passed, valid));
+  assert.throws(() => check(passed, {...valid, fixtureProcessRecordError: 'FIXTURE_PROCESS_RECORD_UNAVAILABLE'}), /recorded fixture process/);
   for (const terminal of [undefined, null, { event: 'exit', code: 3, signal: null },
     { event: 'exit', code: null, signal: 'SIGTERM' }, { event: 'error', code: 'ENOENT' }]) {
     assert.throws(() => check(passed, { ...valid, fixtureTerminal: terminal }), /clean fixture exit/);
@@ -127,6 +128,24 @@ test('independent verifier requires zero exit and the matching graceful close re
     [close, { phase: 'graceful-close-unavailable' }]]) {
     assert.throws(() => check({...passed, events}, valid), /graceful fixture close/);
   }
+});
+
+test('independent verifier reads and joins the launch record to the owned fixture and ordinary cohort', () => {
+  const source = fs.readFileSync(new URL('./native-fixture-verify.mjs', import.meta.url), 'utf8');
+  const start = source.indexOf("const fixtureProcess = read('process.json');");
+  const end = source.indexOf('if (input.hostVersion)', start);
+  assert.ok(start >= 0 && end > start);
+  const root = path.resolve('synthetic-fixture'), input = {userData: path.join(root, 'userdata')};
+  const before = {processes: [{pid: 64, exe: 'fixture.exe', type: ''}]}, after = structuredClone(before);
+  const record = {pid: 128, executable: 'fixture.exe', args: ['--user-data', input.userData, '--start-minimized'], ordinaryPids: [64]};
+  const verify = vm.compileFunction(source.slice(start, end), ['assert', 'read', 'result', 'path', 'root', 'input', 'before', 'after']);
+  const check = (launch = record, result = {fixturePid: 128}) => verify(assert, () => launch, result, path, root, input, before, after);
+  assert.doesNotThrow(() => check());
+  assert.throws(() => verify(assert, () => {throw Error('missing launch');}, {}, path, root, input, before, after), /missing launch/);
+  assert.throws(() => check({...record, pid: 129}), /Fixture PID evidence changed/);
+  assert.throws(() => check({...record, pid: 64}, {}), /Fixture PID aliases an ordinary process/);
+  assert.throws(() => check({...record, args: ['--user-data', 'another-profile', '--start-minimized']}), /Expected values to be strictly deep-equal/);
+  assert.throws(() => check({...record, executable: 'another.exe'}), /Fixture executable differs from the admitted host/);
 });
 
 test('fixture runner records the process exit or error without treating a signal as a clean exit', () => {
@@ -144,6 +163,26 @@ test('fixture runner records the process exit or error without treating a signal
   }
 });
 
+test('fixture runner exposes owned PID and keeps observing after process record publication fails', () => {
+  const source = fs.readFileSync(new URL('./native-fixture.mjs', import.meta.url), 'utf8');
+  const start = source.indexOf('  const readTerminal = observeFixtureTerminal(child);');
+  const end = source.indexOf('  const deadline = ', start);
+  assert.ok(start >= 0 && end > start);
+  const infos = [];
+  const child = Object.assign(new EventEmitter(), {pid: 257});
+  const fixture = {observeFixtureTerminal, child, path, root: 'fixture', log: 2, vortexExe: 'fixture.exe', args: [],
+    before: {processes: [{pid: 5, type: ''}, {pid: 6, type: 'renderer'}]},
+    fs: {closeSync() {}}, console: {log(line) {infos.push(JSON.parse(line));}},
+    write() {throw Object.assign(Error('private fixture path'), {code: 'ENOSPC'});},
+  };
+  const finalize = vm.compileFunction(source.slice(start, end) + '\nreturn {readTerminal, fixtureProcessRecordError};', Object.keys(fixture));
+  const result = finalize(...Object.values(fixture));
+  assert.deepEqual(infos, [{root: 'fixture', fixturePid: child.pid, ordinaryMainPids: [5]}]);
+  assert.equal(result.fixtureProcessRecordError, 'FIXTURE_PROCESS_RECORD_UNAVAILABLE');
+  child.emit('exit', 0, null);
+  assert.deepEqual(result.readTerminal(), {event: 'exit', code: 0, signal: null});
+});
+
 test('fixture runner retains terminal evidence when the ordinary after snapshot fails', async () => {
   const source = fs.readFileSync(new URL('./native-fixture.mjs', import.meta.url), 'utf8');
   const start = source.indexOf('  const cleanExit = ');
@@ -154,7 +193,7 @@ test('fixture runner retains terminal evidence when the ordinary after snapshot 
   const must = (ok, code) => { if (!ok) throw Error(code); };
   for (const stopped of [false, true]) {
     const records = new Map();
-    const fixtures = {fixtureTerminal: terminal, path, root: 'fixture', stopped, stockReview: true,
+    const fixtures = {fixtureTerminal: terminal, fixtureProcessRecordError: undefined, path, root: 'fixture', stopped, stockReview: true,
       child: {pid: 100}, fixtureObserved: true, stoppedObservationFailure: undefined,
       hasGracefulFixtureClose, ordinaryProcessesPreserved, must, before: {processes: []},
       fs: {existsSync: () => true, readFileSync: () => JSON.stringify(receipt)},
@@ -181,7 +220,7 @@ test('fixture runner records ordinary and terminal evidence even if the worker r
   assert.ok(start >= 0 && end > start);
   const records = new Map(), terminal = {event: 'exit', code: 0, signal: null};
   const before = {manifestSha256: 'fixture', processes: [{pid: 2, generation: '123456789012345'}]};
-  const fixtures = {fixtureTerminal: terminal, path, root: 'fixture', stopped: false, stockReview: true,
+  const fixtures = {fixtureTerminal: terminal, fixtureProcessRecordError: undefined, path, root: 'fixture', stopped: false, stockReview: true,
     child: {pid: 100}, hasGracefulFixtureClose, ordinaryProcessesPreserved, before,
     must: (ok, code) => { if (!ok) throw Error(code); },
     fs: {existsSync: () => true, readFileSync: () => '{'},

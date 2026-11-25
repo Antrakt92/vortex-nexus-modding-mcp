@@ -9,7 +9,10 @@ import receipts from './receipts.cjs';
 import { validInstallDiagnostics } from './install-diagnostics.cjs';
 import { assertOrdinaryModSnapshot, hasGracefulFixtureClose, observeOrdinaryHold, ordinaryProcessesPreserved } from './native-fixture-snapshot.mjs';
 const base = path.join(paths.workspace, 'local-state/vortex-agent-native-fixture');
-const root = path.resolve(process.argv[2] || '');
+const [fixturePath, mode, ...extra] = process.argv.slice(2);
+assert.ok(fixturePath && !extra.length && (mode === undefined || mode === '--check-only'),
+  'Usage: native-fixture-verify.mjs <fixture-root> [--check-only]');
+const root = path.resolve(fixturePath);
 const rel = path.relative(base, root);
 assert.ok(rel && !rel.startsWith('..') && !path.isAbsolute(rel), 'Root outside fixture');
 const read = name => JSON.parse(fs.readFileSync(path.join(root, name)));
@@ -21,6 +24,7 @@ if (input.runtimeVersion) {
 }
 function eventVersion(value) { return value.events.find(item => item.phase === 'authenticated-native-health')?.health?.extensionVersion; }
 assert.equal(receipt.status, 'passed'); assert.equal(result.fixtureExited, true); assert.equal(result.ordinaryUnchanged, true); assert.deepEqual(result.remainingFixturePids, []);
+assert.equal(result.fixtureProcessRecordError, undefined, 'Expected a recorded fixture process');
 assert.deepEqual(result.fixtureTerminal, { event: 'exit', code: 0, signal: null }, 'Expected a clean fixture exit');
 assert.ok(hasGracefulFixtureClose(receipt), 'Expected a graceful fixture close request');
 const event = phase => { const found = receipt.events.filter(e => e.phase === phase); assert.equal(found.length, 1, phase); return found[0]; };
@@ -352,6 +356,15 @@ if (before.mode !== 'stopped') {
   assertOrdinaryModSnapshot(before.mods);
   assertOrdinaryModSnapshot(after.mods);
 }
+const fixtureProcess = read('process.json');
+assert.ok(Number.isSafeInteger(fixtureProcess.pid) && fixtureProcess.pid > 0, 'Expected an owned fixture PID');
+if (result.fixturePid !== undefined) assert.equal(result.fixturePid, fixtureProcess.pid, 'Fixture PID evidence changed');
+assert.equal(input.userData, path.join(root, 'userdata'), 'Fixture user data is outside the owned run');
+assert.deepEqual(fixtureProcess.args, ['--user-data', input.userData, '--start-minimized']);
+assert.deepEqual(fixtureProcess.ordinaryPids, before.processes.map(row => row.pid));
+assert.ok(![...before.processes, ...after.processes].some(row => row.pid === fixtureProcess.pid), 'Fixture PID aliases an ordinary process');
+const fixtureExecutable = before.executable?.file ?? before.processes.find(row => !row.type)?.exe;
+assert.equal(fixtureProcess.executable, fixtureExecutable, 'Fixture executable differs from the admitted host');
 if (input.hostVersion) {
   assert.ok(['2.9.1', '2.10.1', '2.11.0'].includes(input.hostVersion));
   const reviewedPath = new URL('./stock-vortex-' + input.hostVersion + '-admission.json', import.meta.url);
@@ -447,5 +460,5 @@ const proof = { passed: true, root, checks: ['native import/install', 'authentic
   ...(nativeDialogObserved ? ['authenticated native dialog queue read'] : []),
   ...(input.nativeDialogProbe ? ['authenticated Cancel reached the stock renderer callback with remember=false'] : []),
   'clean native shutdown'], nexusReuse: receipt.nexusReuse, at: new Date().toISOString() };
-fs.writeFileSync(path.join(root, 'independent-verification.json'), JSON.stringify(proof, null, 2), { flag: 'wx' });
+if (mode !== '--check-only') fs.writeFileSync(path.join(root, 'independent-verification.json'), JSON.stringify(proof, null, 2), { flag: 'wx' });
 console.log(JSON.stringify(proof));
