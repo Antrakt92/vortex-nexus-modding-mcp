@@ -15,9 +15,19 @@ upgrade = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(upgrade)
 ROOT = upgrade.ROOT / 'local-state/vortex-agent-build/tests'
 ROOT.mkdir(parents=True, exist_ok=True)
+INVENTORY = MODULE.with_name('maintained-sources.json')
 
 
-def package(directory, version, content, historical=False):
+def write_source_fixture(directory):
+    directory.mkdir()
+    raw = INVENTORY.read_bytes()
+    inventory = json.loads(raw)
+    for name in inventory['bundleModules'] + inventory['provenanceOnly']:
+        (directory / name).write_bytes(f'Synthetic maintained source for {name}'.encode('utf-8'))
+    (directory / INVENTORY.name).write_bytes(raw)
+
+
+def package(directory, version, content, historical=False, maintained=None):
     directory.mkdir(parents=True)
     digest = hashlib.sha256(content).hexdigest()
     (directory / 'index.js').write_bytes(content)
@@ -30,7 +40,8 @@ def package(directory, version, content, historical=False):
         (directory / 'THIRD-PARTY-NOTICES.md').write_text('Synthetic dependency notice', encoding='utf-8')
         provenance.update(packageSchemaVersion=2,
             licenseFileSHA256={name: upgrade.sha(directory / name) for name in ['LICENSE.md', 'THIRD-PARTY-NOTICES.md']},
-            sourceOffer={'repository': 'https://github.com/Antrakt92/vortex-nexus-modding-mcp'})
+            sourceOffer={'repository': 'https://github.com/Antrakt92/vortex-nexus-modding-mcp'},
+            maintainedSource=str(maintained), sources={file.name: upgrade.sha(file) for file in maintained.iterdir()})
     (directory / 'provenance.json').write_text(json.dumps(provenance), encoding='utf-8')
     return digest
 
@@ -45,8 +56,10 @@ class UpgradeTests(unittest.TestCase):
         self.receipts.mkdir()
         self.marker = self.receipts / 'unresolved.json'
         self.marker.write_bytes(b'{"requestId":"uncertain-original"}')
+        self.maintained = self.root / 'maintained'
+        write_source_fixture(self.maintained)
         self.old = package(self.plugins / 'vortex-agent', '1.0.3', b'synthetic old bundle', historical=True)
-        self.new = package(self.source, '1.1.0', b'synthetic new bundle')
+        self.new = package(self.source, '1.1.0', b'synthetic new bundle', maintained=self.maintained)
         other = self.plugins / 'unrelated'
         other.mkdir()
         (other / 'sentinel').write_bytes(b'untouched')
@@ -506,10 +519,43 @@ class UpgradeTests(unittest.TestCase):
                 metadata.write_text(json.dumps(value))
                 self.assertEqual(upgrade.package(self.source, self.new)['sourceOffer']['repository'], repository)
 
+    def test_current_package_requires_complete_shared_source_pins(self):
+        current = json.loads((self.source / 'provenance.json').read_bytes())
+        pins = current['sources']
+        extra = self.maintained / 'unexpected.cjs'
+        extra.write_bytes(b'Synthetic unlisted source file')
+        for invalid in ({}, {name: pin for name, pin in pins.items() if name != 'guard.cjs'},
+                        {name: pin for name, pin in pins.items() if name != INVENTORY.name},
+                        {**pins, extra.name: upgrade.sha(extra)}):
+            with self.subTest(count=len(invalid)), self.assertRaisesRegex(RuntimeError, 'source inventory'):
+                upgrade.verify_sources({**current, 'sources': invalid})
+        upgrade.verify_sources(current)
+        relocated = self.maintained / INVENTORY.name
+        relocated.write_text(json.dumps(json.loads(relocated.read_bytes()), indent=4), encoding='utf-8')
+        with self.assertRaisesRegex(RuntimeError, 'source inventory'):
+            upgrade.verify_sources({**current, 'sources': {**pins, INVENTORY.name: upgrade.sha(relocated)}})
+
+    def test_incomplete_source_inventory_stops_install_and_sync_before_staging(self):
+        installed = self.matching_target()
+        before = installed.read_bytes()
+        metadata = self.source / 'provenance.json'
+        value = json.loads(metadata.read_bytes())
+        del value['sources']['extension.cjs']
+        metadata.write_text(json.dumps(value), encoding='utf-8')
+        fresh = self.root / 'fresh-plugins'
+        fresh.mkdir()
+        with patch.object(upgrade, 'PLUGINS', fresh), self.assertRaisesRegex(RuntimeError, 'source inventory'):
+            upgrade.install(self.new)
+        self.assertEqual(list(fresh.iterdir()), [])
+        with self.assertRaisesRegex(RuntimeError, 'source inventory'):
+            upgrade.sync_provenance(self.new)
+        self.assertEqual(installed.read_bytes(), before)
+
     def test_metadata_sync_migrates_previous_repository_offer_without_bundle_change(self):
         receipt = self.matching_target()
         previous = json.loads(receipt.read_text())
         previous['sourceOffer']['repository'] = 'https://github.com/Antrakt92/Nexus-Modding-Tools'
+        previous['sources'] = {}
         receipt.write_text(json.dumps(previous))
         metadata = self.source / 'provenance.json'
         current = json.loads(metadata.read_text())
@@ -556,7 +602,7 @@ class UpgradeTests(unittest.TestCase):
             calls += 1
             if calls == 2:
                 receipt.parent.rename(receipt.parent.with_name('retained'))
-                package(receipt.parent, '1.1.0', b'synthetic new bundle')
+                package(receipt.parent, '1.1.0', b'synthetic new bundle', maintained=self.maintained)
                 receipt.write_bytes(original)
             return actual()
 
@@ -602,10 +648,7 @@ class UpgradeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'contract'):
             upgrade.sync_provenance(self.new)
         data['protocol'] = 'vortex-agent/1'
-        maintained = self.root / 'maintained'
-        maintained.mkdir()
-        (maintained / 'bridge.mjs').write_bytes(b'changed source')
-        data.update(maintainedSource=str(maintained), sources={'bridge.mjs': '0' * 64})
+        (self.maintained / 'bridge.mjs').write_bytes(b'changed source')
         provenance.write_text(json.dumps(data))
         with self.assertRaisesRegex(RuntimeError, 'source provenance'):
             upgrade.sync_provenance(self.new)
@@ -627,14 +670,7 @@ class UpgradeTests(unittest.TestCase):
     def test_metadata_sync_rechecks_maintained_sources_after_staging_metadata(self):
         receipt = self.matching_target()
         original = receipt.read_bytes()
-        maintained = self.root / 'maintained'
-        maintained.mkdir()
-        source = maintained / 'bridge.mjs'
-        source.write_bytes(b'original source')
-        metadata = self.source / 'provenance.json'
-        value = json.loads(metadata.read_text())
-        value.update(maintainedSource=str(maintained), sources={'bridge.mjs': upgrade.sha(source)})
-        metadata.write_text(json.dumps(value))
+        source = self.maintained / 'bridge.mjs'
         actual = upgrade.os.fsync
         calls = 0
         def fsync(descriptor):
@@ -683,7 +719,7 @@ class UpgradeTests(unittest.TestCase):
         # The default build is a different historical bundle. It must not be
         # copied, inspected as our source or used to select a receipt workspace.
         historical = self.root / 'historical-build'
-        package(historical, '1.0.4', b'different historical default bundle')
+        package(historical, '1.0.4', b'different historical default bundle', historical=True)
         with patch.object(upgrade, 'SOURCE', historical), patch.object(upgrade, 'stopped', side_effect=AssertionError('metadata-only')):
             upgrade.sync_provenance(self.new, package_root=str(self.source))
         self.assertEqual(target.read_bytes(), metadata.read_bytes())
@@ -697,16 +733,14 @@ class UpgradeTests(unittest.TestCase):
     def test_external_metadata_sync_refuses_wrong_runtime_bundle_sources_or_reparse(self):
         target = self.matching_target(); original = target.read_bytes(); receipts = upgrade.receipt_pins()
         external = self.root / 'external'
-        package(external, '1.1.0', b'synthetic new bundle')
+        package(external, '1.1.0', b'synthetic new bundle', maintained=self.maintained)
         metadata = external / 'provenance.json'; valid = json.loads(metadata.read_text())
-        maintained = self.root / 'external-maintained'; maintained.mkdir()
-        (maintained / 'bridge.mjs').write_bytes(b'changed maintained source')
         for name in ['runtime', 'source', 'bundle', 'schema']:
             with self.subTest(name=name):
                 value = json.loads(json.dumps(valid)); metadata.write_text(json.dumps(value))
                 (external / 'index.js').write_bytes(b'synthetic new bundle')
                 if name == 'runtime': value['workspaceRoot'] = str(self.root / 'wrong-runtime')
-                elif name == 'source': value.update(maintainedSource=str(maintained), sources={'bridge.mjs': '0' * 64})
+                elif name == 'source': value['sources']['bridge.mjs'] = '0' * 64
                 elif name == 'bundle': (external / 'index.js').write_bytes(b'other bundle')
                 elif name == 'schema': value['packageSchemaVersion'] = 1
                 metadata.write_text(json.dumps(value))
@@ -781,13 +815,7 @@ class UpgradeTests(unittest.TestCase):
         self.assertEqual(list(upgrade.UPGRADES.iterdir()), pending)
 
     def test_maintained_source_changed_during_staging_refuses_swap(self):
-        maintained = self.root / 'maintained'
-        maintained.mkdir()
-        source = maintained / 'bridge.mjs'
-        source.write_bytes(b'original source')
-        data = json.loads((self.source / 'provenance.json').read_text())
-        data.update(maintainedSource=str(maintained), sources={'bridge.mjs': upgrade.sha(source)})
-        (self.source / 'provenance.json').write_text(json.dumps(data))
+        source = self.maintained / 'bridge.mjs'
         calls = 0
         def stopped():
             nonlocal calls
